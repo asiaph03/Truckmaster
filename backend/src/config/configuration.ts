@@ -1,0 +1,58 @@
+/**
+ * Central, typed configuration loader. Every environment variable the
+ * application reads is declared here — nothing reads process.env directly
+ * anywhere else in the codebase, so the full configuration surface is
+ * always visible in one place.
+ */
+export interface AppConfig {
+  nodeEnv: string;
+  port: number;
+  database: {
+    url: string;
+  };
+  redis: {
+    url: string;
+  };
+  storage: {
+    endpoint: string;
+    region: string;
+    bucket: string;
+    accessKeyId: string;
+    secretAccessKey: string;
+    forcePathStyle: boolean;
+  };
+  session: {
+    secret: string;
+  };
+  /**
+   * Workflow 6 / PRD check-call reminder feature (Stage 6 §10.1, §17 S1).
+   * Fixed, non-configurable-per-organization in V1 per the locked Stage 6
+   * resolution — isolated here as a single named constant so a future phase
+   * can source it from Organization-level config without an architectural
+   * change, per Stage 7 rule #10.
+   */
+  checkCallReminderHours: number;
+}
+
+export default (): AppConfig => ({
+  nodeEnv: process.env.NODE_ENV || 'development',
+  port: parseInt(process.env.PORT || '3000', 10),
+  database: {
+    url: process.env.DATABASE_URL || '',
+  },
+  redis: {
+    url: process.env.REDIS_URL || 'redis://localhost:6379',
+  },
+  storage: {
+    endpoint: process.env.S3_ENDPOINT || 'http://localhost:9000',
+    region: process.env.S3_REGION || 'us-east-1',
+    bucket: process.env.S3_BUCKET || 'tms-documents',
+    accessKeyId: process.env.S3_ACCESS_KEY_ID || '',
+    secretAccessKey: process.env.S3_SECRET_ACCESS_KEY || '',
+    forcePathStyle: (process.env.S3_FORCE_PATH_STYLE ?? 'true') === 'true',
+  },
+  session: {
+    secret: process.env.SESSION_SECRET || '',
+  },
+  checkCallReminderHours: parseInt(process.env.CHECK_CALL_REMINDER_HOURS || '4', 10),
+});

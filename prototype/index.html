@@ -1,0 +1,1879 @@
+<title>Truck Master TMS — Prototype</title>
+<style>
+:root{
+  --brand-600:#1A2BC3;--brand-700:#12208F;--brand-100:#E7E9FB;--brand-50:#F4F5FE;
+  --n-0:#FFFFFF;--n-50:#F7F8FA;--n-100:#F0F1F4;--n-200:#E2E4E9;--n-300:#CBCED6;--n-400:#9297A3;--n-500:#6B707C;--n-700:#3C4049;--n-900:#16181D;
+  --success:#157F3C;--success-bg:#E5F6EA;--warning:#B4770B;--warning-bg:#FDF1DC;--danger:#C4293A;--danger-bg:#FBE7E9;--info:#0E7490;--info-bg:#E1F2F5;
+  --radius-sm:4px;--radius-md:8px;--radius-lg:12px;
+  --shadow-sm:0 1px 2px rgba(22,24,29,.06),0 1px 1px rgba(22,24,29,.04);
+  --shadow-md:0 4px 12px rgba(22,24,29,.10);
+  --shadow-lg:0 12px 32px rgba(22,24,29,.18);
+  --font:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;background:var(--n-50);color:var(--n-900);font-family:var(--font);font-size:14px;line-height:1.45}
+body{background:var(--n-50)}
+h1,h2,h3,h4{margin:0;text-wrap:balance;font-weight:600}
+p{margin:0}
+button{font-family:inherit;cursor:pointer}
+table{border-collapse:collapse;width:100%}
+.tabular{font-variant-numeric:tabular-nums}
+:focus-visible{outline:2px solid var(--brand-600);outline-offset:1px}
+a{color:var(--brand-600);text-decoration:none}
+a:hover{text-decoration:underline}
+
+/* ---- Shell ---- */
+#shell{display:flex;min-height:100vh}
+#sidebar{width:240px;flex:0 0 240px;background:var(--n-0);border-right:1px solid var(--n-200);display:flex;flex-direction:column;transition:width .15s ease,flex-basis .15s ease}
+#sidebar.collapsed{width:64px;flex-basis:64px}
+.side-top{display:flex;align-items:center;gap:8px;padding:14px 12px;border-bottom:1px solid var(--n-200)}
+.logo-mark{width:28px;height:28px;border-radius:7px;background:var(--brand-600);display:flex;align-items:center;justify-content:center;flex:0 0 28px}
+.logo-mark svg{width:17px;height:17px;stroke:#fff}
+.brand-name{font-weight:700;font-size:13.5px;white-space:nowrap;overflow:hidden}
+.collapse-btn{margin-left:auto;background:none;border:none;color:var(--n-500);padding:4px;border-radius:var(--radius-sm);display:flex}
+.collapse-btn:hover{background:var(--n-100)}
+#sidebar.collapsed .brand-name,#sidebar.collapsed .collapse-btn{display:none}
+#sidebar.collapsed .side-top{justify-content:center}
+nav.side-nav{padding:8px;overflow-y:auto;flex:1}
+.nav-item{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:var(--radius-sm);color:var(--n-700);font-size:13.5px;font-weight:500;cursor:pointer;position:relative;white-space:nowrap;margin-bottom:1px}
+.nav-item svg{flex:0 0 18px;width:18px;height:18px;stroke:var(--n-500)}
+.nav-item:hover{background:var(--n-100)}
+.nav-item.active{background:var(--brand-100);color:var(--brand-700)}
+.nav-item.active svg{stroke:var(--brand-700)}
+.nav-item.active::before{content:"";position:absolute;left:-8px;top:6px;bottom:6px;width:3px;border-radius:2px;background:var(--brand-600)}
+#sidebar.collapsed .nav-item{justify-content:center}
+#sidebar.collapsed .nav-item span.label{display:none}
+.nav-sub{margin-left:28px;margin-top:2px;margin-bottom:4px;display:flex;flex-direction:column;gap:1px}
+#sidebar.collapsed .nav-sub{display:none}
+.nav-sub-item{padding:6px 10px;border-radius:var(--radius-sm);font-size:13px;color:var(--n-500);cursor:pointer}
+.nav-sub-item:hover{background:var(--n-100);color:var(--n-900)}
+.nav-sub-item.active{color:var(--brand-700);font-weight:600}
+
+#topbar{height:56px;flex:0 0 56px;background:var(--n-0);border-bottom:1px solid var(--n-200);display:flex;align-items:center;gap:14px;padding:0 16px;position:sticky;top:0;z-index:20}
+.top-search{display:flex;align-items:center;gap:8px;background:var(--n-100);border:1px solid transparent;border-radius:var(--radius-sm);padding:7px 10px;color:var(--n-500);font-size:13px;width:280px;cursor:pointer}
+.top-search:hover{border-color:var(--n-300)}
+.top-spacer{flex:1}
+.icon-btn{background:none;border:none;color:var(--n-500);padding:7px;border-radius:var(--radius-sm);display:flex;position:relative}
+.icon-btn:hover{background:var(--n-100)}
+.badge-dot{position:absolute;top:3px;right:3px;background:var(--danger);color:#fff;font-size:10px;font-weight:700;min-width:15px;height:15px;border-radius:8px;display:flex;align-items:center;justify-content:center;padding:0 3px}
+.role-select{font-family:inherit;font-size:12.5px;border:1px solid var(--n-300);border-radius:var(--radius-sm);padding:6px 8px;color:var(--n-700);background:var(--n-0)}
+.avatar{width:30px;height:30px;border-radius:50%;background:var(--brand-100);color:var(--brand-700);font-weight:700;font-size:12px;display:flex;align-items:center;justify-content:center;cursor:pointer;border:none}
+
+#main{flex:1;min-width:0;display:flex;flex-direction:column}
+#page{padding:20px 24px;flex:1;min-width:0}
+.page-header{margin-bottom:16px}
+.crumb{font-size:12.5px;color:var(--n-500);margin-bottom:6px}
+.crumb a{color:var(--n-500)}
+.crumb a:hover{color:var(--brand-600)}
+.header-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.header-row h1{font-size:21px}
+.header-row .spacer{flex:1}
+.subtitle{color:var(--n-500);font-size:13px;margin-top:2px}
+.badges-row{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
+
+/* ---- Buttons ---- */
+.btn{display:inline-flex;align-items:center;gap:6px;border-radius:var(--radius-md);font-weight:600;font-size:13px;padding:8px 14px;border:1px solid transparent;white-space:nowrap}
+.btn svg{width:15px;height:15px}
+.btn-primary{background:var(--brand-600);color:#fff}
+.btn-primary:hover{background:var(--brand-700)}
+.btn-primary:disabled{background:var(--n-300);color:var(--n-0);cursor:not-allowed}
+.btn-secondary{background:var(--n-0);border-color:var(--n-300);color:var(--n-900)}
+.btn-secondary:hover{background:var(--n-100)}
+.btn-ghost{background:none;color:var(--brand-600);border-color:transparent;padding:8px 8px}
+.btn-ghost:hover{background:var(--brand-50)}
+.btn-destructive{background:var(--n-0);color:var(--danger);border-color:var(--danger)}
+.btn-destructive:hover{background:var(--danger-bg)}
+.btn-sm{padding:5px 10px;font-size:12.5px}
+.btn[disabled]{opacity:.55;cursor:not-allowed}
+
+/* ---- Badges ---- */
+.badge{display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:var(--radius-sm);font-size:11.5px;font-weight:700;letter-spacing:.2px;white-space:nowrap}
+.b-neutral{background:var(--n-100);color:var(--n-700)}
+.b-brand{background:var(--brand-100);color:var(--brand-700)}
+.b-success{background:var(--success-bg);color:var(--success)}
+.b-warning{background:var(--warning-bg);color:var(--warning)}
+.b-danger{background:var(--danger-bg);color:var(--danger)}
+.b-info{background:var(--info-bg);color:var(--info)}
+
+/* ---- Cards / Tables ---- */
+.card{background:var(--n-0);border:1px solid var(--n-200);border-radius:var(--radius-md);box-shadow:var(--shadow-sm);padding:16px}
+.card h3{font-size:13px;color:var(--n-500);text-transform:uppercase;letter-spacing:.4px;margin-bottom:10px;font-weight:700}
+.grid-2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.grid-3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+.field{margin-bottom:10px}
+.field-label{font-size:11.5px;color:var(--n-500);margin-bottom:2px}
+.field-value{font-size:13.5px;font-weight:500}
+.toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
+.select-mini{font-family:inherit;font-size:12.5px;border:1px solid var(--n-300);border-radius:var(--radius-sm);padding:6px 8px;background:var(--n-0);color:var(--n-700)}
+.search-mini{display:flex;align-items:center;gap:6px;border:1px solid var(--n-300);border-radius:var(--radius-sm);padding:6px 9px;background:var(--n-0);font-size:12.5px;color:var(--n-500)}
+.search-mini input{border:none;outline:none;font-size:12.5px;font-family:inherit;width:150px}
+.chip{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--n-300);border-radius:20px;padding:5px 11px;font-size:12px;color:var(--n-700);background:var(--n-0);cursor:pointer}
+.chip:hover{background:var(--n-100)}
+.chip.active{background:var(--brand-100);border-color:var(--brand-100);color:var(--brand-700);font-weight:600}
+.table-wrap{overflow-x:auto;border:1px solid var(--n-200);border-radius:var(--radius-md);background:var(--n-0)}
+table.dtable{min-width:100%}
+table.dtable th{background:var(--n-100);text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.4px;color:var(--n-500);padding:9px 12px;white-space:nowrap;position:sticky;top:0}
+table.dtable td{padding:9px 12px;border-top:1px solid var(--n-200);font-size:13px;white-space:nowrap}
+table.dtable tr.rowlink{cursor:pointer}
+table.dtable tr.rowlink:hover td{background:var(--n-50)}
+table.dtable td.num{text-align:right}
+table.dtable tr.risk-warning td:first-child{box-shadow:inset 3px 0 0 var(--warning)}
+table.dtable tr.risk-danger td:first-child{box-shadow:inset 3px 0 0 var(--danger)}
+.empty-state{padding:48px 20px;text-align:center;color:var(--n-500)}
+.empty-state svg{stroke:var(--n-300);margin-bottom:8px}
+.empty-state .msg{font-size:13.5px;font-weight:500;color:var(--n-700);margin-bottom:10px}
+.tabs{display:flex;gap:4px;border-bottom:1px solid var(--n-200);margin-bottom:16px;overflow-x:auto}
+.tab{padding:10px 14px;font-size:13px;font-weight:600;color:var(--n-500);border-bottom:2px solid transparent;cursor:pointer;white-space:nowrap}
+.tab:hover{color:var(--n-900)}
+.tab.active{color:var(--brand-700);border-bottom-color:var(--brand-600)}
+.count-pill{background:var(--n-100);color:var(--n-500);border-radius:10px;padding:1px 6px;font-size:10.5px;margin-left:5px}
+.alert{display:flex;gap:10px;align-items:flex-start;border-left:4px solid;border-radius:var(--radius-sm);padding:11px 13px;font-size:13px;margin-bottom:14px}
+.alert-warning{border-color:var(--warning);background:var(--warning-bg);color:#7A5200}
+.alert-danger{border-color:var(--danger);background:var(--danger-bg);color:#8C1D2A}
+.alert-info{border-color:var(--info);background:var(--info-bg);color:#0A5568}
+.alert-success{border-color:var(--success);background:var(--success-bg);color:#0F5C2C}
+
+/* Kanban */
+.kanban-wrap{display:flex;gap:12px;overflow-x:auto;padding-bottom:8px}
+.kcol{flex:0 0 250px;background:var(--n-100);border-radius:var(--radius-md);display:flex;flex-direction:column;max-height:calc(100vh - 230px)}
+.kcol-head{padding:10px 12px;font-size:12px;font-weight:700;color:var(--n-700);display:flex;justify-content:space-between;border-bottom:1px solid var(--n-200)}
+.kcol-body{padding:8px;display:flex;flex-direction:column;gap:8px;overflow-y:auto}
+.kcard{background:var(--n-0);border-radius:var(--radius-sm);box-shadow:var(--shadow-sm);padding:10px;border-left:3px solid transparent;cursor:grab;position:relative}
+.kcard.risk-warning{border-left-color:var(--warning)}
+.kcard.risk-danger{border-left-color:var(--danger)}
+.kcard.dragging{opacity:.4}
+.kcard .kc-top{display:flex;justify-content:space-between;align-items:flex-start;gap:6px}
+.kcard .kc-load{font-weight:700;font-size:12.5px}
+.kcard .kc-cust{color:var(--n-500);font-size:11.5px;margin-top:2px}
+.kcard .kc-meta{display:flex;justify-content:space-between;align-items:center;margin-top:8px;font-size:11.5px;color:var(--n-500)}
+.kcard .kc-menu-btn{background:none;border:none;color:var(--n-400);padding:2px}
+.kcol.drop-hover{outline:2px dashed var(--brand-600);outline-offset:-2px}
+
+/* Calendar */
+.cal-grid{display:grid;grid-template-columns:56px repeat(7,1fr);border:1px solid var(--n-200);border-radius:var(--radius-md);overflow:hidden;background:var(--n-0)}
+.cal-headcell{background:var(--n-100);padding:8px;font-size:11.5px;font-weight:700;text-align:center;border-left:1px solid var(--n-200)}
+.cal-timecell{padding:4px 6px;font-size:10.5px;color:var(--n-400);text-align:right;border-top:1px solid var(--n-200)}
+.cal-cell{border-top:1px solid var(--n-200);border-left:1px solid var(--n-200);min-height:46px;padding:2px;position:relative}
+.cal-event{background:var(--n-0);border:1px solid var(--n-200);border-left:3px solid var(--n-400);border-radius:4px;padding:3px 5px;font-size:10.5px;margin-bottom:2px;cursor:pointer}
+.cal-event.st-pending{border-left-color:var(--n-400)}
+.cal-event.st-arrived{border-left-color:var(--brand-600)}
+.cal-event.st-completed{border-left-color:var(--success)}
+.cal-event.st-overdue{border-left-color:var(--danger);background:var(--danger-bg)}
+.cal-event .ce-time{font-weight:700}
+
+/* Drawer / Modal */
+.overlay{position:fixed;inset:0;background:rgba(20,22,28,.42);z-index:100;display:flex}
+.drawer{margin-left:auto;width:440px;max-width:92vw;background:var(--n-0);height:100%;box-shadow:var(--shadow-lg);display:flex;flex-direction:column;animation:slidein .16s ease}
+@keyframes slidein{from{transform:translateX(20px);opacity:.5}to{transform:translateX(0);opacity:1}}
+.modal-center{margin:auto;background:var(--n-0);border-radius:var(--radius-lg);box-shadow:var(--shadow-lg);width:520px;max-width:92vw;max-height:88vh;display:flex;flex-direction:column}
+.modal-center.wide{width:720px}
+.panel-head{display:flex;align-items:center;gap:10px;padding:16px 18px;border-bottom:1px solid var(--n-200)}
+.panel-head h3{font-size:15px}
+.panel-body{padding:18px;overflow-y:auto;flex:1}
+.panel-foot{padding:14px 18px;border-top:1px solid var(--n-200);display:flex;justify-content:flex-end;gap:8px}
+.x-btn{margin-left:auto;background:none;border:none;color:var(--n-500);padding:4px;border-radius:var(--radius-sm)}
+.x-btn:hover{background:var(--n-100)}
+label.form-label{display:block;font-size:12.5px;font-weight:600;color:var(--n-700);margin-bottom:4px;margin-top:12px}
+label.form-label:first-child{margin-top:0}
+input[type=text],input[type=number],input[type=date],input[type=time],input[type=email],textarea,select.form-select{width:100%;font-family:inherit;font-size:13px;border:1px solid var(--n-300);border-radius:var(--radius-sm);padding:8px 10px;background:var(--n-0);color:var(--n-900)}
+input:focus,textarea:focus,select:focus{border-color:var(--brand-600);box-shadow:0 0 0 3px var(--brand-100)}
+textarea{resize:vertical;min-height:64px}
+.req-note{color:var(--danger)}
+.field-err{color:var(--danger);font-size:11.5px;margin-top:3px}
+.helptext{color:var(--n-500);font-size:11.5px;margin-top:3px}
+
+/* Toasts */
+#toasts{position:fixed;top:66px;right:16px;z-index:200;display:flex;flex-direction:column;gap:8px}
+.toast{background:var(--n-900);color:#fff;padding:10px 14px;border-radius:var(--radius-md);box-shadow:var(--shadow-md);font-size:13px;display:flex;align-items:center;gap:8px;min-width:220px;animation:slidein .15s ease}
+.toast.t-success{background:var(--success)}
+.toast.t-warning{background:var(--warning)}
+.toast.t-danger{background:var(--danger)}
+
+/* Stepper */
+.stepper{display:flex;align-items:center;margin:14px 0 4px}
+.step{display:flex;flex-direction:column;align-items:center;flex:1;position:relative}
+.step .dot{width:11px;height:11px;border-radius:50%;background:var(--n-300);z-index:1}
+.step.done .dot{background:var(--brand-600)}
+.step.current .dot{background:var(--brand-600);box-shadow:0 0 0 4px var(--brand-100)}
+.step .lbl{font-size:10px;color:var(--n-500);margin-top:5px;text-align:center;white-space:nowrap}
+.step.current .lbl{color:var(--brand-700);font-weight:700}
+.step:not(:last-child)::after{content:"";position:absolute;top:5px;left:56%;width:100%;height:2px;background:var(--n-300)}
+.step.done:not(:last-child)::after{background:var(--brand-600)}
+
+.checklist-item{display:flex;align-items:flex-start;gap:10px;padding:14px 0;border-bottom:1px solid var(--n-200)}
+.checklist-item:last-child{border-bottom:none}
+.ci-icon{width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex:0 0 22px;color:#fff;font-size:13px;font-weight:700}
+.ci-icon.ok{background:var(--success)}
+.ci-icon.warn{background:var(--warning)}
+.ci-body{flex:1}
+.ci-title{font-weight:600;font-size:13.5px}
+.ci-detail{font-size:12.5px;color:var(--n-500);margin-top:1px}
+
+.kv-list{display:flex;flex-direction:column;gap:8px}
+.kv-row{display:flex;justify-content:space-between;font-size:13px}
+.kv-row .k{color:var(--n-500)}
+.kv-row .v{font-weight:600}
+.divider{height:1px;background:var(--n-200);margin:10px 0}
+.muted{color:var(--n-500)}
+.small{font-size:12px}
+.getting-started{background:linear-gradient(135deg,var(--brand-50),var(--n-0));border:1px solid var(--brand-100);border-radius:var(--radius-lg);padding:22px}
+.gs-steps{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:14px}
+.gs-step{background:var(--n-0);border:1px solid var(--n-200);border-radius:var(--radius-md);padding:14px}
+.demo-tag{background:#FFF4D6;color:#7A5200;border:1px solid #F0D48A;border-radius:var(--radius-sm);padding:2px 8px;font-size:10.5px;font-weight:700}
+</style>
+
+<div id="toasts"></div>
+<div id="shell">
+  <aside id="sidebar">
+    <div class="side-top">
+      <div class="logo-mark"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="7" width="13" height="9"></rect><path d="M14 10h4l3 3v3h-7z"></path><circle cx="6" cy="18" r="2"></circle><circle cx="17" cy="18" r="2"></circle></svg></div>
+      <div class="brand-name">Truck Master TMS</div>
+      <button class="collapse-btn" onclick="toggleSidebar()" title="Collapse"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg></button>
+    </div>
+    <nav class="side-nav" id="sideNav"></nav>
+  </aside>
+  <div id="main">
+    <div id="topbar"></div>
+    <div id="page"></div>
+  </div>
+</div>
+<div id="overlayRoot"></div>
+
+<script>
+/* =========================================================
+   TRUCK MASTER TMS — INTERACTIVE PROTOTYPE (Stage 5.7)
+   Frontend-only. No backend/DB/auth/payments. Mock data + in-memory state.
+   Source of truth: docs/UI_UX_DESIGN.md, Workflows 1-10, DATABASE_DESIGN.md
+   ========================================================= */
+
+/* ---------- Icons (Lucide-style inline SVG, minimal set) ---------- */
+const ICONS = {
+  dashboard:'<rect x="3" y="3" width="7" height="9" rx="1"></rect><rect x="14" y="3" width="7" height="5" rx="1"></rect><rect x="14" y="12" width="7" height="9" rx="1"></rect><rect x="3" y="16" width="7" height="5" rx="1"></rect>',
+  loads:'<path d="M3 7h11v10H3z"></path><path d="M14 10h4l3 3v4h-7z"></path><circle cx="7" cy="19" r="1.6"></circle><circle cx="18" cy="19" r="1.6"></circle>',
+  customers:'<path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 00-3-3.87"></path><path d="M16 3.13a4 4 0 010 7.75"></path>',
+  carriers:'<rect x="1" y="6" width="13" height="10" rx="1"></rect><path d="M14 10h4l3 3v3h-7z"></path><circle cx="6" cy="18" r="2"></circle><circle cx="17" cy="18" r="2"></circle>',
+  billing:'<rect x="2" y="4" width="20" height="16" rx="2"></rect><path d="M2 9h20"></path><path d="M6 14h4"></path>',
+  documents:'<path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"></path><path d="M14 2v6h6"></path>',
+  reports:'<path d="M3 3v18h18"></path><path d="M7 15l4-6 3 3 5-7"></path>',
+  settings:'<circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.7 1.7 0 00.34 1.87l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.7 1.7 0 00-1.87-.34 1.7 1.7 0 00-1 1.56V21a2 2 0 11-4 0v-.09A1.7 1.7 0 009 19.4a1.7 1.7 0 00-1.87.34l-.06.06a2 2 0 11-2.83-2.83l.06-.06A1.7 1.7 0 004.6 15a1.7 1.7 0 00-1.56-1H3a2 2 0 110-4h.09A1.7 1.7 0 004.6 9a1.7 1.7 0 00-.34-1.87l-.06-.06a2 2 0 112.83-2.83l.06.06A1.7 1.7 0 009 4.6a1.7 1.7 0 001-1.56V3a2 2 0 114 0v.09a1.7 1.7 0 001 1.56 1.7 1.7 0 001.87-.34l.06-.06a2 2 0 112.83 2.83l-.06.06A1.7 1.7 0 0019.4 9a1.7 1.7 0 001.56 1H21a2 2 0 110 4h-.09a1.7 1.7 0 00-1.51 1z"></path>',
+  search:'<circle cx="11" cy="11" r="7"></circle><path d="M21 21l-4.3-4.3"></path>',
+  bell:'<path d="M18 8a6 6 0 10-12 0c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.7 21a2 2 0 01-3.4 0"></path>',
+  chevronDown:'<path d="M6 9l6 6 6-6"></path>',
+  chevronLeft:'<path d="M15 18l-6-6 6-6"></path>',
+  close:'<path d="M18 6L6 18"></path><path d="M6 6l12 12"></path>',
+  kebab:'<circle cx="12" cy="5" r="1.4"></circle><circle cx="12" cy="12" r="1.4"></circle><circle cx="12" cy="19" r="1.4"></circle>',
+  plus:'<path d="M12 5v14"></path><path d="M5 12h14"></path>',
+  truck:'<rect x="1" y="7" width="13" height="9"></rect><path d="M14 10h4l3 3v3h-7z"></path><circle cx="6" cy="18" r="2"></circle><circle cx="17" cy="18" r="2"></circle>',
+  fileBox:'<path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"></path><path d="M14 2v6h6"></path>',
+  inbox:'<path d="M22 12h-6l-2 3h-4l-2-3H2"></path><path d="M5.4 5h13.2L22 12v6a2 2 0 01-2 2H4a2 2 0 01-2-2v-6z"></path>',
+  alertTri:'<path d="M10.3 3.86l-8.2 14.14A1.5 1.5 0 003.4 20.5h17.2a1.5 1.5 0 001.3-2.5L13.7 3.86a1.5 1.5 0 00-2.6 0z"></path><path d="M12 9v4"></path><path d="M12 17h.01"></path>',
+  arrowUp:'<path d="M12 19V5"></path><path d="M5 12l7-7 7 7"></path>',
+  arrowDown:'<path d="M12 5v14"></path><path d="M19 12l-7 7-7-7"></path>',
+};
+function icon(name,size=18){return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICONS[name]||''}</svg>`;}
+
+/* ---------- Simulated current user / role ---------- */
+const ALL_ROLES = {ADMIN:'Admin',OPS_MANAGER:'Operations Manager',DISPATCHER:'Dispatcher',SALES:'Sales / Booking',ACCOUNTING:'Accounting'};
+let ROLE = 'ADMIN';
+const ME = {id:'u_me', name:'Jamie Rivera'};
+function initials(n){return n.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase();}
+function canSeeFinancials(){return ROLE!=='DISPATCHER';}
+function canSeeMargin(){return ['ADMIN','OPS_MANAGER','ACCOUNTING'].includes(ROLE);}
+function isDispatchActor(){return ['ADMIN','OPS_MANAGER','DISPATCHER'].includes(ROLE);}
+function isInvoiceActor(){return ['ADMIN','ACCOUNTING'].includes(ROLE);}
+function isCreatorRole(){return ['ADMIN','OPS_MANAGER','DISPATCHER','SALES'].includes(ROLE);}
+function isCustomerEditRole(){return ['ADMIN','OPS_MANAGER','SALES','ACCOUNTING'].includes(ROLE);}
+function isCarrierEditRole(){return ['ADMIN','OPS_MANAGER','DISPATCHER'].includes(ROLE);}
+function isComplianceReviewer(){return ['ADMIN','OPS_MANAGER'].includes(ROLE)&&COMPLIANCE_REVIEWER_ON;}
+let COMPLIANCE_REVIEWER_ON = true; // demo toggle bundled into Admin/OpsManager for prototype simplicity
+function isClosingActor(){return ['ADMIN','OPS_MANAGER','ACCOUNTING'].includes(ROLE);}
+function ownsDeal(customerId){ return CUSTOMERS.find(c=>c.id===customerId)?.ownerId==='u_me_sales'; }
+
+const TODAY = new Date('2026-08-13T09:00:00');
+function fmtDate(d){ if(!d) return '—'; const dt=new Date(d); return dt.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}); }
+function fmtDateTime(d){ if(!d) return '—'; const dt=new Date(d); return dt.toLocaleDateString('en-US',{month:'short',day:'numeric'})+', '+dt.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}); }
+function fmtMoney(n){ if(n==null) return '—'; return '$'+Number(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+function daysBetween(a,b){ return Math.round((new Date(a)-new Date(b))/86400000); }
+function uid(p){ return p+'_'+Math.random().toString(36).slice(2,8); }
+
+/* ---------- Toasts ---------- */
+function toast(msg,variant='success'){
+  const el=document.createElement('div');
+  el.className='toast t-'+variant;
+  el.textContent=msg;
+  document.getElementById('toasts').appendChild(el);
+  setTimeout(()=>el.remove(),4000);
+}
+function auditLog(action,detail){ AUDIT.unshift({id:uid('a'),action,detail,user:ME.name,role:ALL_ROLES[ROLE],at:new Date().toISOString()}); }
+
+/* ---------- Overlay (modal + drawer) stack ---------- */
+function closeOverlay(){ document.getElementById('overlayRoot').innerHTML=''; }
+function openDrawer(innerHtml){
+  document.getElementById('overlayRoot').innerHTML =
+    `<div class="overlay" onclick="if(event.target===this)closeOverlay()"><div class="drawer">${innerHtml}</div></div>`;
+}
+function openModal(innerHtml,{wide=false,blockBackdrop=false}={}){
+  document.getElementById('overlayRoot').innerHTML =
+    `<div class="overlay" onclick="${blockBackdrop?'':'if(event.target===this)closeOverlay()'}"><div class="modal-center${wide?' wide':''}">${innerHtml}</div></div>`;
+}
+document.addEventListener('keydown',e=>{ if(e.key==='Escape') closeOverlay(); });
+
+function badge(text,variant){ return `<span class="badge b-${variant}">${text}</span>`; }
+
+/* =========================================================
+   MOCK DATA
+   ========================================================= */
+let AUDIT = [];
+let NOTIFICATIONS = [
+  {id:'n1', type:'compliance_expiring', read:false, msg:'Swift Freight LLC — Cargo insurance expired', entity:{type:'carrier', id:'car2'}, at:'2026-08-12T14:00:00'},
+  {id:'n2', type:'compliance_expiring', read:false, msg:'ABC Trucking — Cargo insurance expires in 7 days', entity:{type:'carrier', id:'car1'}, at:'2026-08-11T09:00:00'},
+  {id:'n3', type:'compliance_expiring', read:true, msg:'New Carrier LLC — MC Authority pending review', entity:{type:'carrier', id:'car3'}, at:'2026-08-09T11:00:00'},
+];
+
+let CUSTOMERS = [
+  {id:'c1', name:'ABC Manufacturing', status:'ACTIVE', billing:'4820 Commerce St, Dallas, TX 75201', contactName:'Karen Boyd', contactEmail:'karen@abcmfg.com', contactPhone:'(214) 555-0100', ownerId:'u_me_sales', terms:'Net 30', termsSource:'INHERITED',
+    contacts:[{name:'Karen Boyd',email:'karen@abcmfg.com',phone:'(214) 555-0100',role:'Booking',primary:true},{name:'Dan Ruiz',email:'dan@abcmfg.com',phone:'(214) 555-0142',role:'Billing',primary:false}],
+    locations:[{name:'Dallas DC',type:'PICKUP',address:'4820 Commerce St, Dallas, TX'},{name:'Atlanta Hub',type:'DELIVERY',address:'900 Fulton Industrial Blvd, Atlanta, GA'}],
+    rateAgreements:[{origin:'Dallas, TX',destination:'Atlanta, GA',equipment:'Dry Van',rate:2450,type:'Flat',effective:'2026-01-01',expiration:'2026-12-31'},{origin:'Dallas, TX',destination:'Los Angeles, CA',equipment:'Reefer',rate:3100,type:'Flat',effective:'2025-06-01',expiration:'2026-06-01'}]},
+  {id:'c2', name:'Sunrise Foods', status:'PROSPECT', billing:'88 Harbor Rd, Miami, FL 33101', contactName:'Luis Ortega', contactEmail:'luis@sunrisefoods.com', contactPhone:'(305) 555-0199', ownerId:null, terms:'Net 30', termsSource:'INHERITED',
+    contacts:[{name:'Luis Ortega',email:'luis@sunrisefoods.com',phone:'(305) 555-0199',role:'Booking',primary:true}], locations:[], rateAgreements:[]},
+  {id:'c3', name:'Global Parts Co', status:'BLOCKED', billing:'900 Industrial Pkwy, Chicago, IL 60632', contactName:'Nancy Wu', contactEmail:'nancy@globalparts.com', contactPhone:'(312) 555-0155', ownerId:'u_me_sales', terms:'Net 45', termsSource:'OVERRIDE',
+    contacts:[{name:'Nancy Wu',email:'nancy@globalparts.com',phone:'(312) 555-0155',role:'Billing',primary:true}], locations:[], rateAgreements:[]},
+  {id:'c4', name:'Redline Auto Supply', status:'ACTIVE', billing:'12 Depot Ave, Memphis, TN 38103', contactName:'Priya Nair', contactEmail:'priya@redlineauto.com', contactPhone:'(901) 555-0122', ownerId:null, terms:'Net 30', termsSource:'INHERITED',
+    contacts:[{name:'Priya Nair',email:'priya@redlineauto.com',phone:'(901) 555-0122',role:'Operations',primary:true}], locations:[{name:'Memphis Yard',type:'PICKUP',address:'12 Depot Ave, Memphis, TN'}], rateAgreements:[]},
+];
+
+let CARRIERS = [
+  {id:'car1', name:'ABC Trucking', dba:'ABC Express', mc:'MC-448821', dot:'DOT-1928374', status:'ACTIVE',
+    address:'2200 Freight Way, Fort Worth, TX', contactName:'Ray Delgado', contactPhone:'(817) 555-0177', contactEmail:'ray@abctrucking.com',
+    conditions:{statusActive:true, carrierAgreement:true, w9:true, autoLiability:true, cargo:true, mcAuthority:true, fmcsa:true},
+    docs:[{type:'W9',status:'APPROVED',uploadedBy:'Ray Delgado (carrier)',reviewedBy:'Jamie Rivera'},{type:'Carrier Agreement',status:'APPROVED',uploadedBy:'Jamie Rivera',reviewedBy:'Priya Shah'},{type:'MC Authority',status:'APPROVED',uploadedBy:'Jamie Rivera',reviewedBy:'Priya Shah'}],
+    insurance:{auto:{amount:1000000,company:'Progressive Commercial',agent:'Lena Ford',effective:'2026-01-01',expiration:'2026-11-01',docStatus:'APPROVED'},
+               cargo:{amount:100000,company:'Progressive Commercial',agent:'Lena Ford',effective:'2026-01-01',expiration:'2026-08-20',docStatus:'APPROVED'}},
+    fmcsa:{date:'2026-01-05',result:'Authorized',by:'Priya Shah'},
+    factoring:{uses:false},
+    lanes:[{type:'LANE',origin:'Dallas, TX',destination:'Los Angeles, CA'},{type:'LANE',origin:'Dallas, TX',destination:'Atlanta, GA'},{type:'REGION',label:'Southeast US'}],
+    drivers:[{name:'Mike Torres',phone:'(214) 555-3311',license:'TX-88213', active:true},{name:'Alan Brooks',phone:'(214) 555-9021',license:'TX-77120',active:true}],
+    trucks:[{unit:'T-204',type:'Dry Van',make:'Freightliner',model:'Cascadia',year:2022,active:true}],
+    trailers:[{unit:'TR-118',type:'Dry Van',plate:'TX-8823JK',active:true}]},
+  {id:'car2', name:'Swift Freight LLC', dba:null, mc:'MC-552013', dot:'DOT-4471029', status:'ACTIVE',
+    address:'88 Loading Dock Rd, Memphis, TN', contactName:'Denise Carr', contactPhone:'(901) 555-3200', contactEmail:'denise@swiftfreight.com',
+    conditions:{statusActive:true, carrierAgreement:true, w9:true, autoLiability:true, cargo:false, mcAuthority:true, fmcsa:true},
+    docs:[{type:'W9',status:'APPROVED',uploadedBy:'Denise Carr (carrier)',reviewedBy:'Jamie Rivera'},{type:'Carrier Agreement',status:'APPROVED',uploadedBy:'Jamie Rivera',reviewedBy:'Jamie Rivera'},{type:'MC Authority',status:'APPROVED',uploadedBy:'Jamie Rivera',reviewedBy:'Priya Shah'}],
+    insurance:{auto:{amount:1000000,company:'Nationwide',agent:'Carl Otto',effective:'2026-01-01',expiration:'2026-12-01',docStatus:'APPROVED'},
+               cargo:{amount:100000,company:'Nationwide',agent:'Carl Otto',effective:'2025-07-01',expiration:'2026-07-01',docStatus:'APPROVED'}},
+    fmcsa:{date:'2026-01-10',result:'Authorized',by:'Priya Shah'},
+    factoring:{uses:true, company:'TBS Factoring', remitTo:'PO Box 2100, Tulsa, OK', contact:'accounts@tbsfactoring.com', noaStatus:'On File'},
+    lanes:[{type:'REGION',label:'Midwest US'}],
+    drivers:[{name:'Carlos Nunez',phone:'(901) 555-7712',license:'TN-33210',active:true}],
+    trucks:[{unit:'S-101',type:'Reefer',make:'Volvo',model:'VNL',year:2021,active:true}],
+    trailers:[{unit:'SR-77',type:'Reefer',plate:'TN-2231FR',active:true}]},
+  {id:'car3', name:'New Carrier LLC', dba:null, mc:'MC-990211', dot:'DOT-5581203', status:'PENDING',
+    address:'400 Port Rd, Savannah, GA', contactName:'Tom Blake', contactPhone:'(912) 555-4410', contactEmail:'tom@newcarrierllc.com',
+    conditions:{statusActive:false, carrierAgreement:true, w9:false, autoLiability:false, cargo:false, mcAuthority:false, fmcsa:false},
+    docs:[{type:'Carrier Agreement',status:'APPROVED',uploadedBy:'Jamie Rivera',reviewedBy:'Priya Shah'},{type:'W9',status:'PENDING_REVIEW',uploadedBy:'Jamie Rivera',reviewedBy:null}],
+    insurance:{}, fmcsa:null, factoring:{uses:false}, lanes:[], drivers:[], trucks:[], trailers:[]},
+];
+
+function computeEligibility(carrier){
+  const c=carrier.conditions, reasons=[];
+  if(carrier.status==='BLOCKED') reasons.push('Carrier is Blocked');
+  if(!c.statusActive) reasons.push('Carrier status is not Active');
+  if(!c.carrierAgreement) reasons.push('Carrier Agreement not approved');
+  if(!c.w9) reasons.push('W9 not approved');
+  if(!c.autoLiability) reasons.push('Auto Liability insurance expired or not approved');
+  if(!c.cargo) reasons.push('Cargo insurance expired or not approved');
+  if(!c.mcAuthority) reasons.push('MC Authority not approved');
+  if(!c.fmcsa) reasons.push('FMCSA/SAFER verification not completed');
+  return {eligible:reasons.length===0, reasons};
+}
+
+const CHARGE = (type,side,amount,desc)=>({type,side,amount,desc,qty:1});
+
+let LOADS = [
+  {id:'l1', number:'LOAD-000441', customerId:'c1', status:'BOOKED', equipment:'Dry Van', bookingSource:'DIRECT',
+   customerRate:2100, carrierRate:null, carrierId:null, dispatcherId:null, riskStatus:'NORMAL', podStatus:'NOT_RECEIVED', invoiced:false, rateConfirmation:false,
+   stops:[{seq:1,type:'PICKUP',city:'Dallas',state:'TX',appt:'2026-08-15T08:00',arrival:null,departure:null,status:'PENDING'},
+          {seq:2,type:'DELIVERY',city:'Houston',state:'TX',appt:'2026-08-15T15:00',arrival:null,departure:null,status:'PENDING'}],
+   dispatch:null, sourcing:[], charges:[CHARGE('Linehaul','CUSTOMER',2100,'Base linehaul')], invoiceId:null, carrierPayments:[]},
+
+  {id:'l2', number:'LOAD-000447', customerId:'c1', status:'CARRIER_SOURCING', equipment:'Dry Van', bookingSource:'QUOTE',
+   customerRate:2300, carrierRate:null, carrierId:null, dispatcherId:'u_me_disp', riskStatus:'NORMAL', podStatus:'NOT_RECEIVED', invoiced:false, rateConfirmation:false,
+   stops:[{seq:1,type:'PICKUP',city:'Fort Worth',state:'TX',appt:'2026-08-14T09:00',arrival:null,departure:null,status:'PENDING'},
+          {seq:2,type:'DELIVERY',city:'San Antonio',state:'TX',appt:'2026-08-14T17:00',arrival:null,departure:null,status:'PENDING'}],
+   dispatch:null, sourcing:[{carrier:'Lone Star Carriers',rate:1900,outcome:'DECLINED',reason:'No available truck',by:'Jamie Rivera',at:'2026-08-12T10:00'}],
+   charges:[CHARGE('Linehaul','CUSTOMER',2300,'Base linehaul')], invoiceId:null, carrierPayments:[]},
+
+  {id:'l3', number:'LOAD-000452', customerId:'c4', status:'CARRIER_ASSIGNED', equipment:'Reefer', bookingSource:'DIRECT',
+   customerRate:3100, carrierRate:2600, carrierId:'car2', dispatcherId:'u_me_disp', riskStatus:'NORMAL', podStatus:'NOT_RECEIVED', invoiced:false, rateConfirmation:false,
+   stops:[{seq:1,type:'PICKUP',city:'Memphis',state:'TN',appt:'2026-08-14T07:00',arrival:null,departure:null,status:'PENDING'},
+          {seq:2,type:'DELIVERY',city:'Nashville',state:'TN',appt:'2026-08-14T13:00',arrival:null,departure:null,status:'PENDING'}],
+   dispatch:null, sourcing:[{carrier:'Swift Freight LLC',rate:2600,outcome:'ASSIGNED',reason:null,by:'Jamie Rivera',at:'2026-08-12T15:00'}],
+   charges:[CHARGE('Linehaul','CUSTOMER',3100,'Base linehaul'),CHARGE('Linehaul','CARRIER',2600,'Base linehaul')], invoiceId:null, carrierPayments:[]},
+
+  {id:'l4', number:'LOAD-000456', customerId:'c1', status:'IN_TRANSIT', equipment:'Dry Van', bookingSource:'QUOTE',
+   customerRate:2450, carrierRate:2050, carrierId:'car1', dispatcherId:'u_me_disp', riskStatus:'AT_RISK', riskReason:'Traffic delay reported near Memphis, TN', podStatus:'NOT_RECEIVED', invoiced:false, rateConfirmation:true,
+   stops:[{seq:1,type:'PICKUP',city:'Dallas',state:'TX',appt:'2026-08-11T08:00',arrival:'2026-08-11T08:10',departure:'2026-08-11T09:05',status:'COMPLETED'},
+          {seq:2,type:'DELIVERY',city:'Atlanta',state:'GA',appt:'2026-08-13T14:00',arrival:null,departure:null,status:'PENDING'}],
+   dispatch:{driver:'Mike Torres',phone:'(214) 555-3311',truck:'T-204',trailer:'TR-118',by:'Jamie Rivera',at:'2026-08-11T07:30'},
+   sourcing:[{carrier:'ABC Trucking',rate:2050,outcome:'ASSIGNED',reason:null,by:'Jamie Rivera',at:'2026-08-10T09:00'}],
+   checkCalls:[{at:'2026-08-12T16:00',method:'Phone',person:'Mike Torres',city:'Memphis',state:'TN',eta:'2026-08-13T15:30',onTime:false,notes:'Heavy traffic on I-40, running ~90 min behind.'}],
+   charges:[CHARGE('Linehaul','CUSTOMER',2300,'Base linehaul'),CHARGE('Fuel Surcharge','CUSTOMER',150,'Fuel surcharge'),CHARGE('Linehaul','CARRIER',1950,'Base linehaul'),CHARGE('Fuel Surcharge','CARRIER',100,'Fuel surcharge')],
+   invoiceId:null, carrierPayments:[]},
+
+  {id:'l5', number:'LOAD-000401', customerId:'c1', status:'DELIVERED', equipment:'Dry Van', bookingSource:'DIRECT',
+   customerRate:1980, carrierRate:1600, carrierId:'car1', dispatcherId:'u_me_disp', riskStatus:'NORMAL', podStatus:'PARTIAL', invoiced:false, rateConfirmation:true,
+   stops:[{seq:1,type:'PICKUP',city:'Dallas',state:'TX',appt:'2026-08-08T08:00',arrival:'2026-08-08T08:05',departure:'2026-08-08T08:50',status:'COMPLETED'},
+          {seq:2,type:'DELIVERY',city:'Oklahoma City',state:'OK',appt:'2026-08-08T14:00',arrival:'2026-08-08T13:40',departure:'2026-08-08T14:20',status:'COMPLETED'}],
+   dispatch:{driver:'Alan Brooks',phone:'(214) 555-9021',truck:'T-204',trailer:'TR-118',by:'Jamie Rivera',at:'2026-08-07T16:00'},
+   sourcing:[{carrier:'ABC Trucking',rate:1600,outcome:'ASSIGNED',reason:null,by:'Jamie Rivera',at:'2026-08-06T11:00'}], checkCalls:[],
+   charges:[CHARGE('Linehaul','CUSTOMER',1980,'Base linehaul'),CHARGE('Linehaul','CARRIER',1600,'Base linehaul')],
+   invoiceId:null, carrierPayments:[]},
+
+  {id:'l6', number:'LOAD-000390', customerId:'c4', status:'DELIVERED', equipment:'Dry Van', bookingSource:'DIRECT',
+   customerRate:2200, carrierRate:1800, carrierId:'car1', dispatcherId:'u_me_disp', riskStatus:'NORMAL', podStatus:'COMPLETE', invoiced:false, rateConfirmation:true,
+   stops:[{seq:1,type:'PICKUP',city:'Memphis',state:'TN',appt:'2026-08-05T08:00',arrival:'2026-08-05T08:00',departure:'2026-08-05T08:40',status:'COMPLETED'},
+          {seq:2,type:'DELIVERY',city:'St. Louis',state:'MO',appt:'2026-08-05T15:00',arrival:'2026-08-05T14:50',departure:'2026-08-05T15:30',status:'COMPLETED'}],
+   dispatch:{driver:'Mike Torres',phone:'(214) 555-3311',truck:'T-204',trailer:'TR-118',by:'Jamie Rivera',at:'2026-08-04T12:00'},
+   sourcing:[{carrier:'ABC Trucking',rate:1800,outcome:'ASSIGNED',reason:null,by:'Jamie Rivera',at:'2026-08-03T10:00'}], checkCalls:[],
+   charges:[CHARGE('Linehaul','CUSTOMER',2200,'Base linehaul'),CHARGE('Linehaul','CARRIER',1800,'Base linehaul')],
+   invoiceId:'inv2', carrierPayments:[{id:'cp1',amount:1800,type:'BALANCE',status:'PAID',method:'ACH',ref:'PMT-3391',preparedBy:'Priya Shah',approvedBy:'Jamie Rivera',paidAt:'2026-08-09T00:00'}]},
+
+  {id:'l7', number:'LOAD-000385', customerId:'c1', status:'CLOSED', equipment:'Dry Van', bookingSource:'DIRECT',
+   customerRate:1750, carrierRate:1400, carrierId:'car1', dispatcherId:'u_me_disp', riskStatus:'NORMAL', podStatus:'COMPLETE', invoiced:true, rateConfirmation:true,
+   stops:[{seq:1,type:'PICKUP',city:'Dallas',state:'TX',appt:'2026-08-01T08:00',arrival:'2026-08-01T08:00',departure:'2026-08-01T08:30',status:'COMPLETED'},
+          {seq:2,type:'DELIVERY',city:'Shreveport',state:'LA',appt:'2026-08-01T13:00',arrival:'2026-08-01T12:50',departure:'2026-08-01T13:20',status:'COMPLETED'}],
+   dispatch:{driver:'Alan Brooks',phone:'(214) 555-9021',truck:'T-204',trailer:'TR-118',by:'Jamie Rivera',at:'2026-07-31T09:00'},
+   sourcing:[{carrier:'ABC Trucking',rate:1400,outcome:'ASSIGNED',reason:null,by:'Jamie Rivera',at:'2026-07-30T10:00'}], checkCalls:[],
+   charges:[CHARGE('Linehaul','CUSTOMER',1750,'Base linehaul'),CHARGE('Linehaul','CARRIER',1400,'Base linehaul')],
+   invoiceId:'inv1', carrierPayments:[{id:'cp0',amount:1400,type:'BALANCE',status:'PAID',method:'ACH',ref:'PMT-3288',preparedBy:'Priya Shah',approvedBy:'Jamie Rivera',paidAt:'2026-08-04T00:00'}], closedAt:'2026-08-05T10:00'},
+
+  {id:'l8', number:'LOAD-000459', customerId:'c1', status:'RATE_CONFIRMATION', equipment:'Flatbed', bookingSource:'DIRECT',
+   customerRate:2750, carrierRate:2300, carrierId:'car1', dispatcherId:'u_me_disp', riskStatus:'NORMAL', podStatus:'NOT_RECEIVED', invoiced:false, rateConfirmation:true,
+   stops:[{seq:1,type:'PICKUP',city:'Dallas',state:'TX',appt:'2026-08-14T10:00',arrival:null,departure:null,status:'PENDING'},
+          {seq:2,type:'DELIVERY',city:'Denver',state:'CO',appt:'2026-08-15T16:00',arrival:null,departure:null,status:'PENDING'}],
+   dispatch:null, sourcing:[{carrier:'ABC Trucking',rate:2300,outcome:'ASSIGNED',reason:null,by:'Jamie Rivera',at:'2026-08-12T09:00'}],
+   charges:[CHARGE('Linehaul','CUSTOMER',2750,'Base linehaul'),CHARGE('Linehaul','CARRIER',2300,'Base linehaul')], invoiceId:null, carrierPayments:[]},
+
+  {id:'l9', number:'LOAD-000398', customerId:'c1', status:'DELIVERED', equipment:'Dry Van', bookingSource:'DIRECT',
+   customerRate:2050, carrierRate:1700, carrierId:'car2', dispatcherId:'u_me_disp', riskStatus:'NORMAL', podStatus:'NOT_RECEIVED', invoiced:true, rateConfirmation:true,
+   stops:[{seq:1,type:'PICKUP',city:'Dallas',state:'TX',appt:'2026-08-07T08:00',arrival:'2026-08-07T08:00',departure:'2026-08-07T08:30',status:'COMPLETED'},
+          {seq:2,type:'DELIVERY',city:'Little Rock',state:'AR',appt:'2026-08-07T13:00',arrival:'2026-08-07T12:55',departure:'2026-08-07T13:25',status:'COMPLETED'}],
+   dispatch:{driver:'Carlos Nunez',phone:'(901) 555-7712',truck:'S-101',trailer:'SR-77',by:'Jamie Rivera',at:'2026-08-06T09:00'},
+   sourcing:[{carrier:'Swift Freight LLC',rate:1700,outcome:'ASSIGNED',reason:null,by:'Jamie Rivera',at:'2026-08-05T10:00'}], checkCalls:[],
+   charges:[CHARGE('Linehaul','CUSTOMER',2050,'Base linehaul'),CHARGE('Linehaul','CARRIER',1700,'Base linehaul')], invoiceId:'inv3', carrierPayments:[]},
+];
+
+let INVOICES = [
+  {id:'inv1', number:'INV-000101', customerId:'c1', status:'PAID', loadIds:['l7'], total:1750, sentAt:'2026-08-02T00:00', dueDate:'2026-09-01', payments:[{amount:1750,date:'2026-08-20',method:'ACH',ref:'RCV-771',notes:'',by:'Priya Shah'}], adjustments:[]},
+  {id:'inv2', number:'INV-000108', customerId:'c4', status:'SENT', loadIds:['l6'], total:2200, sentAt:'2026-08-06T00:00', dueDate:'2026-09-05', payments:[], adjustments:[]},
+  {id:'inv3', number:'INV-000112', customerId:'c1', status:'PARTIALLY_PAID', loadIds:['l9'], total:2050, sentAt:'2026-07-20T00:00', dueDate:'2026-08-19', payments:[{amount:1000,date:'2026-08-05',method:'Check',ref:'CHK-4471',notes:'',by:'Priya Shah'}], adjustments:[]},
+];
+
+/* ---------- Derived-field recalculation (mirrors locked workflow rules) ---------- */
+function recomputePod(load){
+  const deliveryStops = load.stops.filter(s=>s.type==='DELIVERY');
+  const withDocs = deliveryStops.filter(s=>s.podUploaded).length;
+  if(withDocs===0) load.podStatus='NOT_RECEIVED';
+  else if(withDocs<deliveryStops.length) load.podStatus='PARTIAL';
+  else load.podStatus='COMPLETE';
+}
+function recomputeLoadStatusFromStops(load){
+  const pickups = load.stops.filter(s=>s.type==='PICKUP');
+  const deliveries = load.stops.filter(s=>s.type==='DELIVERY').sort((a,b)=>a.seq-b.seq);
+  if(!['DISPATCHED','PICKUP','IN_TRANSIT'].includes(load.status)) return;
+  const firstPickupTouched = pickups.some(s=>s.status!=='PENDING');
+  const allPickupsDone = pickups.every(s=>s.status==='COMPLETED');
+  const finalDelivery = deliveries[deliveries.length-1];
+  if(finalDelivery && finalDelivery.status==='COMPLETED' && allPickupsDone){ load.status='DELIVERED'; auditLog('Load Status Advanced — Delivered',load.number); return; }
+  if(allPickupsDone && load.status==='PICKUP'){ load.status='IN_TRANSIT'; auditLog('Load Status Advanced — In Transit',load.number); return; }
+  if(firstPickupTouched && load.status==='DISPATCHED'){ load.status='PICKUP'; auditLog('Load Status Advanced — Pickup',load.number); return; }
+}
+function loadTotalCustomer(l){ return l.charges.filter(c=>c.side==='CUSTOMER').reduce((s,c)=>s+c.amount,0); }
+function loadTotalCarrier(l){ return l.charges.filter(c=>c.side==='CARRIER').reduce((s,c)=>s+c.amount,0); }
+function loadMargin(l){ const r=loadTotalCustomer(l), c=loadTotalCarrier(l); return {gp:r-c, pct:r?((r-c)/r*100):0}; }
+function loadCarrierPaid(l){ return l.carrierPayments.filter(p=>p.status==='PAID').reduce((s,p)=>s+p.amount,0); }
+function invoiceRemaining(inv){ const paid=inv.payments.reduce((s,p)=>s+p.amount,0); const adj=inv.adjustments.reduce((s,a)=>s+(a.type==='CREDIT'?-a.amount:a.amount),0); return inv.total+adj-paid; }
+function invoiceIsOverdue(inv){ return ['SENT','PARTIALLY_PAID'].includes(inv.status) && new Date(inv.dueDate)<TODAY && invoiceRemaining(inv)>0; }
+function customerById(id){ return CUSTOMERS.find(c=>c.id===id); }
+function carrierById(id){ return CARRIERS.find(c=>c.id===id); }
+function loadById(id){ return LOADS.find(l=>l.id===id); }
+function invoiceById(id){ return INVOICES.find(i=>i.id===id); }
+
+/* ---------- Status badge mapping (per UI_UX_DESIGN.md §5.2.1 / §5.4.5-6) ---------- */
+const LOAD_STATUS_LABEL={BOOKED:'Booked',CARRIER_SOURCING:'Carrier Sourcing',CARRIER_ASSIGNED:'Carrier Assigned',RATE_CONFIRMATION:'Rate Confirmation',DISPATCHED:'Dispatched',PICKUP:'Pickup',IN_TRANSIT:'In Transit',DELIVERED:'Delivered',CLOSED:'Closed'};
+function loadStatusBadge(s){ const v = ['IN_TRANSIT'].includes(s)?'info':['DELIVERED','CLOSED'].includes(s)?'success':'brand'; return badge(LOAD_STATUS_LABEL[s],v); }
+function stopStatusBadge(s){ return badge(s[0]+s.slice(1).toLowerCase(), s==='PENDING'?'neutral':s==='ARRIVED'?'brand':'success'); }
+function carrierStatusBadge(s){ return badge(s[0]+s.slice(1).toLowerCase(), s==='ACTIVE'?'success':s==='BLOCKED'?'danger':'neutral'); }
+function customerStatusBadge(s){ return badge(s[0]+s.slice(1).toLowerCase(), s==='ACTIVE'?'success':s==='BLOCKED'?'danger':'neutral'); }
+function eligBadge(e){ return e.eligible?badge('✓ Eligible','success'):badge('✗ Ineligible','danger'); }
+function podBadge(s){ return badge(s==='COMPLETE'?'Complete':s==='PARTIAL'?'Partial':'Not Received', s==='COMPLETE'?'success':'warning'); }
+function riskBadge(l){ if(!l.riskStatus||l.riskStatus==='NORMAL') return ''; return badge(l.riskStatus==='AT_RISK'?'At Risk':'Delayed', l.riskStatus==='AT_RISK'?'warning':'danger'); }
+function invStatusBadge(inv){ if(invoiceIsOverdue(inv)) return badge('Overdue','danger'); const m={DRAFT:'neutral',SENT:'brand',PARTIALLY_PAID:'warning',PAID:'success',VOID:'neutral',CREDITED:'success'}; const lbl={DRAFT:'Draft',SENT:'Sent',PARTIALLY_PAID:'Partially Paid',PAID:'Paid',VOID:'Void',CREDITED:'Credited'}; return badge(lbl[inv.status],m[inv.status]); }
+function docStatusBadge(s){ const m={PENDING_REVIEW:'warning',APPROVED:'success',REJECTED:'danger',EXPIRED:'danger'}; const lbl={PENDING_REVIEW:'Pending Review',APPROVED:'Approved',REJECTED:'Rejected',EXPIRED:'Expired'}; return badge(lbl[s]||s,m[s]||'neutral'); }
+function scanBadge(s){ const m={PENDING:'neutral',CLEAN:'success',INFECTED:'danger',SCAN_FAILED:'danger'}; return badge(s==='PENDING'?'Scanning…':s[0]+s.slice(1).toLowerCase(), m[s]); }
+
+/* =========================================================
+   NAV / ROUTING
+   ========================================================= */
+const NAV = [
+  {id:'dashboard', label:'Dashboard', icon:'dashboard'},
+  {id:'loads', label:'Loads', icon:'loads', sub:[
+    {id:'dispatch-table', label:'Dispatch Board — Table'},
+    {id:'dispatch-kanban', label:'Dispatch Board — Kanban'},
+    {id:'dispatch-calendar', label:'Dispatch Board — Calendar'},
+  ]},
+  {id:'customers', label:'Customers', icon:'customers'},
+  {id:'carriers', label:'Carriers', icon:'carriers'},
+  {id:'billing', label:'Billing', icon:'billing', roleHide:()=>!canSeeFinancials(), sub:[
+    {id:'billing-invoices', label:'Customer Invoices'},
+  ]},
+  {id:'documents', label:'Documents', icon:'documents'},
+  {id:'reports', label:'Reports', icon:'reports'},
+];
+
+let VIEW = 'dispatch-table';
+let PARAMS = {};
+function nav(view, params={}){ VIEW=view; PARAMS=params; closeOverlay(); render(); window.scrollTo(0,0); }
+
+function topLevelFor(view){
+  if(view.startsWith('dispatch-')) return 'loads';
+  if(view.startsWith('billing')) return 'billing';
+  return view;
+}
+
+function sidebarCollapsed(){ return document.getElementById('sidebar').classList.contains('collapsed'); }
+function toggleSidebar(){ document.getElementById('sidebar').classList.toggle('collapsed'); }
+
+function renderSidebar(){
+  const top = topLevelFor(VIEW);
+  let html='';
+  NAV.forEach(item=>{
+    if(item.roleHide && item.roleHide()) return;
+    const active = item.id===top;
+    html += `<div class="nav-item ${active?'active':''}" onclick="nav('${item.sub?item.sub[0].id:item.id}')">${icon(item.icon,18)}<span class="label">${item.label}</span></div>`;
+    if(item.sub && active){
+      html += `<div class="nav-sub">` + item.sub.map(s=>`<div class="nav-sub-item ${VIEW===s.id?'active':''}" onclick="event.stopPropagation();nav('${s.id}')">${s.label}</div>`).join('') + `</div>`;
+    }
+  });
+  document.getElementById('sideNav').innerHTML = html;
+}
+
+function renderTopbar(){
+  const unread = NOTIFICATIONS.filter(n=>!n.read).length;
+  document.getElementById('topbar').innerHTML = `
+    <div class="top-search" onclick="openGlobalSearch()">${icon('search',15)} <span>Search loads, customers, carriers…</span> <span class="muted small" style="margin-left:auto">⌘K</span></div>
+    <div class="top-spacer"></div>
+    <span class="demo-tag" title="Prototype-only control to demonstrate permission-based UI">PROTOTYPE: simulate role</span>
+    <select class="role-select" onchange="ROLE=this.value;render();toast('Viewing as '+ALL_ROLES[ROLE],'info')">
+      ${Object.entries(ALL_ROLES).map(([k,v])=>`<option value="${k}" ${ROLE===k?'selected':''}>${v}</option>`).join('')}
+    </select>
+    <button class="icon-btn" onclick="openNotifications()" title="Notifications">${icon('bell',18)}${unread?`<span class="badge-dot">${unread}</span>`:''}</button>
+    <button class="avatar" onclick="openUserMenu(event)">${initials(ME.name)}</button>
+  `;
+}
+
+function openGlobalSearch(){
+  openModal(`
+    <div class="panel-body">
+      <input type="text" placeholder="Search loads, customers, carriers, invoices…" autofocus style="font-size:15px;padding:10px 12px">
+      <div class="muted small" style="margin-top:14px">Type to search across Loads, Customers, Carriers, and Invoices. Results respect your current role's visibility — try switching the simulated role above and searching again.</div>
+      <div class="muted small" style="margin-top:8px">Press <b>Esc</b> to close.</div>
+    </div>`);
+}
+
+function openNotifications(){
+  const rows = NOTIFICATIONS.map(n=>`
+    <div style="display:flex;gap:10px;padding:10px 0;border-bottom:1px solid var(--n-200);cursor:pointer" onclick="markRead('${n.id}')">
+      <div style="width:8px;height:8px;border-radius:50%;margin-top:5px;flex:0 0 8px;background:${n.read?'transparent':'var(--brand-600)'}"></div>
+      <div style="flex:1"><div style="font-size:13px">${n.msg}</div><div class="muted small">${fmtDateTime(n.at)}</div></div>
+    </div>`).join('') || `<div class="empty-state">${icon('bell',30)}<div class="msg">You're all caught up</div></div>`;
+  openModal(`<div class="panel-head"><h3>Notifications</h3><button class="btn btn-ghost btn-sm" onclick="markAllRead()">Mark all as read</button><button class="x-btn" onclick="closeOverlay()">${icon('close',18)}</button></div>
+    <div class="panel-body">${rows}</div>`);
+}
+function markRead(id){ const n=NOTIFICATIONS.find(x=>x.id===id); if(n){n.read=true;} openNotifications(); renderTopbar(); }
+function markAllRead(){ NOTIFICATIONS.forEach(n=>n.read=true); openNotifications(); renderTopbar(); toast('All notifications marked as read','success'); }
+
+function openUserMenu(ev){
+  ev.stopPropagation();
+  openModal(`<div class="panel-head"><h3>${ME.name}</h3><button class="x-btn" onclick="closeOverlay()">${icon('close',18)}</button></div>
+    <div class="panel-body">
+      <div class="muted small" style="margin-bottom:14px">Role in this organization: <b>${ALL_ROLES[ROLE]}</b></div>
+      <button class="btn btn-secondary" style="width:100%;justify-content:center" onclick="openEditProfile()">Edit Profile</button>
+      <div class="divider"></div>
+      <button class="btn btn-secondary" style="width:100%;justify-content:center" onclick="closeOverlay();toast('Logged out (prototype)','info')">Log out</button>
+    </div>`,{});
+}
+function openEditProfile(){
+  openModal(`<div class="panel-head"><h3>Edit Profile</h3><button class="x-btn" onclick="closeOverlay()">${icon('close',18)}</button></div>
+    <div class="panel-body">
+      <label class="form-label">Display Name</label><input type="text" value="${ME.name}" id="profName">
+      <label class="form-label">New Password</label><input type="text" placeholder="Leave blank to keep current">
+      <div class="helptext">Organization membership, roles, and permissions are managed by your Admin — not editable here (Workflow 1).</div>
+    </div>
+    <div class="panel-foot"><button class="btn btn-secondary" onclick="closeOverlay()">Cancel</button><button class="btn btn-primary" onclick="ME.name=document.getElementById('profName').value;closeOverlay();renderTopbar();toast('Profile updated','success')">Save</button></div>`,{blockBackdrop:true});
+}
+document.addEventListener('click',()=>{});
+
+/* =========================================================
+   MAIN RENDER DISPATCH
+   ========================================================= */
+function render(){
+  renderSidebar();
+  renderTopbar();
+  const page=document.getElementById('page');
+  try{
+    if(VIEW==='dashboard') page.innerHTML=renderDashboard();
+    else if(VIEW==='dispatch-table') page.innerHTML=renderDispatchTable();
+    else if(VIEW==='dispatch-kanban') page.innerHTML=renderDispatchKanban();
+    else if(VIEW==='dispatch-calendar') page.innerHTML=renderDispatchCalendar();
+    else if(VIEW==='load-detail') page.innerHTML=renderLoadDetail(PARAMS.id);
+    else if(VIEW==='customers') page.innerHTML=renderCustomerList();
+    else if(VIEW==='customer-detail') page.innerHTML=renderCustomerDetail(PARAMS.id);
+    else if(VIEW==='carriers') page.innerHTML=renderCarrierList();
+    else if(VIEW==='carrier-detail') page.innerHTML=renderCarrierDetail(PARAMS.id);
+    else if(VIEW==='billing-invoices') page.innerHTML=renderInvoiceList();
+    else if(VIEW==='invoice-builder') page.innerHTML=renderInvoiceBuilder();
+    else if(VIEW==='invoice-detail') page.innerHTML=renderInvoiceDetail(PARAMS.id);
+    else if(VIEW==='load-closing') page.innerHTML=renderLoadClosing(PARAMS.id);
+    else if(VIEW==='documents') page.innerHTML=renderDocumentCenter();
+    else if(VIEW==='reports') page.innerHTML=`<div class="page-header"><h1>Reports</h1></div><div class="card"><p class="muted">Not part of this prototype's 8 critical screens — reports/dashboards were scoped separately in UI_UX_DESIGN.md.</p></div>`;
+    else page.innerHTML='<div class="card">Not found.</div>';
+    afterRenderHook();
+  }catch(err){
+    page.innerHTML = `<div class="card"><div class="alert alert-danger">${icon('alertTri',16)}<div><b>Something went wrong loading this page.</b><div class="small">${err.message}</div></div></div><button class="btn btn-secondary" onclick="render()">Retry</button></div>`;
+    console.error(err);
+  }
+}
+function afterRenderHook(){ if(VIEW==='dispatch-table') renderTableBody(); }
+
+/* ---------- Context-sensitive primary action (Load Detail header + Drawer) ---------- */
+function primaryActionFor(l){
+  switch(l.status){
+    case 'BOOKED': return isDispatchActor()?{label:'Begin Carrier Sourcing', action:`beginSourcing('${l.id}')`}:null;
+    case 'CARRIER_SOURCING': return isDispatchActor()?{label:'Assign Carrier', action:`openAssignCarrier('${l.id}')`}:null;
+    case 'CARRIER_ASSIGNED': return isDispatchActor()?{label:'Generate Rate Confirmation', action:`openGenerateRateConfirmation('${l.id}')`}:null;
+    case 'RATE_CONFIRMATION': return isDispatchActor()?{label:'Dispatch Load', action:`openDispatchFlow('${l.id}')`}:null;
+    case 'DISPATCHED': case 'PICKUP': case 'IN_TRANSIT':
+      const next = l.stops.find(s=>s.status!=='COMPLETED');
+      return isDispatchActor()&&next?{label:(next.status==='PENDING'?'Record Arrival — ':'Record Departure — ')+next.city, action:`nav('load-detail',{id:'${l.id}',tab:'stops'})`}:null;
+    case 'DELIVERED':
+      if(isInvoiceActor()){ return l.invoiceId?{label:'View Customer Invoice', action:`nav('invoice-detail',{id:'${l.invoiceId}'})`}:{label:'Create Customer Invoice', action:`startInvoiceFor('${l.id}')`}; }
+      return null;
+    default: return null;
+  }
+}
+
+/* ---------- Assisted transition: Begin Sourcing (direct, no extra data) ---------- */
+function beginSourcing(id){ const l=loadById(id); l.status='CARRIER_SOURCING'; auditLog('Load Entered Carrier Sourcing', l.number); toast(l.number+' moved to Carrier Sourcing','success'); render(); if(VIEW==='load-detail') nav('load-detail',{id}); }
+
+/* ---------- Assisted transition: Assign Carrier ---------- */
+function openAssignCarrier(loadId){
+  const l=loadById(loadId);
+  openModal(`<div class="panel-head"><h3>Assign Carrier — ${l.number}</h3><button class="x-btn" onclick="closeOverlay()">${icon('close',18)}</button></div>
+  <div class="panel-body">
+    <div class="helptext" style="margin-bottom:10px">Historical carrier rates on this lane are shown for reference only — the system never auto-fills the carrier rate (Workflow 5 §5.2).</div>
+    <label class="form-label">Carrier <span class="req-note">*</span></label>
+    <select class="form-select" id="acCarrier">${CARRIERS.map(c=>{const e=computeEligibility(c);return `<option value="${c.id}" ${!e.eligible?'disabled':''}>${c.name} ${e.eligible?'✓ Eligible':'— Ineligible: '+e.reasons[0]}</option>`;}).join('')}</select>
+    <div id="acEligNote"></div>
+    <label class="form-label">Carrier Rate <span class="req-note">*</span></label><input type="number" id="acRate" placeholder="e.g. 1950.00">
+  </div>
+  <div class="panel-foot"><button class="btn btn-secondary" onclick="closeOverlay()">Cancel</button><button class="btn btn-primary" onclick="confirmAssignCarrier('${loadId}')">Assign</button></div>`,{blockBackdrop:true});
+  setTimeout(()=>{ document.getElementById('acCarrier').onchange=()=>updateEligNote(); updateEligNote(); },0);
+}
+function updateEligNote(){
+  const sel=document.getElementById('acCarrier'); if(!sel) return; const c=carrierById(sel.value); const e=computeEligibility(c);
+  document.getElementById('acEligNote').innerHTML = e.eligible?'':`<div class="alert alert-danger" style="margin-top:6px">${icon('alertTri',14)}<div>${c.name} is ineligible: ${e.reasons.join('; ')}. Select a different carrier.</div></div>`;
+}
+function confirmAssignCarrier(loadId){
+  const l=loadById(loadId); const cid=document.getElementById('acCarrier').value; const c=carrierById(cid); const e=computeEligibility(c);
+  const rate=parseFloat(document.getElementById('acRate').value);
+  if(!e.eligible){ toast('Cannot assign — carrier is ineligible','danger'); return; }
+  if(!rate){ toast('Carrier rate is required','danger'); return; }
+  l.carrierId=cid; l.carrierRate=rate; l.status='CARRIER_ASSIGNED';
+  l.charges.push(CHARGE('Linehaul','CARRIER',rate,'Base linehaul'));
+  l.sourcing.push({carrier:c.name,rate,outcome:'ASSIGNED',reason:null,by:ME.name,at:new Date().toISOString()});
+  auditLog('Carrier Assigned', l.number+' → '+c.name+' @ '+fmtMoney(rate));
+  toast('Carrier assigned — '+c.name,'success'); closeOverlay();
+  if(VIEW==='load-detail') nav('load-detail',{id:loadId}); else render();
+}
+function openCarrierReject(loadId){
+  const l=loadById(loadId);
+  openModal(`<div class="panel-head"><h3>Carrier Rejected — ${l.number}</h3><button class="x-btn" onclick="closeOverlay()">${icon('close',18)}</button></div>
+  <div class="panel-body"><label class="form-label">Rejection Reason <span class="req-note">*</span></label><textarea id="crReason" placeholder="Why did the carrier back out?"></textarea></div>
+  <div class="panel-foot"><button class="btn btn-secondary" onclick="closeOverlay()">Cancel</button><button class="btn btn-destructive" onclick="confirmCarrierReject('${loadId}')">Confirm Rejection</button></div>`,{blockBackdrop:true});
+}
+function confirmCarrierReject(loadId){
+  const reason=document.getElementById('crReason').value; if(!reason.trim()){ toast('A rejection reason is required','danger'); return; }
+  const l=loadById(loadId); const c=carrierById(l.carrierId);
+  const attempt=l.sourcing.find(s=>s.carrier===c.name&&s.outcome==='ASSIGNED'); if(attempt){ attempt.outcome='REJECTED_AFTER_ASSIGNMENT'; attempt.reason=reason; }
+  auditLog('Carrier Rejected — Returned to Sourcing', l.number+' ('+c.name+'): '+reason);
+  l.carrierId=null; l.carrierRate=null; l.status='CARRIER_SOURCING';
+  toast('Carrier rejection recorded — load returned to sourcing','warning'); closeOverlay();
+  if(VIEW==='load-detail') nav('load-detail',{id:loadId}); else render();
+}
+
+/* ---------- Assisted transition: Generate Rate Confirmation ---------- */
+function openGenerateRateConfirmation(loadId){
+  const l=loadById(loadId); const c=carrierById(l.carrierId);
+  openModal(`<div class="panel-head"><h3>Generate Rate Confirmation — ${l.number}</h3><button class="x-btn" onclick="closeOverlay()">${icon('close',18)}</button></div>
+  <div class="panel-body"><div class="kv-list">
+    <div class="kv-row"><span class="k">Carrier</span><span class="v">${c.name}</span></div>
+    <div class="kv-row"><span class="k">Carrier Rate</span><span class="v tabular">${fmtMoney(l.carrierRate)}</span></div>
+  </div><div class="helptext" style="margin-top:10px">Driver/truck/trailer are not required to generate this document (Workflow 5 §5.7) — those are captured at Dispatch.</div></div>
+  <div class="panel-foot"><button class="btn btn-secondary" onclick="closeOverlay()">Cancel</button><button class="btn btn-primary" onclick="confirmGenerateRateConfirmation('${loadId}')">Generate &amp; Send</button></div>`,{blockBackdrop:true});
+}
+function confirmGenerateRateConfirmation(loadId){
+  const l=loadById(loadId); l.rateConfirmation=true; l.status='RATE_CONFIRMATION';
+  auditLog('Rate Confirmation Generated', l.number); auditLog('Rate Confirmation Sent', l.number+' emailed to carrier');
+  toast('Rate Confirmation generated and sent','success'); closeOverlay();
+  if(VIEW==='load-detail') nav('load-detail',{id:loadId}); else render();
+}
+
+/* ---------- Assisted transition: Dispatch Load ---------- */
+function openDispatchFlow(loadId){
+  const l=loadById(loadId); const c=carrierById(l.carrierId);
+  const drivers=c.drivers.filter(d=>d.active), trucks=c.trucks.filter(t=>t.active), trailers=c.trailers.filter(t=>t.active);
+  openModal(`<div class="panel-head"><h3>Dispatch — ${l.number}</h3><button class="x-btn" onclick="closeOverlay()">${icon('close',18)}</button></div>
+  <div class="panel-body">
+    <label class="form-label">Driver <span class="req-note">*</span></label>
+    <select class="form-select" id="dpDriver"><option value="">— Select or enter manually —</option>${drivers.map(d=>`<option value="${d.name}|${d.phone}">${d.name} (${d.phone})</option>`).join('')}</select>
+    <input type="text" id="dpDriverManual" placeholder="Or type driver name" style="margin-top:6px">
+    <label class="form-label">Truck # <span class="req-note">*</span></label>
+    <select class="form-select" id="dpTruck"><option value="">— Select or enter manually —</option>${trucks.map(t=>`<option value="${t.unit}">${t.unit} (${t.type})</option>`).join('')}</select>
+    <label class="form-label">Trailer # <span class="req-note">*</span></label>
+    <select class="form-select" id="dpTrailer"><option value="">— Select or enter manually —</option>${trailers.map(t=>`<option value="${t.unit}">${t.unit} (${t.type})</option>`).join('')}</select>
+  </div>
+  <div class="panel-foot"><button class="btn btn-secondary" onclick="closeOverlay()">Cancel</button><button class="btn btn-primary" onclick="confirmDispatch('${loadId}')">Dispatch Load</button></div>`,{blockBackdrop:true});
+}
+function confirmDispatch(loadId){
+  const l=loadById(loadId);
+  const driverSel=document.getElementById('dpDriver').value; const driverManual=document.getElementById('dpDriverManual').value;
+  const truck=document.getElementById('dpTruck').value, trailer=document.getElementById('dpTrailer').value;
+  const driverName = driverManual || (driverSel?driverSel.split('|')[0]:''); const driverPhone = driverSel?driverSel.split('|')[1]:'';
+  if(!driverName||!truck||!trailer){ toast('Driver, truck, and trailer are all required to dispatch','danger'); return; }
+  l.dispatch={driver:driverName,phone:driverPhone,truck,trailer,by:ME.name,at:new Date().toISOString()};
+  l.status='DISPATCHED';
+  auditLog('Load Dispatched', l.number+' — '+driverName+' / '+truck+' / '+trailer);
+  toast(l.number+' dispatched','success'); closeOverlay();
+  if(VIEW==='load-detail') nav('load-detail',{id:loadId}); else render();
+}
+function startInvoiceFor(loadId){ IB_STEP=1; IB_CUSTOMER=loadById(loadId).customerId; IB_SELECTED=new Set([loadId]); nav('invoice-builder'); }
+
+/* =========================================================
+   5.4.2 DISPATCH BOARD — KANBAN VIEW
+   ========================================================= */
+const KANBAN_COLS = ['BOOKED','CARRIER_SOURCING','CARRIER_ASSIGNED','RATE_CONFIRMATION','DISPATCHED','PICKUP','IN_TRANSIT','DELIVERED'];
+let KANBAN_SHOW_CLOSED = false;
+
+function kanbanTransition(from,to){
+  if(from===to) return {type:'blocked'};
+  if(from==='BOOKED'&&to==='CARRIER_SOURCING') return {type:'direct', fn:()=>beginSourcing};
+  if(from==='CARRIER_SOURCING'&&to==='CARRIER_ASSIGNED') return {type:'assisted', open:openAssignCarrier};
+  if(from==='CARRIER_ASSIGNED'&&to==='RATE_CONFIRMATION') return {type:'assisted', open:openGenerateRateConfirmation};
+  if(from==='CARRIER_ASSIGNED'&&to==='CARRIER_SOURCING') return {type:'assisted', open:openCarrierReject};
+  if(from==='RATE_CONFIRMATION'&&to==='DISPATCHED') return {type:'assisted', open:openDispatchFlow};
+  if(['PICKUP','IN_TRANSIT','DELIVERED'].includes(to)) return {type:'blocked', message:'This status advances automatically as pickup/delivery stops are recorded — open the load to update stop status.'};
+  if(to==='CLOSED') return {type:'blocked', message:'Closing requires the full readiness checklist — open Load Closing instead.'};
+  return {type:'blocked', message:'Not a valid direct transition.'};
+}
+function cardDraggable(status){ return isDispatchActor() && ['BOOKED','CARRIER_SOURCING','CARRIER_ASSIGNED','RATE_CONFIRMATION'].includes(status); }
+function moveToOptions(status){
+  const opts=[];
+  if(status==='BOOKED') opts.push({to:'CARRIER_SOURCING', label:'Begin Carrier Sourcing'});
+  if(status==='CARRIER_SOURCING') opts.push({to:'CARRIER_ASSIGNED', label:'Assign Carrier…'});
+  if(status==='CARRIER_ASSIGNED'){ opts.push({to:'RATE_CONFIRMATION', label:'Generate Rate Confirmation…'}); opts.push({to:'CARRIER_SOURCING', label:'Carrier Rejected…'}); }
+  if(status==='RATE_CONFIRMATION') opts.push({to:'DISPATCHED', label:'Dispatch Load…'});
+  return opts;
+}
+
+function renderDispatchKanban(){
+  const rows = scopedLoads().filter(l=> KANBAN_SHOW_CLOSED ? true : l.status!=='CLOSED');
+  const cols = KANBAN_SHOW_CLOSED ? [...KANBAN_COLS,'CLOSED'] : KANBAN_COLS;
+  const bySort = arr => arr.slice().sort((a,b)=> new Date(nextDateFor(a)) - new Date(nextDateFor(b)));
+  const colHtml = cols.map(status=>{
+    const items = bySort(rows.filter(l=>l.status===status));
+    return `<div class="kcol" data-status="${status}" ondragover="onKanbanDragOver(event)" ondragleave="this.classList.remove('drop-hover')" ondrop="onKanbanDrop(event,'${status}')">
+      <div class="kcol-head"><span>${LOAD_STATUS_LABEL[status]}</span><span class="count-pill">${items.length}</span></div>
+      <div class="kcol-body">${items.map(l=>kanbanCard(l)).join('') || '<div class="muted small" style="padding:10px;text-align:center">No loads</div>'}</div>
+    </div>`;
+  }).join('');
+  return `<div class="page-header">
+    <div class="crumb">Loads › Dispatch Board</div>
+    <div class="header-row"><h1>Dispatch Board</h1>
+      <div class="tabs" style="border:none;margin:0"><div class="tab" onclick="nav('dispatch-table')">Table</div><div class="tab active">Kanban</div><div class="tab" onclick="nav('dispatch-calendar')">Calendar</div></div>
+      <div class="spacer"></div>
+      ${isCreatorRole()?`<button class="btn btn-primary" onclick="openNewLoadChoice()">${icon('plus',15)} New Load</button>`:''}
+    </div>
+  </div>
+  <div class="toolbar">
+    <div class="search-mini">${icon('search',14)}<input type="text" placeholder="Search loads…" value="${DB_FILTERS.search}" oninput="DB_FILTERS.search=this.value;render()"></div>
+    <select class="select-mini" onchange="DB_FILTERS.customer=this.value;render()"><option value="">All Customers</option>${CUSTOMERS.map(c=>`<option value="${c.id}" ${DB_FILTERS.customer===c.id?'selected':''}>${c.name}</option>`).join('')}</select>
+    <label class="chip" style="cursor:pointer"><input type="checkbox" style="margin-right:5px" ${KANBAN_SHOW_CLOSED?'checked':''} onchange="KANBAN_SHOW_CLOSED=this.checked;render()">Show Closed</label>
+    <span class="muted small" style="margin-left:auto">Drag a card, or use its <b>⋮ Move to…</b> menu (keyboard-accessible alternative, §INT-13)</span>
+  </div>
+  <div class="kanban-wrap">${colHtml}</div>`;
+}
+function nextDateFor(l){ const s = l.stops.find(s=>s.status!=='COMPLETED') || l.stops[0]; return s?s.appt:'2099-01-01'; }
+function kanbanCard(l){
+  const cust=customerById(l.customerId); const carr=l.carrierId?carrierById(l.carrierId):null;
+  const d = nextDateFor(l);
+  const draggable = cardDraggable(l.status);
+  const riskCls = l.riskStatus==='AT_RISK'?'risk-warning':l.riskStatus==='DELAYED'?'risk-danger':'';
+  const moveOpts = moveToOptions(l.status);
+  return `<div class="kcard ${riskCls}" draggable="${draggable}" ondragstart="onKanbanDragStart(event,'${l.id}')" ondragend="this.classList.remove('dragging')" onclick="openLoadDrawer('${l.id}')">
+    <div class="kc-top"><div><div class="kc-load">${l.number}</div><div class="kc-cust">${cust.name}</div></div>
+    <button class="kc-menu-btn" onclick="event.stopPropagation();openKanbanCardMenu(event,'${l.id}')">${icon('kebab',15)}</button></div>
+    <div class="kc-meta"><span>${carr?carr.name:'Unassigned'}</span><span>${fmtDate(d)}</span></div>
+  </div>`;
+}
+function openKanbanCardMenu(ev,id){
+  const l=loadById(id); const opts=moveToOptions(l.status);
+  openModal(`<div class="panel-head"><h3>${l.number}</h3><button class="x-btn" onclick="closeOverlay()">${icon('close',18)}</button></div>
+  <div class="panel-body" style="display:flex;flex-direction:column;gap:4px">
+    ${opts.length?opts.map(o=>`<button class="btn btn-secondary" style="justify-content:flex-start" onclick="closeOverlay();kanbanMoveTo('${id}','${o.to}')">${o.label}</button>`).join(''):'<div class="muted small">No manual transition available from this status — it advances automatically as work progresses.</div>'}
+    <div class="divider"></div>
+    <button class="btn btn-secondary" style="justify-content:flex-start" onclick="closeOverlay();nav('load-detail',{id:'${id}'})">Open Full Detail</button>
+  </div>`);
+}
+function kanbanMoveTo(id,to){
+  const l=loadById(id); const t=kanbanTransition(l.status,to);
+  if(t.type==='direct'){ beginSourcing(id); }
+  else if(t.type==='assisted'){ t.open(id); }
+}
+let DRAG_ID=null;
+function onKanbanDragStart(ev,id){ DRAG_ID=id; ev.target.classList.add('dragging'); ev.dataTransfer.effectAllowed='move'; }
+function onKanbanDragOver(ev){ const l=loadById(DRAG_ID); if(!l) return; const to=ev.currentTarget.dataset.status; const t=kanbanTransition(l.status,to); if(t.type!=='blocked'){ ev.preventDefault(); ev.currentTarget.classList.add('drop-hover'); } }
+function onKanbanDrop(ev,to){
+  ev.preventDefault(); ev.currentTarget.classList.remove('drop-hover');
+  const l=loadById(DRAG_ID); if(!l) return; const t=kanbanTransition(l.status,to);
+  if(t.type==='blocked'){ toast(t.message||'Not a valid transition','warning'); return; }
+  if(t.type==='direct'){ beginSourcing(DRAG_ID); }
+  else if(t.type==='assisted'){ t.open(DRAG_ID); }
+}
+
+/* =========================================================
+   5.4.3 DISPATCH BOARD — CALENDAR VIEW (Week)
+   ========================================================= */
+const WEEK_START = new Date('2026-08-10T00:00:00'); // Mon
+const CAL_HOURS = [6,7,8,9,10,11,12,13,14,15,16,17,18,19];
+function renderDispatchCalendar(){
+  const days = [...Array(7)].map((_,i)=>{ const d=new Date(WEEK_START); d.setDate(d.getDate()+i); return d; });
+  const allStops = [];
+  scopedLoads({includeAll:true}).forEach(l=>{}); // no-op, keep scoping consistent
+  LOADS.forEach(l=>l.stops.forEach(s=>{ if(s.appt) allStops.push({load:l, stop:s}); }));
+  const unscheduled = []; // in this dataset all stops have appt; kept for completeness of the pattern
+
+  const headRow = `<div class="cal-headcell" style="border-left:none"></div>` + days.map(d=>`<div class="cal-headcell">${d.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'})}</div>`).join('');
+  const bodyRows = CAL_HOURS.map(h=>{
+    const timeCell = `<div class="cal-timecell">${h%12||12}${h<12?'a':'p'}</div>`;
+    const dayCells = days.map(d=>{
+      const dayStr = d.toISOString().slice(0,10);
+      const items = allStops.filter(x=> x.stop.appt.slice(0,10)===dayStr && parseInt(x.stop.appt.slice(11,13))===h);
+      return `<div class="cal-cell">${items.map(x=>calEvent(x.load,x.stop)).join('')}</div>`;
+    }).join('');
+    return timeCell+dayCells;
+  }).join('');
+  return `<div class="page-header">
+    <div class="crumb">Loads › Dispatch Board</div>
+    <div class="header-row"><h1>Dispatch Board</h1>
+      <div class="tabs" style="border:none;margin:0"><div class="tab" onclick="nav('dispatch-table')">Table</div><div class="tab" onclick="nav('dispatch-kanban')">Kanban</div><div class="tab active">Calendar</div></div>
+      <div class="spacer"></div>
+      ${isCreatorRole()?`<button class="btn btn-primary" onclick="openNewLoadChoice()">${icon('plus',15)} New Load</button>`:''}
+    </div>
+  </div>
+  <div class="toolbar">
+    <button class="btn btn-secondary btn-sm">${icon('chevronLeft',14)}</button>
+    <b class="small">Aug 10 – Aug 16, 2026</b>
+    <button class="btn btn-secondary btn-sm" style="transform:rotate(180deg)">${icon('chevronLeft',14)}</button>
+    <button class="btn btn-ghost btn-sm">Today</button>
+    <div class="tabs" style="border:none;margin:0 0 0 auto"><div class="tab active" style="padding:6px 10px">Week</div><div class="tab" style="padding:6px 10px" onclick="toast('Day view — same data, single column (prototype uses Week as default per §5.6 DB-C-5)','info')">Day</div></div>
+  </div>
+  <div class="cal-grid">${headRow}${bodyRows}</div>
+  ${unscheduled.length?`<div class="card" style="margin-top:12px"><h3>Unscheduled Stops (${unscheduled.length})</h3></div>`:''}
+  `;
+}
+function calEvent(l,s){
+  const overdue = new Date(s.appt) < TODAY && s.status!=='COMPLETED';
+  const cls = overdue ? 'st-overdue' : 'st-'+s.status.toLowerCase();
+  const timeStr = new Date(s.appt).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'});
+  return `<div class="cal-event ${cls}" onclick="event.stopPropagation();openLoadDrawer('${l.id}')" title="${l.number} — ${s.type} — ${s.city}, ${s.state}">
+    <span class="ce-time">${timeStr}</span> ${s.type==='PICKUP'?'⬆':'⬇'} ${l.number}
+    <div style="display:flex;gap:4px;margin-top:2px"><button class="btn btn-ghost btn-sm" style="padding:1px 4px;font-size:9.5px" onclick="event.stopPropagation();openReschedule('${l.id}',${s.seq})">Reschedule</button></div>
+  </div>`;
+}
+function openReschedule(loadId,seq){
+  const l=loadById(loadId); const s=l.stops.find(x=>x.seq===seq);
+  openModal(`<div class="panel-head"><h3>Reschedule Stop — ${l.number}</h3><button class="x-btn" onclick="closeOverlay()">${icon('close',18)}</button></div>
+  <div class="panel-body">
+    <div class="helptext">${s.type} · ${s.city}, ${s.state}. Changes only the appointment date/time — never Stop or Load status (Workflow 6, §5.6 INT-13/DB-C-4).</div>
+    <label class="form-label">Date</label><input type="date" id="rsDate" value="${s.appt.slice(0,10)}">
+    <label class="form-label">Time</label><input type="time" id="rsTime" value="${s.appt.slice(11,16)}">
+  </div>
+  <div class="panel-foot"><button class="btn btn-secondary" onclick="closeOverlay()">Cancel</button><button class="btn btn-primary" onclick="confirmReschedule('${loadId}',${seq})">Save</button></div>`,{blockBackdrop:true});
+}
+function confirmReschedule(loadId,seq){
+  const l=loadById(loadId); const s=l.stops.find(x=>x.seq===seq);
+  const prev=s.appt; s.appt = document.getElementById('rsDate').value+'T'+document.getElementById('rsTime').value;
+  auditLog('Stop Appointment Rescheduled', l.number+' '+s.type+': '+fmtDateTime(prev)+' → '+fmtDateTime(s.appt)+' by '+ME.name);
+  toast('Appointment rescheduled','success'); closeOverlay(); render();
+}
+
+/* =========================================================
+   5.4.4 LOAD DETAIL
+   ========================================================= */
+const LIFECYCLE = ['BOOKED','CARRIER_SOURCING','CARRIER_ASSIGNED','RATE_CONFIRMATION','DISPATCHED','PICKUP','IN_TRANSIT','DELIVERED','CLOSED'];
+let LD_TAB = 'overview';
+let LD_NOTES = {}; // loadId -> [{author,content,at}]
+
+function renderLoadDetail(id){
+  const l=loadById(id); if(!l) return `<div class="card">Load not found.</div>`;
+  if(PARAMS.tab) { LD_TAB = PARAMS.tab; PARAMS.tab=null; }
+  const cust=customerById(l.customerId);
+  const idx = LIFECYCLE.indexOf(l.status);
+  const stepper = LIFECYCLE.map((s,i)=>`<div class="step ${i<idx?'done':''} ${i===idx?'current':''}"><div class="dot"></div><div class="lbl">${LOAD_STATUS_LABEL[s]}</div></div>`).join('');
+  const nextAction = primaryActionFor(l);
+  const tabs = [['overview','Overview'],['stops','Stops & Tracking'],['carrier','Carrier & Dispatch'],['documents','Documents']];
+  if(canSeeFinancials()) tabs.push(['financials','Financials']);
+  tabs.push(['activity','Activity History']);
+
+  return `<div class="page-header">
+    <div class="crumb"><a onclick="nav('dispatch-table')">Loads</a> › ${l.number}</div>
+    <div class="header-row"><h1>${l.number}</h1><div class="spacer"></div>
+      ${isDispatchActor()&&['CARRIER_ASSIGNED','DISPATCHED','PICKUP','IN_TRANSIT'].includes(l.status)?`<button class="btn btn-secondary" onclick="openCarrierReject('${l.id}')">Carrier Rejected</button>`:''}
+      ${nextAction?`<button class="btn btn-primary" onclick="${nextAction.action}">${nextAction.label}</button>`:''}
+      ${l.status==='CLOSED'?`<span class="badge b-success">Closed ${fmtDate(l.closedAt)}</span>`:''}
+    </div>
+    <div class="subtitle">${cust.name}</div>
+    <div class="badges-row">${loadStatusBadge(l.status)}${riskBadge(l)}${podBadge(l.podStatus)}</div>
+    <div class="stepper">${stepper}</div>
+  </div>
+  <div class="tabs">${tabs.map(([k,label])=>`<div class="tab ${LD_TAB===k?'active':''}" onclick="LD_TAB='${k}';render()">${label}</div>`).join('')}</div>
+  <div id="ldTabBody">${ldTabBody(l)}</div>`;
+}
+
+function ldTabBody(l){
+  if(LD_TAB==='overview') return ldOverview(l);
+  if(LD_TAB==='stops') return ldStops(l);
+  if(LD_TAB==='carrier') return ldCarrier(l);
+  if(LD_TAB==='documents') return ldDocuments(l);
+  if(LD_TAB==='financials') return canSeeFinancials() ? ldFinancials(l) : `<div class="card"><div class="empty-state">${icon('alertTri',26)}<div class="msg">You don't have access to this page</div></div></div>`;
+  if(LD_TAB==='activity') return ldActivity(l);
+}
+
+function ldOverview(l){
+  const cust=customerById(l.customerId); const carr=l.carrierId?carrierById(l.carrierId):null;
+  const fin=financeVisibleFor(l); const m=loadMargin(l);
+  const checklist = closingChecklist(l);
+  return `<div class="grid-2">
+    <div style="display:flex;flex-direction:column;gap:14px">
+      <div class="card"><h3>Customer &amp; Lane</h3>
+        <div class="kv-list">
+          <div class="kv-row"><span class="k">Customer</span><span class="v"><a onclick="nav('customer-detail',{id:'${cust.id}'})">${cust.name}</a></span></div>
+          <div class="kv-row"><span class="k">Lane</span><span class="v">${l.stops[0].city}, ${l.stops[0].state} → ${l.stops.slice(-1)[0].city}, ${l.stops.slice(-1)[0].state}</span></div>
+          <div class="kv-row"><span class="k">Equipment</span><span class="v">${l.equipment}</span></div>
+          <div class="kv-row"><span class="k">Booking Source</span><span class="v">${l.bookingSource==='QUOTE'?'From Quote':'Direct Booking'}</span></div>
+        </div>
+      </div>
+      <div class="card"><h3>Stops</h3>
+        ${l.stops.map(s=>`<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--n-100);font-size:12.5px"><span>${s.type==='PICKUP'?'⬆':'⬇'} ${s.city}, ${s.state} · ${fmtDateTime(s.appt)}</span>${stopStatusBadge(s.status)}</div>`).join('')}
+      </div>
+      ${l.riskStatus&&l.riskStatus!=='NORMAL'?`<div class="alert alert-${l.riskStatus==='AT_RISK'?'warning':'danger'}">${icon('alertTri',16)}<div><b>${l.riskStatus==='AT_RISK'?'At Risk':'Delayed'}</b> — ${l.riskReason||''}</div></div>`:''}
+    </div>
+    <div style="display:flex;flex-direction:column;gap:14px">
+      <div class="card"><h3>Carrier &amp; Dispatch</h3>
+        ${carr?`<div class="kv-list">
+          <div class="kv-row"><span class="k">Carrier</span><span class="v"><a onclick="nav('carrier-detail',{id:'${carr.id}'})">${carr.name}</a></span></div>
+          ${l.dispatch?`<div class="kv-row"><span class="k">Driver</span><span class="v">${l.dispatch.driver}</span></div><div class="kv-row"><span class="k">Truck / Trailer</span><span class="v">${l.dispatch.truck} / ${l.dispatch.trailer}</span></div>`:'<div class="muted small">Not yet dispatched</div>'}
+        </div>`:'<div class="muted small">Not yet assigned</div>'}
+      </div>
+      <div class="card"><h3>Financial Summary</h3>
+        ${!fin.show?`<div class="muted small">Hidden — not visible for your role</div>`:`<div class="kv-list">
+          <div class="kv-row"><span class="k">Customer Rate</span><span class="v tabular">${fmtMoney(loadTotalCustomer(l))}</span></div>
+          ${canSeeFinancials()&&ROLE!=='SALES'?`<div class="kv-row"><span class="k">Carrier Rate</span><span class="v tabular">${fmtMoney(loadTotalCarrier(l))}</span></div>`:''}
+          ${fin.showMargin?`<div class="kv-row"><span class="k">Gross Profit</span><span class="v tabular">${fmtMoney(m.gp)}</span></div><div class="kv-row"><span class="k">Margin</span><span class="v tabular">${m.pct.toFixed(1)}%</span></div>`:''}
+        </div>`}
+      </div>
+      <div class="card"><h3>Closing Readiness</h3>
+        ${checklist.map(c=>`<div style="display:flex;gap:8px;align-items:center;padding:4px 0;font-size:12.5px">${c.ok?badge('✓','success'):badge('!','warning')} ${c.label}: ${c.detail}</div>`).join('')}
+        ${isClosingActor()?`<button class="btn btn-secondary btn-sm" style="margin-top:8px" onclick="nav('load-closing',{id:'${l.id}'})">Close Load →</button>`:''}
+      </div>
+    </div>
+  </div>`;
+}
+
+function closingChecklist(l){
+  const podDone = l.podStatus==='COMPLETE';
+  const deliveryStops = l.stops.filter(s=>s.type==='DELIVERY');
+  const podDocCount = deliveryStops.filter(s=>s.podUploaded).length;
+  const inv = l.invoiceId?invoiceById(l.invoiceId):null;
+  const paid = loadCarrierPaid(l); const carrierTotal = loadTotalCarrier(l);
+  return [
+    {label:'Rate Confirmation', ok:l.rateConfirmation, detail: l.rateConfirmation?'On file':'Missing'},
+    {label:'POD', ok:podDone, detail: l.podStatus==='COMPLETE'?'Complete':l.podStatus==='PARTIAL'?`Partial (${podDocCount} of ${deliveryStops.length} stops)`:'Not Received'},
+    {label:'Customer Invoice', ok:!!inv, detail: inv?`${inv.number} (${inv.status})`:'Missing'},
+    {label:'Carrier Pay', ok: l.carrierPayments.length>0, detail: l.carrierPayments.length? `${fmtMoney(paid)} of ${fmtMoney(carrierTotal)} paid` : 'No payment recorded'},
+  ];
+}
+
+function ldStops(l){
+  const canAct = isDispatchActor();
+  const canTrack = canAct && ['DISPATCHED','PICKUP','IN_TRANSIT'].includes(l.status);
+  const rows = l.stops.map(s=>`<tr><td>${s.seq}</td><td>${badge(s.type,'neutral')}</td><td>${s.city}, ${s.state}</td><td>${fmtDateTime(s.appt)}</td>
+    <td>${s.arrival?fmtDateTime(s.arrival):(canAct&&s.status==='PENDING'?`<button class="btn btn-ghost btn-sm" onclick="recordArrival('${l.id}',${s.seq})">Record Arrival</button>`:'—')}</td>
+    <td>${s.departure?fmtDateTime(s.departure):(canAct&&s.status==='ARRIVED'?`<button class="btn btn-ghost btn-sm" onclick="recordDeparture('${l.id}',${s.seq})">Record Departure</button>`:'—')}</td>
+    <td>${stopStatusBadge(s.status)}</td></tr>`).join('');
+  const cc = (l.checkCalls||[]).slice().reverse().map(c=>`<div class="card" style="margin-bottom:8px"><div style="display:flex;justify-content:space-between"><b class="small">${fmtDateTime(c.at)}</b>${badge(c.onTime?'On Time':'Behind Schedule', c.onTime?'success':'warning')}</div>
+    <div class="small" style="margin-top:4px">${c.method} · ${c.person} · ${c.city}, ${c.state} · ETA ${fmtDateTime(c.eta)}</div><div class="small muted" style="margin-top:2px">${c.notes}</div></div>`).join('') || `<div class="empty-state">${icon('inbox',24)}<div class="msg">No check calls logged yet</div></div>`;
+  return `<div class="grid-2">
+    <div class="card"><h3>Stops</h3><div class="table-wrap"><table class="dtable"><tr><th>Seq</th><th>Type</th><th>Location</th><th>Appointment</th><th>Actual Arrival</th><th>Actual Departure</th><th>Status</th></tr>${rows}</table></div></div>
+    <div>
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center"><h3 style="margin:0">Check Calls</h3>
+        <button class="btn btn-secondary btn-sm" ${canTrack?'':'disabled title="Only available once the load is Dispatched or later"'} onclick="openLogCheckCall('${l.id}')">Log Check Call</button></div>
+        <div style="margin-top:10px">${cc}</div>
+      </div>
+      <div class="card" style="margin-top:14px"><h3>Risk Status</h3>
+        <div class="badges-row">${riskBadge(l)||badge('Normal','neutral')}</div>
+        <button class="btn btn-secondary btn-sm" style="margin-top:10px" ${canTrack?'':'disabled title="Only available once the load is Dispatched or later"'} onclick="openSetRisk('${l.id}')">Update Risk Status</button>
+      </div>
+    </div>
+  </div>`;
+}
+function recordArrival(loadId,seq){
+  const l=loadById(loadId); const s=l.stops.find(x=>x.seq===seq); s.arrival=new Date().toISOString(); s.status='ARRIVED';
+  auditLog('Stop Arrival Recorded', l.number+' '+s.type+' @ '+s.city);
+  recomputeLoadStatusFromStops(l); toast('Arrival recorded — '+s.city,'success'); nav('load-detail',{id:loadId,tab:'stops'});
+}
+function recordDeparture(loadId,seq){
+  const l=loadById(loadId); const s=l.stops.find(x=>x.seq===seq); s.departure=new Date().toISOString(); s.status='COMPLETED';
+  auditLog('Stop Completed', l.number+' '+s.type+' @ '+s.city);
+  recomputeLoadStatusFromStops(l); toast('Departure recorded — '+s.city,'success'); nav('load-detail',{id:loadId,tab:'stops'});
+}
+function openLogCheckCall(loadId){
+  openModal(`<div class="panel-head"><h3>Log Check Call</h3><button class="x-btn" onclick="closeOverlay()">${icon('close',18)}</button></div>
+  <div class="panel-body">
+    <label class="form-label">Contact Method</label><select class="form-select" id="ccMethod"><option>Phone</option><option>Text</option><option>Email</option></select>
+    <label class="form-label">Person Contacted</label><input type="text" id="ccPerson" placeholder="Driver name">
+    <label class="form-label">Current Location (City, State)</label><input type="text" id="ccLoc" placeholder="Memphis, TN">
+    <label class="form-label">ETA</label><input type="text" id="ccEta" placeholder="2026-08-13 15:30">
+    <label class="form-label">On Schedule?</label><select class="form-select" id="ccOnTime"><option value="1">Yes</option><option value="0">No</option></select>
+    <label class="form-label">Notes</label><textarea id="ccNotes"></textarea>
+  </div>
+  <div class="panel-foot"><button class="btn btn-secondary" onclick="closeOverlay()">Cancel</button><button class="btn btn-primary" onclick="confirmCheckCall('${loadId}')">Save</button></div>`,{blockBackdrop:true});
+}
+function confirmCheckCall(loadId){
+  const l=loadById(loadId); l.checkCalls=l.checkCalls||[];
+  const [city,state]=(document.getElementById('ccLoc').value||'—,—').split(',').map(s=>s.trim());
+  l.checkCalls.push({at:new Date().toISOString(), method:document.getElementById('ccMethod').value, person:document.getElementById('ccPerson').value||'—', city,state, eta:document.getElementById('ccEta').value, onTime:document.getElementById('ccOnTime').value==='1', notes:document.getElementById('ccNotes').value});
+  auditLog('Check Call Logged', l.number); toast('Check call logged','success'); closeOverlay(); nav('load-detail',{id:loadId,tab:'stops'});
+}
+function openSetRisk(loadId){
+  openModal(`<div class="panel-head"><h3>Update Risk Status</h3><button class="x-btn" onclick="closeOverlay()">${icon('close',18)}</button></div>
+  <div class="panel-body">
+    <label class="form-label">Status</label><select class="form-select" id="rsStatus" onchange="document.getElementById('rsReasonWrap').style.display=this.value==='NORMAL'?'none':'block'"><option value="NORMAL">Normal</option><option value="AT_RISK">At Risk</option><option value="DELAYED">Delayed</option></select>
+    <div id="rsReasonWrap"><label class="form-label">Reason <span class="req-note">*</span></label><select class="form-select" id="rsReason"><option>Traffic</option><option>Weather</option><option>Mechanical</option><option>Driver Issue</option><option>Appointment Issue</option><option>Customer Issue</option><option>Carrier Issue</option><option>Other</option></select></div>
+  </div>
+  <div class="panel-foot"><button class="btn btn-secondary" onclick="closeOverlay()">Cancel</button><button class="btn btn-primary" onclick="confirmSetRisk('${loadId}')">Save</button></div>`,{blockBackdrop:true});
+}
+function confirmSetRisk(loadId){
+  const l=loadById(loadId); const status=document.getElementById('rsStatus').value;
+  l.riskStatus=status; l.riskReason = status==='NORMAL'?null:document.getElementById('rsReason').value;
+  auditLog('Risk Status Changed', l.number+' → '+status+(l.riskReason?' ('+l.riskReason+')':''));
+  toast('Risk status updated','success'); closeOverlay(); render();
+}
+
+function ldCarrier(l){
+  const carr=l.carrierId?carrierById(l.carrierId):null;
+  const sourcingRows = l.sourcing.map(s=>`<tr><td>${s.carrier}</td><td class="num tabular">${canSeeFinancials()?fmtMoney(s.rate):'—'}</td><td>${badge(s.outcome.replace(/_/g,' '),s.outcome==='ASSIGNED'?'success':s.outcome==='REJECTED_AFTER_ASSIGNMENT'?'danger':'neutral')}</td><td>${s.reason||'—'}</td><td>${s.by} · ${fmtDate(s.at)}</td></tr>`).join('') || `<tr><td colspan="5"><div class="empty-state">${icon('inbox',24)}<div class="msg">No sourcing attempts logged yet</div></div></td></tr>`;
+  return `<div class="card"><h3>Carrier Sourcing History</h3><div class="table-wrap"><table class="dtable"><tr><th>Carrier</th><th class="num">Rate</th><th>Outcome</th><th>Reason</th><th>Logged</th></tr>${sourcingRows}</table></div></div>
+  <div class="grid-2" style="margin-top:14px">
+    <div class="card"><h3>Current Assignment</h3>
+      ${carr?`<div class="kv-list"><div class="kv-row"><span class="k">Carrier</span><span class="v"><a onclick="nav('carrier-detail',{id:'${carr.id}'})">${carr.name}</a></span></div>${canSeeFinancials()?`<div class="kv-row"><span class="k">Carrier Rate</span><span class="v tabular">${fmtMoney(l.carrierRate)}</span></div>`:''}</div>`:'<div class="muted small">No carrier assigned yet</div>'}
+    </div>
+    <div class="card"><h3>Rate Confirmation</h3>
+      ${l.rateConfirmation?`<div class="kv-row"><span class="k">Document</span><span class="v"><a onclick="toast('Opens Rate Confirmation PDF (prototype)','info')">View PDF (v1)</a></span></div>`:`<div class="muted small">Not yet generated</div>`}
+      ${l.status==='CARRIER_ASSIGNED'&&isDispatchActor()?`<button class="btn btn-secondary btn-sm" style="margin-top:8px" onclick="openGenerateRateConfirmation('${l.id}')">Generate Rate Confirmation</button>`:''}
+    </div>
+  </div>
+  <div class="card" style="margin-top:14px"><h3>Dispatch Record</h3>
+    ${l.dispatch?`<div class="kv-list">
+      <div class="kv-row"><span class="k">Driver</span><span class="v">${l.dispatch.driver} (${l.dispatch.phone||'—'})</span></div>
+      <div class="kv-row"><span class="k">Truck</span><span class="v">${l.dispatch.truck}</span></div>
+      <div class="kv-row"><span class="k">Trailer</span><span class="v">${l.dispatch.trailer}</span></div>
+      <div class="kv-row"><span class="k">Dispatched</span><span class="v">${l.dispatch.by} · ${fmtDate(l.dispatch.at)}</span></div>
+    </div>${isDispatchActor()?`<button class="btn btn-secondary btn-sm" style="margin-top:8px" onclick="openEditDispatch('${l.id}')">Edit</button>`:''}`:'<div class="muted small">Not yet dispatched</div>'}
+  </div>`;
+}
+function openEditDispatch(loadId){
+  const l=loadById(loadId);
+  openModal(`<div class="panel-head"><h3>Edit Dispatch Info</h3><button class="x-btn" onclick="closeOverlay()">${icon('close',18)}</button></div>
+  <div class="panel-body">
+    <label class="form-label">Driver</label><input type="text" id="edDriver" value="${l.dispatch.driver}">
+    <label class="form-label">Truck #</label><input type="text" id="edTruck" value="${l.dispatch.truck}">
+    <label class="form-label">Trailer #</label><input type="text" id="edTrailer" value="${l.dispatch.trailer}">
+    <div class="helptext">Previous values are preserved in the audit trail (Workflow 6 §6.9), not overwritten silently.</div>
+  </div>
+  <div class="panel-foot"><button class="btn btn-secondary" onclick="closeOverlay()">Cancel</button><button class="btn btn-primary" onclick="confirmEditDispatch('${loadId}')">Save</button></div>`,{blockBackdrop:true});
+}
+function confirmEditDispatch(loadId){
+  const l=loadById(loadId); const prev={...l.dispatch};
+  l.dispatch.driver=document.getElementById('edDriver').value; l.dispatch.truck=document.getElementById('edTruck').value; l.dispatch.trailer=document.getElementById('edTrailer').value;
+  auditLog('Dispatch Information Changed', l.number+': '+JSON.stringify(prev)+' → driver='+l.dispatch.driver+' truck='+l.dispatch.truck+' trailer='+l.dispatch.trailer);
+  toast('Dispatch info updated','success'); closeOverlay(); render();
+}
+
+function ldDocuments(l){
+  l.documents = l.documents||[];
+  if(l.rateConfirmation && !l.documents.find(d=>d.type==='Rate Confirmation')) l.documents.push({type:'Rate Confirmation',version:1,by:'Jamie Rivera',at:l.dispatch?.at||new Date().toISOString(),scan:'CLEAN'});
+  const loadDocs = l.documents.map(d=>`<tr><td>${d.type}</td><td>v${d.version}</td><td>${d.by}</td><td>${fmtDate(d.at)}</td><td>${scanBadge(d.scan)}</td><td>${d.scan==='CLEAN'?`<a onclick="toast('Downloading (prototype)','info')">Download</a>`:'—'}</td></tr>`).join('') || `<tr><td colspan="6"><div class="empty-state">${icon('inbox',24)}<div class="msg">No documents uploaded yet</div></div></td></tr>`;
+  const deliveryStops = l.stops.filter(s=>s.type==='DELIVERY');
+  const podRows = deliveryStops.map(s=>`<tr><td>Stop ${s.seq} — ${s.city}, ${s.state}</td><td>${s.podUploaded?scanBadge(s.podScan||'CLEAN'):badge('Not Received','warning')}</td><td>${s.podUploaded?`<a onclick="toast('Viewing POD (prototype)','info')">View</a>`:`<button class="btn btn-secondary btn-sm" onclick="uploadPod('${l.id}',${s.seq})">Upload POD</button>`}</td></tr>`).join('');
+  return `<div class="card"><div style="display:flex;justify-content:space-between"><h3 style="margin:0">Load Documents</h3><button class="btn btn-secondary btn-sm" onclick="uploadGenericDoc('${l.id}')">Upload Document</button></div>
+    <div class="table-wrap" style="margin-top:10px"><table class="dtable"><tr><th>Type</th><th>Version</th><th>Uploaded By</th><th>Date</th><th>Scan</th><th></th></tr>${loadDocs}</table></div></div>
+  <div class="card" style="margin-top:14px"><h3>POD by Delivery Stop</h3><div class="table-wrap"><table class="dtable"><tr><th>Stop</th><th>Status</th><th></th></tr>${podRows}</table></div></div>`;
+}
+function uploadPod(loadId,seq){
+  const l=loadById(loadId); const s=l.stops.find(x=>x.seq===seq);
+  s.podUploaded=true; s.podScan='PENDING'; recomputePod(l); auditLog('POD Uploaded', l.number+' stop '+seq);
+  toast('POD uploaded — scanning…','info'); render();
+  setTimeout(()=>{ s.podScan='CLEAN'; auditLog('POD Milestone Updated', l.number+' → '+l.podStatus); if(VIEW==='load-detail') render(); },1400);
+}
+function uploadGenericDoc(loadId){
+  const l=loadById(loadId); l.documents=l.documents||[];
+  l.documents.push({type:'BOL',version:1,by:ME.name,at:new Date().toISOString(),scan:'PENDING'});
+  auditLog('Document Uploaded', l.number+' — BOL'); toast('Document uploaded — scanning…','info'); render();
+  setTimeout(()=>{ l.documents[l.documents.length-1].scan='CLEAN'; if(VIEW==='load-detail') render(); },1400);
+}
+
+function ldFinancials(l){
+  const custCharges=l.charges.filter(c=>c.side==='CUSTOMER'); const carrCharges=l.charges.filter(c=>c.side==='CARRIER');
+  const m=loadMargin(l); const canAddCharge = ['ADMIN','OPS_MANAGER','DISPATCHER','ACCOUNTING'].includes(ROLE);
+  const chargeTable = (arr)=>arr.map(c=>`<tr><td>${c.type}</td><td>${c.desc}</td><td class="num">${c.qty}</td><td class="num tabular">${fmtMoney(c.amount/c.qty)}</td><td class="num tabular">${fmtMoney(c.amount)}</td></tr>`).join('');
+  const inv = l.invoiceId?invoiceById(l.invoiceId):null;
+  return `<div class="grid-2">
+    <div class="card"><h3>Customer Charges</h3><div class="table-wrap"><table class="dtable"><tr><th>Type</th><th>Description</th><th class="num">Qty</th><th class="num">Rate</th><th class="num">Amount</th></tr>${chargeTable(custCharges)}</table></div>
+      <div style="text-align:right;margin-top:8px" class="tabular"><b>Total: ${fmtMoney(loadTotalCustomer(l))}</b></div></div>
+    <div class="card"><h3>Carrier Charges</h3><div class="table-wrap"><table class="dtable"><tr><th>Type</th><th>Description</th><th class="num">Qty</th><th class="num">Rate</th><th class="num">Amount</th></tr>${chargeTable(carrCharges)}</table></div>
+      <div style="text-align:right;margin-top:8px" class="tabular"><b>Total: ${fmtMoney(loadTotalCarrier(l))}</b></div></div>
+  </div>
+  ${canAddCharge?`<button class="btn btn-secondary btn-sm" style="margin-top:10px" onclick="openAddCharge('${l.id}')">${icon('plus',14)} Add Charge</button>`:''}
+  ${canSeeMargin()?`<div class="card" style="margin-top:14px"><h3>Profitability</h3><div class="kv-list"><div class="kv-row"><span class="k">Gross Profit</span><span class="v tabular">${fmtMoney(m.gp)}</span></div><div class="kv-row"><span class="k">Margin</span><span class="v tabular">${m.pct.toFixed(1)}%</span></div></div></div>`:''}
+  <div class="grid-2" style="margin-top:14px">
+    <div class="card"><h3>Customer Invoice</h3>
+      ${inv?`<div class="kv-row"><span class="k">Invoice</span><span class="v"><a onclick="nav('invoice-detail',{id:'${inv.id}'})">${inv.number}</a></span></div><div class="kv-row"><span class="k">Status</span><span class="v">${invStatusBadge(inv)}</span></div>`:
+      isInvoiceActor()&&['DELIVERED','CLOSED'].includes(l.status)?`<button class="btn btn-secondary btn-sm" onclick="startInvoiceFor('${l.id}')">Create Invoice</button>`:`<div class="muted small">Not yet invoiced${['DELIVERED','CLOSED'].includes(l.status)?'':' — available once Delivered'}</div>`}
+    </div>
+    <div class="card"><h3>Carrier Pay</h3>
+      ${l.carrierPayments.length?l.carrierPayments.map(p=>`<div class="kv-row"><span class="k">${p.type} · ${p.status}</span><span class="v tabular">${fmtMoney(p.amount)}</span></div>`).join(''):'<div class="muted small">No payment recorded</div>'}
+      <div class="kv-row" style="margin-top:6px"><span class="k">Remaining Balance</span><span class="v tabular">${fmtMoney(loadTotalCarrier(l)-loadCarrierPaid(l))}</span></div>
+      ${['ADMIN','ACCOUNTING'].includes(ROLE)&&['DELIVERED','CLOSED'].includes(l.status)?`<button class="btn btn-secondary btn-sm" style="margin-top:8px" onclick="openAddCarrierPayment('${l.id}')">Add Carrier Payment</button>`:''}
+    </div>
+  </div>`;
+}
+function openAddCharge(loadId){
+  openModal(`<div class="panel-head"><h3>Add Charge</h3><button class="x-btn" onclick="closeOverlay()">${icon('close',18)}</button></div>
+  <div class="panel-body">
+    <label class="form-label">Side</label><select class="form-select" id="acSide"><option value="CUSTOMER">Customer</option><option value="CARRIER">Carrier</option></select>
+    <label class="form-label">Charge Type</label><select class="form-select" id="acType"><option>Detention</option><option>Lumper</option><option>Layover</option><option>TONU</option><option>Additional Stop</option><option>Re-delivery</option><option>Fuel Surcharge</option><option>Other</option></select>
+    <label class="form-label">Description</label><input type="text" id="acDesc">
+    <label class="form-label">Amount <span class="req-note">*</span></label><input type="number" id="acAmt" placeholder="0.00">
+    <div class="helptext">No approval required for this addition — fully audited (Stage 4 Decision D9).</div>
+  </div>
+  <div class="panel-foot"><button class="btn btn-secondary" onclick="closeOverlay()">Cancel</button><button class="btn btn-primary" onclick="confirmAddCharge('${loadId}')">Add Charge</button></div>`,{blockBackdrop:true});
+}
+function confirmAddCharge(loadId){
+  const amt=parseFloat(document.getElementById('acAmt').value); if(!amt){ toast('Amount is required','danger'); return; }
+  const l=loadById(loadId); const side=document.getElementById('acSide').value, type=document.getElementById('acType').value, desc=document.getElementById('acDesc').value||type;
+  l.charges.push({type,side,amount:amt,desc,qty:1});
+  auditLog('Charge Added', l.number+': '+side+' '+type+' '+fmtMoney(amt)+' by '+ME.name);
+  toast('Charge added','success'); closeOverlay(); nav('load-detail',{id:loadId,tab:'financials'});
+}
+function openAddCarrierPayment(loadId){
+  openModal(`<div class="panel-head"><h3>Add Carrier Payment</h3><button class="x-btn" onclick="closeOverlay()">${icon('close',18)}</button></div>
+  <div class="panel-body">
+    <label class="form-label">Type</label><select class="form-select" id="cpType"><option>DEPOSIT</option><option>PARTIAL</option><option>BALANCE</option><option>ADJUSTMENT</option></select>
+    <label class="form-label">Amount <span class="req-note">*</span></label><input type="number" id="cpAmt">
+    <label class="form-label">Method</label><input type="text" id="cpMethod" placeholder="ACH, Check…">
+    <div class="helptext">Created as Draft, then submitted for Admin approval — a self-review rule applies (you can't approve your own submission), per Workflow 9.</div>
+  </div>
+  <div class="panel-foot"><button class="btn btn-secondary" onclick="closeOverlay()">Cancel</button><button class="btn btn-primary" onclick="confirmAddCarrierPayment('${loadId}')">Submit for Approval</button></div>`,{blockBackdrop:true});
+}
+function confirmAddCarrierPayment(loadId){
+  const amt=parseFloat(document.getElementById('cpAmt').value); if(!amt){ toast('Amount is required','danger'); return; }
+  const l=loadById(loadId);
+  const p={id:uid('cp'), amount:amt, type:document.getElementById('cpType').value, method:document.getElementById('cpMethod').value, status:'PENDING_APPROVAL', preparedBy:ME.name, ref:'PMT-'+Math.floor(Math.random()*9000+1000)};
+  l.carrierPayments.push(p);
+  auditLog('Carrier Payment Submitted for Approval', l.number+': '+fmtMoney(amt));
+  toast('Payment submitted — awaiting approval (cannot self-approve)','success'); closeOverlay(); nav('load-detail',{id:loadId,tab:'financials'});
+}
+
+function ldActivity(l){
+  const redact = ROLE==='DISPATCHER';
+  const items = [];
+  AUDIT.filter(a=>a.detail.includes(l.number)).forEach(a=>items.push({type:'audit',at:a.at,text:a.action,detail:a.detail,user:a.user}));
+  (l.checkCalls||[]).forEach(c=>items.push({type:'comm',at:c.at,text:'Check Call',detail:c.notes,user:ME.name}));
+  items.sort((a,b)=>new Date(b.at)-new Date(a.at));
+  const rows = items.slice(0,25).map(i=>{
+    let detail = i.detail;
+    if(redact) detail = detail.replace(/\$[\d,]+(\.\d{2})?/g,'—').replace(/@ —/,'');
+    return `<div style="display:flex;gap:10px;padding:8px 0;border-bottom:1px solid var(--n-100)">
+      <div style="width:6px;height:6px;border-radius:50%;background:${i.type==='audit'?'var(--n-400)':'var(--info)'};margin-top:6px;flex:0 0 6px"></div>
+      <div style="flex:1"><div class="small"><b>${i.text}</b> — ${detail}</div><div class="muted small">${i.user} · ${fmtDateTime(i.at)}</div></div>
+    </div>`;
+  }).join('') || `<div class="empty-state">${icon('inbox',24)}<div class="msg">No activity yet</div></div>`;
+  const notes=(LD_NOTES[l.id]||[]).slice().reverse().map(n=>`<div style="padding:8px 0;border-bottom:1px solid var(--n-100)"><div class="small">${n.content}</div><div class="muted small">${n.author} · ${fmtDateTime(n.at)}</div></div>`).join('');
+  return `<div class="grid-2">
+    <div class="card"><h3>Timeline</h3>${redact?`<div class="helptext" style="margin-bottom:8px">Financial figures are redacted for your role — the underlying record remains complete for authorized users (§5.6 LD-6).</div>`:''}${rows}</div>
+    <div class="card"><h3>Internal Notes</h3>
+      <textarea id="newNote" placeholder="Add a note…"></textarea>
+      <button class="btn btn-secondary btn-sm" style="margin-top:6px" onclick="addNote('${l.id}')">Add Note</button>
+      <div style="margin-top:10px">${notes||'<div class="muted small">No notes yet</div>'}</div>
+    </div>
+  </div>`;
+}
+function addNote(loadId){
+  const val=document.getElementById('newNote').value; if(!val.trim()) return;
+  LD_NOTES[loadId]=LD_NOTES[loadId]||[]; LD_NOTES[loadId].push({content:val,author:ME.name,at:new Date().toISOString()});
+  toast('Note added','success'); nav('load-detail',{id:loadId,tab:'activity'});
+}
+
+/* =========================================================
+   CUSTOMER LIST (supporting screen — entry point into 5.4.5)
+   ========================================================= */
+function renderCustomerList(){
+  const rows = CUSTOMERS.map(c=>`<tr class="rowlink" onclick="nav('customer-detail',{id:'${c.id}'})"><td><b>${c.name}</b></td><td>${customerStatusBadge(c.status)}</td><td>${c.contactName}</td><td>${c.terms}${c.termsSource==='OVERRIDE'?' (override)':''}</td><td>${LOADS.filter(l=>l.customerId===c.id).length}</td></tr>`).join('');
+  return `<div class="page-header"><div class="header-row"><h1>Customers</h1><div class="spacer"></div>${isCustomerEditRole()?`<button class="btn btn-primary" onclick="toast('New Customer form (prototype) — Workflow 2','info')">${icon('plus',15)} New Customer</button>`:''}</div></div>
+  <div class="table-wrap"><table class="dtable"><tr><th>Name</th><th>Status</th><th>Primary Contact</th><th>Payment Terms</th><th># Loads</th></tr>${rows}</table></div>`;
+}
+
+/* =========================================================
+   5.4.5 CUSTOMER DETAIL
+   ========================================================= */
+let CD_TAB='overview';
+function renderCustomerDetail(id){
+  const c=customerById(id); if(!c) return `<div class="card">Not found.</div>`;
+  const isCreator = isCreatorRole() && ROLE!=='ACCOUNTING';
+  const custLoads = LOADS.filter(l=>l.customerId===id);
+  const blocked = c.status==='BLOCKED', inactive = c.status==='INACTIVE';
+  const tabs=[['overview','Overview'],['contacts','Contacts'],['locations','Locations']];
+  if(ROLE!=='DISPATCHER') tabs.push(['rates','Rate Agreements']);
+  tabs.push(['loads','Loads']);
+  if(ROLE!=='DISPATCHER') tabs.push(['invoices','Invoices']);
+  let body='';
+  if(CD_TAB==='overview') body = `<div class="grid-2">
+    <div class="card"><h3>Customer Info</h3><div class="kv-list">
+      <div class="kv-row"><span class="k">Legal Name</span><span class="v">${c.name}</span></div>
+      <div class="kv-row"><span class="k">Billing Address</span><span class="v">${c.billing}</span></div>
+      <div class="kv-row"><span class="k">Primary Contact</span><span class="v">${c.contactName}</span></div>
+      <div class="kv-row"><span class="k">Email</span><span class="v">${c.contactEmail}</span></div>
+      <div class="kv-row"><span class="k">Phone</span><span class="v">${c.contactPhone}</span></div>
+    </div></div>
+    <div class="card"><h3>Status &amp; Terms</h3><div class="kv-list">
+      <div class="kv-row"><span class="k">Status</span><span class="v">${customerStatusBadge(c.status)}</span></div>
+      <div class="kv-row"><span class="k">Account Owner</span><span class="v">${c.ownerId?'Jamie Rivera (Sales)':'Unassigned'}</span></div>
+      <div class="kv-row"><span class="k">Payment Terms</span><span class="v">${c.terms} ${badge(c.termsSource==='OVERRIDE'?'Override':'Inherited','neutral')}</span></div>
+      <div class="kv-row"><span class="k"># Loads</span><span class="v">${custLoads.length}</span></div>
+      <div class="kv-row"><span class="k">Active Rate Agreements</span><span class="v">${c.rateAgreements.length}</span></div>
+    </div></div>
+  </div>`;
+  else if(CD_TAB==='contacts') body = `<div class="card"><div style="display:flex;justify-content:space-between"><h3 style="margin:0">Contacts</h3>${isCustomerEditRole()?`<button class="btn btn-secondary btn-sm" onclick="toast('Add Contact (prototype)','info')">Add Contact</button>`:''}</div>
+    <div class="table-wrap" style="margin-top:10px"><table class="dtable"><tr><th>Name</th><th>Email</th><th>Phone</th><th>Role</th><th>Primary</th></tr>
+    ${c.contacts.map(x=>`<tr><td>${x.name}</td><td>${x.email}</td><td>${x.phone}</td><td>${badge(x.role,'neutral')}</td><td>${x.primary?'✓':''}</td></tr>`).join('')||`<tr><td colspan="5"><div class="empty-state">${icon('inbox',24)}<div class="msg">No contacts yet</div></div></td></tr>`}</table></div></div>`;
+  else if(CD_TAB==='locations') body = `<div class="card"><div style="display:flex;justify-content:space-between"><h3 style="margin:0">Locations</h3>${isCustomerEditRole()?`<button class="btn btn-secondary btn-sm" onclick="toast('Add Location (prototype)','info')">Add Location</button>`:''}</div>
+    <div class="table-wrap" style="margin-top:10px"><table class="dtable"><tr><th>Name</th><th>Type</th><th>Address</th></tr>
+    ${c.locations.map(x=>`<tr><td>${x.name}</td><td>${badge(x.type,'neutral')}</td><td>${x.address}</td></tr>`).join('')||`<tr><td colspan="3"><div class="empty-state">${icon('inbox',24)}<div class="msg">No locations yet</div></div></td></tr>`}</table></div></div>`;
+  else if(CD_TAB==='rates') body = `<div class="card"><div style="display:flex;justify-content:space-between"><h3 style="margin:0">Rate Agreements</h3>${isCustomerEditRole()?`<button class="btn btn-secondary btn-sm" onclick="toast('Add Rate Agreement (prototype)','info')">Add Rate Agreement</button>`:''}</div>
+    <div class="table-wrap" style="margin-top:10px"><table class="dtable"><tr><th>Origin</th><th>Destination</th><th>Equipment</th><th class="num">Rate</th><th>Effective</th><th>Expiration</th><th>Status</th></tr>
+    ${c.rateAgreements.map(x=>{const exp=new Date(x.expiration)<TODAY; return `<tr><td>${x.origin}</td><td>${x.destination}</td><td>${x.equipment}</td><td class="num tabular">${fmtMoney(x.rate)}</td><td>${fmtDate(x.effective)}</td><td>${fmtDate(x.expiration)}</td><td>${badge(exp?'Expired':'Active',exp?'danger':'success')}</td></tr>`;}).join('')||`<tr><td colspan="7"><div class="empty-state">${icon('inbox',24)}<div class="msg">No rate agreements yet</div></div></td></tr>`}</table></div></div>`;
+  else if(CD_TAB==='loads') body = `<div class="table-wrap"><table class="dtable"><tr><th>Load #</th><th>Status</th><th>Carrier</th><th>Pickup</th>${canSeeFinancials()?'<th class="num">Rate</th>':''}</tr>
+    ${custLoads.map(l=>`<tr class="rowlink" onclick="nav('load-detail',{id:'${l.id}'})"><td><b>${l.number}</b></td><td>${loadStatusBadge(l.status)}</td><td>${l.carrierId?carrierById(l.carrierId).name:'—'}</td><td>${fmtDate(l.stops[0].appt)}</td>${canSeeFinancials()?`<td class="num tabular">${(ROLE!=='SALES'||ownsDealOrCreator(l))?fmtMoney(l.customerRate):'—'}</td>`:''}</tr>`).join('')}</table></div>`;
+  else if(CD_TAB==='invoices'){ const invs=INVOICES.filter(i=>i.customerId===id);
+    body = `<div class="table-wrap"><table class="dtable"><tr><th>Invoice #</th><th>Status</th><th class="num">Total</th><th>Due</th></tr>
+    ${invs.map(i=>`<tr class="rowlink" onclick="nav('invoice-detail',{id:'${i.id}'})"><td><b>${i.number}</b></td><td>${invStatusBadge(i)}</td><td class="num tabular">${(ROLE!=='SALES'||ownsDealOrCreator({customerId:id}))?fmtMoney(i.total):'—'}</td><td>${fmtDate(i.dueDate)}</td></tr>`).join('')||`<tr><td colspan="4"><div class="empty-state">${icon('inbox',24)}<div class="msg">No invoices yet</div></div></td></tr>`}</table></div>`;
+  }
+  return `<div class="page-header">
+    <div class="crumb"><a onclick="nav('customers')">Customers</a> › ${c.name}</div>
+    <div class="header-row"><h1>${c.name}</h1><div class="spacer"></div>
+      ${isCustomerEditRole()?`<button class="btn btn-secondary" onclick="toast('Edit form (prototype)','info')">Edit</button>`:''}
+      ${isCreator?`<button class="btn btn-primary" ${blocked?'disabled title="Customer is Blocked — no new Quotes/Loads (Workflow 4 §4.3)"':''} onclick="${blocked?'':(inactive?"toast('Inactive customer — booking requires override confirmation (Workflow 4 §4.3)','warning');openNewLoadChoice();":"openNewLoadChoice()")}">${icon('plus',15)} New Quote</button>`:''}
+    </div>
+    <div class="badges-row">${customerStatusBadge(c.status)}</div>
+  </div>
+  <div class="tabs">${tabs.map(([k,label])=>`<div class="tab ${CD_TAB===k?'active':''}" onclick="CD_TAB='${k}';render()">${label}</div>`).join('')}</div>
+  ${body}`;
+}
+
+/* =========================================================
+   CARRIER LIST (supporting screen — entry point into 5.4.6)
+   ========================================================= */
+function renderCarrierList(){
+  const rows = CARRIERS.map(c=>{const e=computeEligibility(c); return `<tr class="rowlink" onclick="nav('carrier-detail',{id:'${c.id}'})"><td><b>${c.name}</b></td><td>${carrierStatusBadge(c.status)}</td><td>${eligBadge(e)}</td><td>${c.mc}</td><td>${LOADS.filter(l=>l.carrierId===c.id).length}</td></tr>`;}).join('');
+  return `<div class="page-header"><div class="header-row"><h1>Carriers</h1><div class="spacer"></div>${isCarrierEditRole()?`<button class="btn btn-primary" onclick="toast('New Carrier form (prototype) — Workflow 3','info')">${icon('plus',15)} New Carrier</button>`:''}</div></div>
+  <div class="table-wrap"><table class="dtable"><tr><th>Name</th><th>Status</th><th>Eligibility</th><th>MC #</th><th># Loads</th></tr>${rows}</table></div>`;
+}
+
+/* =========================================================
+   5.4.6 CARRIER DETAIL
+   ========================================================= */
+let CR_TAB='overview';
+function renderCarrierDetail(id){
+  const c=carrierById(id); if(!c) return `<div class="card">Not found.</div>`;
+  const e=computeEligibility(c);
+  const equipTypes = [...new Set([...c.trucks.map(t=>t.type), ...c.trailers.map(t=>t.type)])];
+  const canActivate = c.status==='PENDING' && isComplianceReviewer();
+  const tabs=[['overview','Overview'],['compliance','Compliance'],['insurance','Insurance'],['contacts','Contacts'],['drivers','Drivers'],['trucks','Trucks'],['trailers','Trailers'],['loads','Loads'],['factoring','Factoring']];
+  let body='';
+  if(CR_TAB==='overview') body = `<div class="grid-2">
+    <div style="display:flex;flex-direction:column;gap:14px">
+      <div class="card"><h3>Carrier Info</h3><div class="kv-list">
+        <div class="kv-row"><span class="k">Legal Name</span><span class="v">${c.name}${c.dba?' (DBA '+c.dba+')':''}</span></div>
+        <div class="kv-row"><span class="k">MC #</span><span class="v">${c.mc}</span></div>
+        <div class="kv-row"><span class="k">DOT #</span><span class="v">${c.dot}</span></div>
+        <div class="kv-row"><span class="k">Address</span><span class="v">${c.address}</span></div>
+        <div class="kv-row"><span class="k">Primary Contact</span><span class="v">${c.contactName} · ${c.contactPhone}</span></div>
+      </div></div>
+      <div class="card"><h3>Equipment Types</h3><div class="badges-row">${equipTypes.length?equipTypes.map(t=>badge(t,'neutral')).join(''):'<span class="muted small">None registered</span>'}</div></div>
+      <div class="card"><div style="display:flex;justify-content:space-between"><h3 style="margin:0">Lane / Region Preferences</h3>${isCarrierEditRole()?`<button class="btn btn-ghost btn-sm" onclick="toast('Add Lane/Region (prototype) — DATABASE_DESIGN.md D16','info')">Add</button>`:''}</div>
+        <div class="badges-row" style="margin-top:8px">${c.lanes.length?c.lanes.map(l=>badge(l.type==='LANE'?l.origin+' → '+l.destination:l.label,'brand')).join(''):'<span class="muted small">None on file</span>'}</div>
+        <div class="helptext" style="margin-top:6px">Informational/filterable only — no automated lane matching (PRD §3.6).</div>
+      </div>
+    </div>
+    <div class="card"><h3>Eligibility Checklist</h3>
+      <div class="checklist-item"><div class="ci-icon ${c.conditions.statusActive?'ok':'warn'}">${c.conditions.statusActive?'✓':'!'}</div><div class="ci-body"><div class="ci-title">Carrier Status = Active</div></div></div>
+      <div class="checklist-item"><div class="ci-icon ${c.conditions.carrierAgreement?'ok':'warn'}">${c.conditions.carrierAgreement?'✓':'!'}</div><div class="ci-body"><div class="ci-title">Carrier Agreement Approved</div></div></div>
+      <div class="checklist-item"><div class="ci-icon ${c.conditions.w9?'ok':'warn'}">${c.conditions.w9?'✓':'!'}</div><div class="ci-body"><div class="ci-title">W9 Approved</div></div></div>
+      <div class="checklist-item"><div class="ci-icon ${c.conditions.autoLiability?'ok':'warn'}">${c.conditions.autoLiability?'✓':'!'}</div><div class="ci-body"><div class="ci-title">Auto Liability — Approved &amp; not expired</div></div></div>
+      <div class="checklist-item"><div class="ci-icon ${c.conditions.cargo?'ok':'warn'}">${c.conditions.cargo?'✓':'!'}</div><div class="ci-body"><div class="ci-title">Cargo Insurance — Approved &amp; not expired</div></div></div>
+      <div class="checklist-item"><div class="ci-icon ${c.conditions.mcAuthority?'ok':'warn'}">${c.conditions.mcAuthority?'✓':'!'}</div><div class="ci-body"><div class="ci-title">MC Authority Approved</div></div></div>
+      <div class="checklist-item"><div class="ci-icon ${c.conditions.fmcsa?'ok':'warn'}">${c.conditions.fmcsa?'✓':'!'}</div><div class="ci-body"><div class="ci-title">FMCSA/SAFER Verification Complete</div></div></div>
+      ${canActivate?`<button class="btn btn-primary" style="width:100%;justify-content:center;margin-top:10px" ${e.eligible?'':'disabled'} title="${e.eligible?'':'Blocked: '+e.reasons.join('; ')}" onclick="activateCarrier('${c.id}')">Activate Carrier</button>`:''}
+    </div>
+  </div>`;
+  else if(CR_TAB==='compliance') body = carrierCompliance(c);
+  else if(CR_TAB==='insurance') body = carrierInsurance(c);
+  else if(CR_TAB==='contacts') body = `<div class="card"><h3>Contacts</h3><div class="muted small">Prototype: single primary contact shown on Overview. Full multi-contact table per Workflow 3 §Contacts.</div></div>`;
+  else if(CR_TAB==='drivers') body = simpleRegistryTable('Drivers',c.drivers,['name','phone','license'],['Name','Phone','License #'],isCarrierEditRole());
+  else if(CR_TAB==='trucks') body = simpleRegistryTable('Trucks',c.trucks,['unit','type','make','model'],['Unit #','Type','Make','Model'],isCarrierEditRole());
+  else if(CR_TAB==='trailers') body = simpleRegistryTable('Trailers',c.trailers,['unit','type','plate'],['Unit #','Type','Plate'],isCarrierEditRole());
+  else if(CR_TAB==='loads'){ const cl=LOADS.filter(l=>l.carrierId===c.id);
+    body = `<div class="table-wrap"><table class="dtable"><tr><th>Load #</th><th>Customer</th><th>Status</th>${canSeeFinancials()&&ROLE!=='SALES'?'<th class="num">Carrier Rate</th>':''}</tr>
+    ${cl.map(l=>`<tr class="rowlink" onclick="nav('load-detail',{id:'${l.id}'})"><td><b>${l.number}</b></td><td>${customerById(l.customerId).name}</td><td>${loadStatusBadge(l.status)}</td>${canSeeFinancials()&&ROLE!=='SALES'?`<td class="num tabular">${fmtMoney(l.carrierRate)}</td>`:''}</tr>`).join('')||`<tr><td colspan="4"><div class="empty-state">${icon('inbox',24)}<div class="msg">No loads yet</div></div></td></tr>`}</table></div>`;
+  }
+  else if(CR_TAB==='factoring') body = `<div class="card"><h3>Factoring</h3>
+    <div class="helptext" style="margin-bottom:10px">Informational only in V1 — does not affect assignment eligibility (Workflow 3 §3.11).</div>
+    <div class="kv-list">
+      <div class="kv-row"><span class="k">Uses Factoring</span><span class="v">${c.factoring.uses?'Yes':'No'}</span></div>
+      ${c.factoring.uses?`<div class="kv-row"><span class="k">Company</span><span class="v">${c.factoring.company}</span></div><div class="kv-row"><span class="k">Remit To</span><span class="v">${c.factoring.remitTo}</span></div><div class="kv-row"><span class="k">NOA Status</span><span class="v">${c.factoring.noaStatus}</span></div>`:''}
+    </div></div>`;
+  return `<div class="page-header">
+    <div class="crumb"><a onclick="nav('carriers')">Carriers</a> › ${c.name}</div>
+    <div class="header-row"><h1>${c.name}${c.dba?' <span class="muted" style="font-weight:400;font-size:15px">(DBA '+c.dba+')</span>':''}</h1><div class="spacer"></div>
+      ${isCarrierEditRole()?`<button class="btn btn-secondary" onclick="toast('Edit form (prototype)','info')">Edit</button>`:''}
+    </div>
+    <div class="badges-row">${carrierStatusBadge(c.status)}${eligBadge(e)}</div>
+    ${!e.eligible?`<div class="alert alert-danger" style="margin-top:8px">${icon('alertTri',15)}<div><b>Ineligible for assignment:</b> ${e.reasons.join('; ')}</div></div>`:''}
+  </div>
+  <div class="tabs">${tabs.map(([k,label])=>`<div class="tab ${CR_TAB===k?'active':''}" onclick="CR_TAB='${k}';render()">${label}</div>`).join('')}</div>
+  ${body}`;
+}
+function simpleRegistryTable(title,arr,fields,labels,canAdd){
+  const rows = arr.map(r=>`<tr>${fields.map(f=>`<td>${r[f]||'—'}</td>`).join('')}<td>${badge(r.active?'Active':'Inactive',r.active?'success':'neutral')}</td></tr>`).join('');
+  return `<div class="card"><div style="display:flex;justify-content:space-between"><h3 style="margin:0">${title}</h3>${canAdd?`<button class="btn btn-secondary btn-sm" onclick="toast('Add ${title.slice(0,-1)} (prototype)','info')">Add</button>`:''}</div>
+  <div class="table-wrap" style="margin-top:10px"><table class="dtable"><tr>${labels.map(l=>`<th>${l}</th>`).join('')}<th>Status</th></tr>${rows||`<tr><td colspan="${fields.length+1}"><div class="empty-state">${icon('inbox',24)}<div class="msg">No ${title.toLowerCase()} added yet</div></div></td></tr>`}</table></div></div>`;
+}
+function carrierCompliance(c){
+  const docs = c.docs.map((d,i)=>{
+    const canReview = isComplianceReviewer() && d.status==='PENDING_REVIEW';
+    const selfUpload = d.uploadedBy===ME.name;
+    return `<tr><td>${d.type}</td><td>${docStatusBadge(d.status)}</td><td>${d.uploadedBy}</td><td>${d.reviewedBy||'—'}</td>
+      <td>${canReview?`<button class="btn btn-secondary btn-sm" ${selfUpload?'disabled title="You cannot review a document you uploaded"':''} onclick="reviewDoc('${c.id}',${i},'APPROVED')">Approve</button> <button class="btn btn-secondary btn-sm" ${selfUpload?'disabled':''} onclick="reviewDoc('${c.id}',${i},'REJECTED')">Reject</button>`:'—'}</td></tr>`;
+  }).join('');
+  return `<div class="card"><h3>Compliance Documents</h3><div class="table-wrap"><table class="dtable"><tr><th>Type</th><th>Status</th><th>Uploaded By</th><th>Reviewed By</th><th></th></tr>${docs}</table></div>
+    ${isCarrierEditRole()?`<button class="btn btn-secondary btn-sm" style="margin-top:8px" onclick="toast('Upload flow (prototype)','info')">Upload Document</button>`:''}</div>
+  <div class="card" style="margin-top:14px"><h3>FMCSA / SAFER Verification</h3>
+    ${c.fmcsa?`<div class="kv-list"><div class="kv-row"><span class="k">Date</span><span class="v">${fmtDate(c.fmcsa.date)}</span></div><div class="kv-row"><span class="k">Result</span><span class="v">${c.fmcsa.result}</span></div><div class="kv-row"><span class="k">Verified By</span><span class="v">${c.fmcsa.by}</span></div></div>`:
+    `<div class="muted small">Not yet verified</div>${isComplianceReviewer()?`<button class="btn btn-secondary btn-sm" style="margin-top:8px" onclick="recordFmcsa('${c.id}')">Record Verification</button>`:''}`}
+  </div>`;
+}
+function reviewDoc(cid,idx,status){
+  const c=carrierById(cid); c.docs[idx].status=status; c.docs[idx].reviewedBy=ME.name;
+  if(c.docs[idx].type==='Carrier Agreement') c.conditions.carrierAgreement = status==='APPROVED';
+  if(c.docs[idx].type==='W9') c.conditions.w9 = status==='APPROVED';
+  if(c.docs[idx].type==='MC Authority') c.conditions.mcAuthority = status==='APPROVED';
+  auditLog(status==='APPROVED'?'Compliance Document Approved':'Compliance Document Rejected', c.name+': '+c.docs[idx].type);
+  toast('Document '+status.toLowerCase(),status==='APPROVED'?'success':'warning'); render();
+}
+function recordFmcsa(cid){ const c=carrierById(cid); c.fmcsa={date:'2026-08-13',result:'Authorized',by:ME.name}; c.conditions.fmcsa=true; auditLog('FMCSA Verification Recorded',c.name); toast('FMCSA verification recorded','success'); render(); }
+function activateCarrier(cid){ const c=carrierById(cid); const e=computeEligibility(c); if(!e.eligible){ toast('Cannot activate — requirements not yet met','danger'); return; } c.status='ACTIVE'; c.conditions.statusActive=true; auditLog('Carrier Activated',c.name); toast(c.name+' activated','success'); render(); }
+function expiryBadgeFor(dateStr){ const days=daysBetween(dateStr,TODAY); if(days<0) return badge('Expired','danger'); if(days<=7) return badge('Expires in '+days+'d','danger'); if(days<=30) return badge('Expires in '+days+'d','warning'); return badge('Healthy','success'); }
+function carrierInsurance(c){
+  const block=(label,ins)=> !ins? `<div class="card"><h3>${label}</h3><div class="muted small">Not on file</div></div>` : `<div class="card"><h3>${label}</h3><div class="kv-list">
+    <div class="kv-row"><span class="k">Coverage</span><span class="v tabular">${fmtMoney(ins.amount)}</span></div>
+    <div class="kv-row"><span class="k">Insurer</span><span class="v">${ins.company}</span></div>
+    <div class="kv-row"><span class="k">Agent</span><span class="v">${ins.agent}</span></div>
+    <div class="kv-row"><span class="k">Effective</span><span class="v">${fmtDate(ins.effective)}</span></div>
+    <div class="kv-row"><span class="k">Expiration</span><span class="v">${fmtDate(ins.expiration)} ${expiryBadgeFor(ins.expiration)}</span></div>
+    <div class="kv-row"><span class="k">COI Document</span><span class="v">${docStatusBadge(ins.docStatus)}</span></div>
+  </div>${isCarrierEditRole()?`<button class="btn btn-secondary btn-sm" style="margin-top:8px" onclick="toast('Edit insurance (prototype)','info')">Edit</button>`:''}</div>`;
+  return `<div class="grid-2">${block('Auto Liability',c.insurance.auto)}${block('Cargo',c.insurance.cargo)}</div>`;
+}
+
+/* =========================================================
+   5.4.7 INVOICE — LIST / BUILDER / DETAIL
+   ========================================================= */
+function renderInvoiceList(){
+  if(!isInvoiceActor() && ROLE!=='OPS_MANAGER'){ return `<div class="empty-state">${icon('alertTri',26)}<div class="msg">You don't have access to this page</div></div>`; }
+  const rows = INVOICES.map(i=>`<tr class="rowlink" onclick="nav('invoice-detail',{id:'${i.id}'})"><td><b>${i.number}</b></td><td>${customerById(i.customerId).name}</td><td>${invStatusBadge(i)}</td><td class="num tabular">${fmtMoney(i.total)}</td><td class="num tabular">${fmtMoney(invoiceRemaining(i))}</td><td>${fmtDate(i.dueDate)}</td></tr>`).join('');
+  const readyCount = LOADS.filter(l=>['DELIVERED','CLOSED'].includes(l.status)&&!l.invoiced).length;
+  return `<div class="page-header"><div class="header-row"><h1>Customer Invoices</h1><div class="spacer"></div>${isInvoiceActor()?`<button class="btn btn-primary" onclick="IB_STEP=1;IB_CUSTOMER=null;IB_SELECTED=new Set();nav('invoice-builder')">${icon('plus',15)} New Invoice</button>`:''}</div>
+  <p class="subtitle">${readyCount} load(s) currently ready to invoice</p></div>
+  <div class="table-wrap"><table class="dtable"><tr><th>Invoice #</th><th>Customer</th><th>Status</th><th class="num">Total</th><th class="num">Balance</th><th>Due</th></tr>${rows}</table></div>`;
+}
+
+let IB_STEP=1, IB_CUSTOMER=null, IB_SELECTED=new Set();
+function renderInvoiceBuilder(){
+  if(!isInvoiceActor()) return `<div class="empty-state">${icon('alertTri',26)}<div class="msg">You don't have access to this page</div></div>`;
+  const ready = IB_CUSTOMER ? LOADS.filter(l=>l.customerId===IB_CUSTOMER && ['DELIVERED','CLOSED'].includes(l.status) && !l.invoiced) : [];
+  let body='';
+  if(IB_STEP===1){
+    body = `<div class="card">
+      <label class="form-label">Customer <span class="req-note">*</span> (required first — consolidated invoices require one customer, Workflow 8 §8.4)</label>
+      <select class="form-select" onchange="IB_CUSTOMER=this.value;IB_SELECTED=new Set();render()"><option value="">— Select customer —</option>${CUSTOMERS.map(c=>`<option value="${c.id}" ${IB_CUSTOMER===c.id?'selected':''}>${c.name}</option>`).join('')}</select>
+      ${IB_CUSTOMER?`<div class="table-wrap" style="margin-top:14px"><table class="dtable"><tr><th></th><th>Load #</th><th>Delivered</th><th class="num">Customer Charges</th><th>POD Status</th></tr>
+        ${ready.map(l=>`<tr><td><input type="checkbox" ${IB_SELECTED.has(l.id)?'checked':''} onchange="toggleIbSel('${l.id}',this.checked)"></td><td>${l.number}</td><td>${fmtDate(l.stops.slice(-1)[0].appt)}</td><td class="num tabular">${fmtMoney(loadTotalCustomer(l))}</td><td>${podBadge(l.podStatus)}</td></tr>`).join('')||`<tr><td colspan="5"><div class="empty-state">${icon('inbox',24)}<div class="msg">No eligible loads for this customer</div></div></td></tr>`}
+      </table></div>`:''}
+    </div>
+    <div class="panel-foot" style="border:none;justify-content:flex-end;padding:14px 0"><button class="btn btn-primary" ${IB_SELECTED.size?'':'disabled'} onclick="ibContinue()">Continue with ${IB_SELECTED.size} load(s) →</button></div>`;
+  } else if(IB_STEP===3){
+    const loads=[...IB_SELECTED].map(loadById);
+    const consolidated = loads.length>1;
+    body = `<div class="card"><h3>Invoice Preview — ${customerById(IB_CUSTOMER).name}</h3>
+      <div class="table-wrap" style="margin-top:10px"><table class="dtable">
+      ${consolidated? `<tr><th>Load</th><th class="num">Total</th></tr>${loads.map(l=>`<tr><td>${l.number}</td><td class="num tabular">${fmtMoney(loadTotalCustomer(l))}</td></tr>`).join('')}` :
+        `<tr><th>Type</th><th>Description</th><th class="num">Amount</th></tr>${loads[0].charges.filter(c=>c.side==='CUSTOMER').map(c=>`<tr><td>${c.type}</td><td>${c.desc}</td><td class="num tabular">${fmtMoney(c.amount)}</td></tr>`).join('')}`}
+      </table></div>
+      <div style="text-align:right;margin-top:10px" class="tabular"><b>Total: ${fmtMoney(loads.reduce((s,l)=>s+loadTotalCustomer(l),0))}</b></div>
+    </div>
+    <div class="panel-foot" style="border:none;justify-content:flex-end;padding:14px 0"><button class="btn btn-secondary" onclick="IB_STEP=1;render()">Back</button><button class="btn btn-primary" onclick="saveInvoiceDraft()">Save as Draft</button></div>`;
+  }
+  return `<div class="page-header"><div class="crumb"><a onclick="nav('billing-invoices')">Billing</a> › Customer Invoices › New Invoice</div><h1>Select Loads to Invoice</h1></div>
+  <div class="stepper" style="max-width:360px">${['Select Loads','POD Check','Review & Save'].map((l,i)=>`<div class="step ${IB_STEP>i+1?'done':''} ${IB_STEP===i+1?'current':''}"><div class="dot"></div><div class="lbl">${l}</div></div>`).join('')}</div>
+  ${body}`;
+}
+function toggleIbSel(id,checked){ if(checked) IB_SELECTED.add(id); else IB_SELECTED.delete(id); render(); }
+function ibContinue(){
+  const loads=[...IB_SELECTED].map(loadById);
+  const anyIncomplete = loads.some(l=>l.podStatus!=='COMPLETE');
+  if(anyIncomplete){
+    openModal(`<div class="panel-head"><h3>${icon('alertTri',18)} POD incomplete</h3><button class="x-btn" onclick="closeOverlay()">${icon('close',18)}</button></div>
+    <div class="panel-body">This invoice contains a load with missing or incomplete POD documentation. You may still proceed (Workflow 8 §8.2).</div>
+    <div class="panel-foot"><button class="btn btn-secondary" onclick="closeOverlay()">Cancel</button><button class="btn btn-primary" onclick="auditLog('Invoice Created Despite Incomplete POD', [...IB_SELECTED].map(id=>loadById(id).number).join(', '));closeOverlay();IB_STEP=3;render()">Proceed Anyway</button></div>`,{blockBackdrop:true});
+  } else { IB_STEP=3; render(); }
+}
+function saveInvoiceDraft(){
+  const loads=[...IB_SELECTED].map(loadById); const total=loads.reduce((s,l)=>s+loadTotalCustomer(l),0);
+  const num='INV-'+String(113+INVOICES.length).padStart(6,'0');
+  const inv={id:uid('inv'), number:num, customerId:IB_CUSTOMER, status:'DRAFT', loadIds:[...IB_SELECTED], total, sentAt:null, dueDate:null, payments:[], adjustments:[]};
+  INVOICES.unshift(inv); loads.forEach(l=>{ l.invoiced=true; l.invoiceId=inv.id; });
+  auditLog('Invoice Created — '+(loads.length>1?'Consolidated':'Individual'), num+' for '+loads.map(l=>l.number).join(', '));
+  toast(num+' saved as Draft','success'); nav('invoice-detail',{id:inv.id});
+}
+
+function renderInvoiceDetail(id){
+  const inv=invoiceById(id); if(!inv) return `<div class="card">Not found.</div>`;
+  if(!isInvoiceActor() && ROLE!=='OPS_MANAGER' && !(ROLE==='SALES'&&ownsDealOrCreator({customerId:inv.customerId}))) return `<div class="empty-state">${icon('alertTri',26)}<div class="msg">You don't have access to this page</div></div>`;
+  const cust=customerById(inv.customerId); const loads=inv.loadIds.map(loadById);
+  const remaining = invoiceRemaining(inv);
+  const canAct = isInvoiceActor();
+  let primary='';
+  if(canAct){
+    if(inv.status==='DRAFT') primary=`<button class="btn btn-primary" onclick="openSendInvoice('${inv.id}')">Send Invoice</button>`;
+    else if(['SENT','PARTIALLY_PAID'].includes(inv.status)) primary=`<button class="btn btn-primary" onclick="openRecordPayment('${inv.id}')">Record Payment</button>`;
+  }
+  const lineItems = loads.length>1 ?
+    `<tr><th>Load</th><th class="num">Total</th></tr>${loads.map(l=>`<tr><td><a onclick="nav('load-detail',{id:'${l.id}'})">${l.number}</a></td><td class="num tabular">${fmtMoney(loadTotalCustomer(l))}</td></tr>`).join('')}` :
+    `<tr><th>Type</th><th>Description</th><th class="num">Amount</th></tr>${loads[0].charges.filter(c=>c.side==='CUSTOMER').map(c=>`<tr><td>${c.type}</td><td>${c.desc}</td><td class="num tabular">${fmtMoney(c.amount)}</td></tr>`).join('')}`;
+  return `<div class="page-header">
+    <div class="crumb"><a onclick="nav('billing-invoices')">Billing</a> › Customer Invoices › ${inv.number}</div>
+    <div class="header-row"><h1>${inv.number}</h1><div class="spacer"></div>
+      ${canAct&&inv.status!=='VOID'?`<div class="btn-group" style="position:relative"><button class="btn btn-secondary" onclick="toggleVoidMenu()">Void ▾</button><div id="voidMenu" style="display:none;position:absolute;right:0;top:38px;background:var(--n-0);border:1px solid var(--n-200);border-radius:var(--radius-md);box-shadow:var(--shadow-md);z-index:10;min-width:160px"><div style="padding:8px 12px;cursor:pointer" onclick="openVoidInvoice('${inv.id}')">Void Invoice</div></div></div>`:''}
+      ${canAct&&['SENT','PARTIALLY_PAID','PAID'].includes(inv.status)?`<button class="btn btn-secondary" onclick="openAddAdjustment('${inv.id}')">Add Adjustment</button>`:''}
+      ${primary}
+    </div>
+    <div class="subtitle">${cust.name}</div>
+    <div class="badges-row">${invStatusBadge(inv)}</div>
+  </div>
+  <div class="grid-2">
+    <div class="card"><h3>Line Items</h3><div class="table-wrap"><table class="dtable">${lineItems}</table></div></div>
+    <div class="card"><h3>Summary</h3><div class="kv-list">
+      <div class="kv-row"><span class="k">Total</span><span class="v tabular">${fmtMoney(inv.total)}</span></div>
+      <div class="kv-row"><span class="k">Payments Received</span><span class="v tabular">−${fmtMoney(inv.payments.reduce((s,p)=>s+p.amount,0))}</span></div>
+      <div class="kv-row"><span class="k">Adjustments</span><span class="v tabular">${fmtMoney(inv.adjustments.reduce((s,a)=>s+(a.type==='CREDIT'?-a.amount:a.amount),0))}</span></div>
+      <div class="divider"></div>
+      <div class="kv-row"><span class="k"><b>Remaining Balance</b></span><span class="v tabular">${fmtMoney(remaining)}</span></div>
+      <div class="kv-row"><span class="k">Due Date</span><span class="v">${inv.dueDate?fmtDate(inv.dueDate):'— (set on Send)'}</span></div>
+    </div></div>
+  </div>
+  <div class="grid-2" style="margin-top:14px">
+    <div class="card"><h3>Payments</h3><div class="table-wrap"><table class="dtable"><tr><th>Date</th><th class="num">Amount</th><th>Method</th><th>Ref</th></tr>
+    ${inv.payments.map(p=>`<tr><td>${fmtDate(p.date)}</td><td class="num tabular">${fmtMoney(p.amount)}</td><td>${p.method}</td><td>${p.ref}</td></tr>`).join('')||`<tr><td colspan="4"><div class="empty-state">${icon('inbox',22)}<div class="msg">No payments yet</div></div></td></tr>`}</table></div></div>
+    <div class="card"><h3>Adjustments</h3><div class="table-wrap"><table class="dtable"><tr><th>Type</th><th class="num">Amount</th><th>Reason</th></tr>
+    ${inv.adjustments.map(a=>`<tr><td>${badge(a.type,a.type==='CREDIT'?'success':'warning')}</td><td class="num tabular">${fmtMoney(a.amount)}</td><td>${a.reason}</td></tr>`).join('')||`<tr><td colspan="3"><div class="empty-state">${icon('inbox',22)}<div class="msg">None yet</div></div></td></tr>`}</table></div></div>
+  </div>`;
+}
+function toggleVoidMenu(){ const m=document.getElementById('voidMenu'); m.style.display=m.style.display==='none'?'block':'none'; }
+function openSendInvoice(id){
+  const inv=invoiceById(id); const cust=customerById(inv.customerId);
+  openModal(`<div class="panel-head"><h3>Send Invoice ${inv.number}</h3><button class="x-btn" onclick="closeOverlay()">${icon('close',18)}</button></div>
+  <div class="panel-body">
+    <label class="form-label">To</label><input type="email" value="${cust.contactEmail}">
+    <label class="form-label">Subject</label><input type="text" value="Invoice ${inv.number} from Truck Master Dispatching">
+    <label class="form-label">Message</label><textarea>Please find attached invoice ${inv.number}, due ${cust.terms} from send date.</textarea>
+  </div>
+  <div class="panel-foot"><button class="btn btn-secondary" onclick="closeOverlay()">Cancel</button><button class="btn btn-primary" onclick="confirmSendInvoice('${id}')">Send</button></div>`,{blockBackdrop:true});
+}
+function confirmSendInvoice(id){
+  const inv=invoiceById(id); const cust=customerById(inv.customerId);
+  inv.status='SENT'; inv.sentAt=new Date().toISOString();
+  const days = cust.terms.includes('45')?45:cust.terms.includes('15')?15:cust.terms.includes('60')?60:30;
+  const due=new Date(); due.setDate(due.getDate()+days); inv.dueDate=due.toISOString().slice(0,10);
+  auditLog('Invoice Sent', inv.number+' to '+cust.contactEmail);
+  toast(inv.number+' sent','success'); closeOverlay(); render();
+}
+function openRecordPayment(id){
+  openModal(`<div class="panel-head"><h3>Record Payment</h3><button class="x-btn" onclick="closeOverlay()">${icon('close',18)}</button></div>
+  <div class="panel-body">
+    <label class="form-label">Amount <span class="req-note">*</span></label><input type="number" id="pAmt">
+    <label class="form-label">Date</label><input type="date" id="pDate" value="2026-08-13">
+    <label class="form-label">Method</label><input type="text" id="pMethod" placeholder="ACH, Check, Wire…">
+    <label class="form-label">Reference #</label><input type="text" id="pRef">
+  </div>
+  <div class="panel-foot"><button class="btn btn-secondary" onclick="closeOverlay()">Cancel</button><button class="btn btn-primary" onclick="confirmRecordPayment('${id}')">Save</button></div>`,{blockBackdrop:true});
+}
+function confirmRecordPayment(id){
+  const amt=parseFloat(document.getElementById('pAmt').value); if(!amt){ toast('Amount is required','danger'); return; }
+  const inv=invoiceById(id); inv.payments.push({amount:amt,date:document.getElementById('pDate').value,method:document.getElementById('pMethod').value,ref:document.getElementById('pRef').value,by:ME.name});
+  const rem = invoiceRemaining(inv); inv.status = rem<=0?'PAID':'PARTIALLY_PAID';
+  auditLog('Payment Recorded', inv.number+': '+fmtMoney(amt));
+  toast('Payment recorded','success'); closeOverlay(); render();
+}
+function openAddAdjustment(id){
+  openModal(`<div class="panel-head"><h3>Add Adjustment</h3><button class="x-btn" onclick="closeOverlay()">${icon('close',18)}</button></div>
+  <div class="panel-body">
+    <label class="form-label">Type</label><select class="form-select" id="ajType"><option value="CREDIT">Credit</option><option value="DEBIT">Debit</option></select>
+    <label class="form-label">Amount <span class="req-note">*</span></label><input type="number" id="ajAmt">
+    <label class="form-label">Reason <span class="req-note">*</span></label><textarea id="ajReason"></textarea>
+  </div>
+  <div class="panel-foot"><button class="btn btn-secondary" onclick="closeOverlay()">Cancel</button><button class="btn btn-primary" onclick="confirmAddAdjustment('${id}')">Save</button></div>`,{blockBackdrop:true});
+}
+function confirmAddAdjustment(id){
+  const amt=parseFloat(document.getElementById('ajAmt').value); const reason=document.getElementById('ajReason').value;
+  if(!amt||!reason.trim()){ toast('Amount and reason are both required','danger'); return; }
+  const inv=invoiceById(id); inv.adjustments.push({type:document.getElementById('ajType').value,amount:amt,reason,by:ME.name});
+  auditLog('Invoice Adjustment Created', inv.number+': '+document.getElementById('ajType').value+' '+fmtMoney(amt));
+  toast('Adjustment added','success'); closeOverlay(); render();
+}
+function openVoidInvoice(id){
+  document.getElementById('voidMenu').style.display='none';
+  const inv=invoiceById(id);
+  openModal(`<div class="panel-head"><h3>${icon('alertTri',18)} Void ${inv.number}?</h3><button class="x-btn" onclick="closeOverlay()">${icon('close',18)}</button></div>
+  <div class="panel-body">Voiding this invoice will release its ${inv.loadIds.length} load(s) back to the Ready-to-Invoice queue.</div>
+  <div class="panel-foot"><button class="btn btn-secondary" onclick="closeOverlay()">Cancel</button><button class="btn btn-destructive" onclick="confirmVoid('${id}')">Void Invoice</button></div>`,{blockBackdrop:true});
+}
+function confirmVoid(id){
+  const inv=invoiceById(id); inv.status='VOID'; inv.loadIds.forEach(lid=>{ const l=loadById(lid); l.invoiced=false; l.invoiceId=null; });
+  auditLog('Invoice Voided', inv.number); toast(inv.number+' voided — loads released back to queue','warning'); closeOverlay(); render();
+}
+
+/* =========================================================
+   5.4.8 LOAD CLOSING
+   ========================================================= */
+function renderLoadClosing(id){
+  const l=loadById(id); if(!l) return `<div class="card">Not found.</div>`;
+  if(!isClosingActor()) return `<div class="empty-state">${icon('alertTri',26)}<div class="msg">You don't have access to this page</div></div>`;
+  if(l.status==='CLOSED'){
+    return `<div class="page-header"><div class="crumb"><a onclick="nav('load-detail',{id:'${l.id}'})">${l.number}</a> › Close Load</div><h1>Close ${l.number}</h1></div>
+    <div class="card" style="max-width:640px;margin:0 auto"><div class="empty-state">${icon('inbox',28)}<div class="msg">This load is already closed</div><a onclick="nav('load-detail',{id:'${l.id}'})">← Back to Load Detail</a></div></div>`;
+  }
+  const checklist = closingChecklist(l);
+  const anyWarning = checklist.some(c=>!c.ok);
+  return `<div class="page-header"><div class="crumb"><a onclick="nav('load-detail',{id:'${l.id}'})">${l.number}</a> › Close Load</div>
+    <h1>Close ${l.number}</h1><p class="subtitle">${customerById(l.customerId).name} · Delivered ${l.stops.some(s=>s.status==='COMPLETED')?fmtDate(l.stops.slice(-1)[0].departure||l.stops.slice(-1)[0].appt):'—'}</p></div>
+  <div class="card" style="max-width:640px;margin:0 auto">
+    ${checklist.map(c=>`<div class="checklist-item"><div class="ci-icon ${c.ok?'ok':'warn'}">${c.ok?'✓':'!'}</div><div class="ci-body"><div class="ci-title">${c.label}</div><div class="ci-detail">${c.detail}</div></div></div>`).join('')}
+    ${anyWarning?`<div class="alert alert-warning" style="margin-top:14px">${icon('alertTri',16)}<div>This load has item(s) that aren't complete. You can still close it.</div></div>`:`<div class="alert alert-success" style="margin-top:14px">${icon('alertTri',16)}<div>Ready to close.</div></div>`}
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px">
+      <button class="btn btn-secondary" onclick="nav('load-detail',{id:'${l.id}'})">Cancel</button>
+      <button class="btn btn-primary" onclick="confirmCloseLoad('${l.id}')">Close Load</button>
+    </div>
+  </div>`;
+}
+function confirmCloseLoad(id){
+  const l=loadById(id); const checklist=closingChecklist(l);
+  l.status='CLOSED'; l.closedAt=new Date().toISOString();
+  auditLog('Load Closed', l.number+' — checklist snapshot: '+checklist.map(c=>c.label+'='+(c.ok?'Clean':'Warning')).join(', '));
+  toast(l.number+' closed','success'); nav('load-detail',{id});
+}
+
+/* ---------- Document Center (stub — cross-entity search) ---------- */
+function renderDocumentCenter(){
+  const allDocs=[];
+  LOADS.forEach(l=>(l.documents||[]).forEach(d=>allDocs.push({...d, parent:l.number, nav:`nav('load-detail',{id:'${l.id}',tab:'documents'})`})));
+  CARRIERS.forEach(c=>c.docs.forEach(d=>allDocs.push({type:d.type,version:1,by:d.uploadedBy,at:'2026-08-01T00:00',scan:'CLEAN',parent:c.name,nav:`nav('carrier-detail',{id:'${c.id}',tab:'compliance'})`})));
+  const rows = allDocs.map(d=>`<tr class="rowlink" onclick="${d.nav}"><td>${d.type}</td><td>${d.parent}</td><td>${d.by}</td><td>${fmtDate(d.at)}</td><td>${scanBadge(d.scan)}</td></tr>`).join('');
+  return `<div class="page-header"><h1>Document Center</h1><p class="subtitle">Cross-entity document search — respects the same per-record permissions as the parent Load/Carrier/Customer.</p></div>
+  <div class="table-wrap"><table class="dtable"><tr><th>Type</th><th>Parent Record</th><th>Uploaded By</th><th>Date</th><th>Scan</th></tr>${rows||`<tr><td colspan="5"><div class="empty-state">${icon('inbox',24)}<div class="msg">No documents yet</div></div></td></tr>`}</table></div>`;
+}
+
+/* =========================================================
+   BOOTSTRAP
+   ========================================================= */
+
+/* =========================================================
+   DASHBOARD (stub + SH-11 Getting Started — not a full critical screen)
+   ========================================================= */
+let SHOW_GETTING_STARTED = true;
+function renderDashboard(){
+  const gs = SHOW_GETTING_STARTED ? `
+    <div class="getting-started">
+      <div style="display:flex;align-items:center;gap:10px">
+        <h2 style="font-size:17px">👋 Welcome to Truck Master TMS</h2>
+        <button class="x-btn" style="margin-left:auto" onclick="SHOW_GETTING_STARTED=false;render()">${icon('close',16)}</button>
+      </div>
+      <p class="muted" style="margin-top:6px">Get your organization set up — this guide only shows for a brand-new organization (§5.6 SH-11).</p>
+      <div class="gs-steps">
+        <div class="gs-step"><b>1. Invite your team</b><p class="muted small" style="margin-top:6px">Add Dispatchers, Sales, and Accounting users.</p></div>
+        <div class="gs-step"><b>2. Add a Customer</b><p class="muted small" style="margin-top:6px">Set up your first shipper relationship.</p><button class="btn btn-secondary btn-sm" style="margin-top:8px" onclick="nav('customers')">Add Customer</button></div>
+        <div class="gs-step"><b>3. Add a Carrier</b><p class="muted small" style="margin-top:6px">Onboard a carrier and its compliance docs.</p><button class="btn btn-secondary btn-sm" style="margin-top:8px" onclick="nav('carriers')">Add Carrier</button></div>
+      </div>
+    </div>` : '';
+  const active = LOADS.filter(l=>!['CLOSED'].includes(l.status));
+  const atRisk = LOADS.filter(l=>l.riskStatus&&l.riskStatus!=='NORMAL');
+  const kpis = [
+    {label:'Active Loads', val:active.length},
+    {label:'At Risk / Delayed', val:atRisk.length},
+    {label:'Pickups Today', val:LOADS.filter(l=>l.stops.some(s=>s.type==='PICKUP'&&s.appt.slice(0,10)==='2026-08-13')).length},
+  ];
+  if(canSeeFinancials()){
+    const rev = LOADS.reduce((s,l)=>s+loadTotalCustomer(l),0);
+    kpis.push({label:'Total Revenue (all loads)', val: fmtMoney(rev)});
+  }
+  return `<div class="page-header"><h1>Dashboard</h1><p class="subtitle">Signed in as ${ALL_ROLES[ROLE]} · role-aware view per §5.1.6</p></div>
+    ${gs}
+    <div class="grid-3" style="margin-top:16px">${kpis.map(k=>`<div class="card"><h3>${k.label}</h3><div style="font-size:24px;font-weight:700" class="tabular">${k.val}</div></div>`).join('')}</div>
+    <div style="margin-top:16px" class="card"><h3>Jump to</h3>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-secondary" onclick="nav('dispatch-table')">Dispatch Board</button>
+        <button class="btn btn-secondary" onclick="nav('customers')">Customers</button>
+        <button class="btn btn-secondary" onclick="nav('carriers')">Carriers</button>
+        ${canSeeFinancials()?`<button class="btn btn-secondary" onclick="nav('billing-invoices')">Billing</button>`:''}
+      </div>
+    </div>`;
+}
+
+/* =========================================================
+   5.4.1 DISPATCH BOARD — TABLE VIEW
+   ========================================================= */
+let DB_FILTERS = {scope:'all', search:'', status:'', customer:'', risk:'', showClosed:false};
+let DB_SELECTED = new Set();
+
+function scopedLoads(){
+  let list = LOADS.slice();
+  if(!DB_FILTERS.showClosed) list = list.filter(l=>l.status!=='CLOSED');
+  if(ROLE==='DISPATCHER' && DB_FILTERS.scope==='mine') list = list.filter(l=>l.dispatcherId==='u_me_disp');
+  if(ROLE==='SALES' && DB_FILTERS.scope==='mine') list = list.filter(l=>ownsDealOrCreator(l));
+  if(DB_FILTERS.search){ const q=DB_FILTERS.search.toLowerCase(); list=list.filter(l=> l.number.toLowerCase().includes(q) || customerById(l.customerId).name.toLowerCase().includes(q) || (l.carrierId&&carrierById(l.carrierId).name.toLowerCase().includes(q)) ); }
+  if(DB_FILTERS.status) list=list.filter(l=>l.status===DB_FILTERS.status);
+  if(DB_FILTERS.customer) list=list.filter(l=>l.customerId===DB_FILTERS.customer);
+  if(DB_FILTERS.risk) list=list.filter(l=>l.riskStatus===DB_FILTERS.risk);
+  return list;
+}
+function ownsDealOrCreator(l){ const c=customerById(l.customerId); return c.ownerId==='u_me_sales'; }
+function financeVisibleFor(l){
+  if(ROLE==='DISPATCHER') return {show:false, showMargin:false};
+  if(ROLE==='SALES') return {show:ownsDealOrCreator(l), showMargin:false};
+  return {show:true, showMargin:canSeeMargin()};
+}
+
+function renderDispatchTable(){
+  const rows = scopedLoads();
+  const scopeLabel = ROLE==='DISPATCHER'?'My Loads':ROLE==='SALES'?'My Deals':'All Loads';
+  const overdueCount = LOADS.filter(l=>!['DELIVERED','CLOSED'].includes(l.status) && l.stops.some(s=>s.type==='DELIVERY'&&new Date(s.appt)<TODAY&&s.status!=='COMPLETED')).length;
+  const pickup4h = LOADS.filter(l=>l.stops.some(s=>s.type==='PICKUP'&&s.status==='PENDING'&&(new Date(s.appt)-TODAY)/3600000<4&&(new Date(s.appt)-TODAY)/3600000>0)).length;
+
+  return `<div class="page-header">
+    <div class="crumb">Loads › Dispatch Board</div>
+    <div class="header-row"><h1>Dispatch Board</h1>
+      <div class="tabs" style="border:none;margin:0">
+        <div class="tab active">Table</div><div class="tab" onclick="nav('dispatch-kanban')">Kanban</div><div class="tab" onclick="nav('dispatch-calendar')">Calendar</div>
+      </div>
+      <div class="spacer"></div>
+      ${isCreatorRole()?`<button class="btn btn-primary" onclick="openNewLoadChoice()">${icon('plus',15)} New Load</button>`:''}
+    </div>
+  </div>
+
+  <div class="toolbar">
+    ${ROLE!=='ACCOUNTING'&&ROLE!=='ADMIN'&&ROLE!=='OPS_MANAGER'?`<div class="chip ${DB_FILTERS.scope==='mine'?'active':''}" onclick="DB_FILTERS.scope=DB_FILTERS.scope==='mine'?'all':'mine';render()">${scopeLabel}</div>`:`<span class="badge b-neutral">All Loads (org-wide)</span>`}
+    <div class="search-mini">${icon('search',14)}<input type="text" placeholder="Search loads…" value="${DB_FILTERS.search}" oninput="DB_FILTERS.search=this.value;renderTableBody()"></div>
+    <select class="select-mini" onchange="DB_FILTERS.status=this.value;render()"><option value="">All Statuses</option>${Object.entries(LOAD_STATUS_LABEL).map(([k,v])=>`<option value="${k}" ${DB_FILTERS.status===k?'selected':''}>${v}</option>`).join('')}</select>
+    <select class="select-mini" onchange="DB_FILTERS.customer=this.value;render()"><option value="">All Customers</option>${CUSTOMERS.map(c=>`<option value="${c.id}" ${DB_FILTERS.customer===c.id?'selected':''}>${c.name}</option>`).join('')}</select>
+    <select class="select-mini" onchange="DB_FILTERS.risk=this.value;render()"><option value="">Any Risk</option><option value="AT_RISK">At Risk</option><option value="DELAYED">Delayed</option></select>
+    <label class="chip" style="cursor:pointer"><input type="checkbox" style="margin-right:5px" ${DB_FILTERS.showClosed?'checked':''} onchange="DB_FILTERS.showClosed=this.checked;render()">Show Closed</label>
+    <select class="select-mini" style="margin-left:auto">
+      <option>Saved Views</option><option>Loads at Risk — My Loads</option><option>Unpaid Carrier Loads</option>
+    </select>
+    <button class="btn btn-secondary btn-sm" onclick="toast('Exported '+scopedLoads().length+' loads to CSV (prototype)','success')">Export</button>
+  </div>
+
+  <div class="toolbar" style="margin-top:-6px">
+    <div class="chip" onclick="DB_FILTERS.risk='';DB_FILTERS.pickupSoon=true;render()">Pickups next 4h <span class="count-pill">${pickup4h}</span></div>
+    <div class="chip" onclick="toast('Filtered to deliveries in next 4h','info')">Deliveries next 4h <span class="count-pill">${LOADS.filter(l=>l.stops.some(s=>s.type==='DELIVERY'&&s.status==='PENDING'&&(new Date(s.appt)-TODAY)/3600000<4&&(new Date(s.appt)-TODAY)/3600000>0)).length}</span></div>
+    <div class="chip" onclick="toast('Filtered to today','info')">Today <span class="count-pill">${LOADS.filter(l=>l.stops.some(s=>s.appt.slice(0,10)==='2026-08-13')).length}</span></div>
+    <div class="chip" onclick="toast('Filtered to overdue','warning')">Overdue <span class="count-pill">${overdueCount}</span></div>
+  </div>
+
+  <div id="bulkBar"></div>
+  <div class="table-wrap"><table class="dtable" id="dbTable"></table></div>
+  `;
+}
+
+function renderTableBody(){
+  const rows = scopedLoads();
+  const table = document.getElementById('dbTable');
+  if(!table) return;
+  const anyFinance = ROLE!=='DISPATCHER';
+  document.getElementById('bulkBar').innerHTML = DB_SELECTED.size ? `
+    <div class="toolbar" style="background:var(--brand-50);border:1px solid var(--brand-100);border-radius:var(--radius-md);padding:8px 12px">
+      <b class="small">${DB_SELECTED.size} selected</b>
+      ${isDispatchActor()?`<button class="btn btn-secondary btn-sm" onclick="bulkAssignDispatcher()">Assign Dispatcher</button><button class="btn btn-secondary btn-sm" onclick="bulkAssignCarrier()">Assign Carrier</button>`:''}
+      <button class="btn btn-secondary btn-sm" onclick="toast('Exported selected loads (prototype)','success')">Export Selected</button>
+      <button class="btn btn-ghost btn-sm" onclick="DB_SELECTED.clear();renderTableBody()">Clear</button>
+    </div>` : '';
+
+  if(!rows.length){
+    table.innerHTML = `<tr><td><div class="empty-state">${icon('inbox',30)}<div class="msg">No loads match your filters</div><button class="btn btn-secondary btn-sm" onclick="DB_FILTERS={scope:'all',search:'',status:'',customer:'',risk:'',showClosed:false};render()">Clear filters</button></div></td></tr>`;
+    return;
+  }
+  const head = `<tr><th></th><th>Load #</th><th>Customer</th><th>Status</th><th>Risk</th><th>Carrier</th><th>Dispatcher</th><th>Lane</th><th>Pickup</th><th>Delivery</th><th>Equip.</th>
+    ${anyFinance?'<th class="num">Cust. Rate</th><th class="num">Carrier Rate</th>':''}${ROLE!=='DISPATCHER'&&canSeeMargin()?'<th class="num">Margin</th>':''}<th></th></tr>`;
+  const body = rows.map(l=>{
+    const cust=customerById(l.customerId); const carr=l.carrierId?carrierById(l.carrierId):null;
+    const disp = l.dispatcherId==='u_me_disp'?'Jamie Rivera':'—';
+    const pu = l.stops.find(s=>s.type==='PICKUP'); const dl = l.stops.filter(s=>s.type==='DELIVERY').slice(-1)[0];
+    const fin = financeVisibleFor(l); const m = loadMargin(l);
+    const riskClass = l.riskStatus==='AT_RISK'?'risk-warning':l.riskStatus==='DELAYED'?'risk-danger':'';
+    return `<tr class="rowlink ${riskClass}" onclick="openLoadDrawer('${l.id}')">
+      <td onclick="event.stopPropagation()"><input type="checkbox" ${DB_SELECTED.has(l.id)?'checked':''} onchange="toggleSel('${l.id}',this.checked)"></td>
+      <td><b>${l.number}</b></td><td>${cust.name}</td><td>${loadStatusBadge(l.status)}</td><td>${riskBadge(l)}</td>
+      <td>${carr?carr.name:'<span class="muted">—</span>'}</td><td>${disp}</td>
+      <td>${pu.city}, ${pu.state} → ${dl.city}, ${dl.state}</td>
+      <td>${fmtDate(pu.appt)}</td><td>${fmtDate(dl.appt)}</td><td>${l.equipment}</td>
+      ${anyFinance?`<td class="num tabular">${fin.show?fmtMoney(l.customerRate):'—'}</td><td class="num tabular">${fin.show?fmtMoney(l.carrierRate):'—'}</td>`:''}
+      ${ROLE!=='DISPATCHER'&&canSeeMargin()?`<td class="num tabular">${fin.show&&fin.showMargin?fmtMoney(m.gp):'—'}</td>`:''}
+      <td onclick="event.stopPropagation()"><button class="icon-btn" onclick="openRowMenu(event,'${l.id}')">${icon('kebab',16)}</button></td>
+    </tr>`;
+  }).join('');
+  table.innerHTML = head+body;
+}
+function toggleSel(id,checked){ if(checked) DB_SELECTED.add(id); else DB_SELECTED.delete(id); renderTableBody(); }
+function bulkAssignDispatcher(){ DB_SELECTED.forEach(id=>{ loadById(id).dispatcherId='u_me_disp'; auditLog('Dispatcher Reassigned', loadById(id).number+' → Jamie Rivera'); }); toast(DB_SELECTED.size+' load(s) assigned to you','success'); DB_SELECTED.clear(); render(); }
+function bulkAssignCarrier(){ openModal(`<div class="panel-head"><h3>Assign Carrier to ${DB_SELECTED.size} loads</h3><button class="x-btn" onclick="closeOverlay()">${icon('close',18)}</button></div>
+  <div class="panel-body"><div class="alert alert-info">${icon('alertTri',15)}<div>Each load is still individually checked against the Assignment Eligibility gate (Workflow 5 §5.3) — bulk selection only applies the same eligible carrier to multiple loads at once, it never bypasses the per-load check.</div></div>
+  ${carrierPickerHtml()}</div>
+  <div class="panel-foot"><button class="btn btn-secondary" onclick="closeOverlay()">Cancel</button><button class="btn btn-primary" onclick="bulkAssignCarrierConfirm()">Assign</button></div>`,{blockBackdrop:true});
+}
+function carrierPickerHtml(){
+  return `<label class="form-label">Carrier</label><select class="form-select" id="bulkCarrierPick">${CARRIERS.map(c=>{const e=computeEligibility(c);return `<option value="${c.id}" ${!e.eligible?'disabled':''}>${c.name} ${e.eligible?'':'— Ineligible: '+e.reasons[0]}</option>`;}).join('')}</select>`;
+}
+function bulkAssignCarrierConfirm(){
+  const cid=document.getElementById('bulkCarrierPick').value; const c=carrierById(cid); const e=computeEligibility(c);
+  if(!e.eligible){ toast('Cannot assign — '+c.name+' is ineligible: '+e.reasons[0],'danger'); return; }
+  DB_SELECTED.forEach(id=>{ const l=loadById(id); l.carrierId=cid; l.status='CARRIER_ASSIGNED'; l.sourcing.push({carrier:c.name,rate:l.carrierRate||0,outcome:'ASSIGNED',reason:null,by:ME.name,at:new Date().toISOString()}); auditLog('Carrier Assigned',l.number+' → '+c.name); });
+  toast(DB_SELECTED.size+' load(s) assigned to '+c.name,'success'); DB_SELECTED.clear(); closeOverlay(); render();
+}
+function openRowMenu(ev,id){ ev.stopPropagation(); openModal(`<div class="panel-head"><h3>${loadById(id).number}</h3><button class="x-btn" onclick="closeOverlay()">${icon('close',18)}</button></div>
+  <div class="panel-body" style="display:flex;flex-direction:column;gap:4px">
+    <button class="btn btn-secondary" onclick="closeOverlay();nav('load-detail',{id:'${id}'})">Open Full Detail</button>
+    ${isDispatchActor()?`<button class="btn btn-secondary" onclick="loadById('${id}').dispatcherId='u_me_disp';auditLog('Dispatcher Reassigned','${id}');closeOverlay();render();toast('Assigned to you','success')">Assign to Me</button>`:''}
+  </div>`);
+}
+function openNewLoadChoice(){
+  openModal(`<div class="panel-head"><h3>New Load</h3><button class="x-btn" onclick="closeOverlay()">${icon('close',18)}</button></div>
+  <div class="panel-body" style="display:flex;gap:12px">
+    <div class="card" style="flex:1;cursor:pointer" onclick="toast('Quote flow not part of this prototype pass — see UI_UX_DESIGN.md §5.4.1','info');closeOverlay()"><h3>Start a Quote</h3><p class="small muted">Workflow 4 §4.2 — Customer, stops, equipment, rate. Expires in 7 days unless overridden.</p></div>
+    <div class="card" style="flex:1;cursor:pointer" onclick="closeOverlay();openDirectBooking()"><h3>Book Directly</h3><p class="small muted">Workflow 4 §4.8 — skips the Quote stage for known business.</p></div>
+  </div>`);
+}
+function openDirectBooking(){
+  const activeCustomers = CUSTOMERS.filter(c=>c.status!=='BLOCKED');
+  openModal(`<div class="panel-head"><h3>Book Load Directly</h3><button class="x-btn" onclick="closeOverlay()">${icon('close',18)}</button></div>
+  <div class="panel-body">
+    <label class="form-label">Customer <span class="req-note">*</span></label>
+    <select class="form-select" id="nlCust" onchange="renderNlWarning()">${activeCustomers.map(c=>`<option value="${c.id}">${c.name} (${c.status})</option>`).join('')}</select>
+    <div id="nlWarning"></div>
+    <label class="form-label">Origin</label><input type="text" id="nlOrigin" placeholder="Dallas, TX">
+    <label class="form-label">Destination</label><input type="text" id="nlDest" placeholder="Atlanta, GA">
+    <label class="form-label">Equipment</label><select class="form-select" id="nlEquip"><option>Dry Van</option><option>Reefer</option><option>Flatbed</option></select>
+    <label class="form-label">Customer Rate <span class="req-note">*</span></label><input type="number" id="nlRate" placeholder="2450.00">
+  </div>
+  <div class="panel-foot"><button class="btn btn-secondary" onclick="closeOverlay()">Cancel</button><button class="btn btn-primary" onclick="createDirectLoad()">Book Load</button></div>`,{blockBackdrop:true});
+  setTimeout(renderNlWarning,0);
+}
+function renderNlWarning(){
+  const cid=document.getElementById('nlCust')?.value; if(!cid) return; const c=customerById(cid);
+  const box=document.getElementById('nlWarning'); if(!box) return;
+  if(c.status==='PROSPECT') box.innerHTML=`<div class="alert alert-danger" style="margin-top:8px">${icon('alertTri',15)}<div>Customer must be Active before a Load can be Booked (Workflow 4 §4.3). This customer is currently a Prospect.</div></div>`;
+  else if(c.status==='INACTIVE') box.innerHTML=`<div class="alert alert-warning" style="margin-top:8px">${icon('alertTri',15)}<div>This customer is Inactive — booking requires override confirmation.</div></div>`;
+  else box.innerHTML='';
+}
+function createDirectLoad(){
+  const cid=document.getElementById('nlCust').value, c=customerById(cid);
+  if(c.status==='PROSPECT'){ toast('Blocked — customer must be Active to book (Workflow 4 §4.3)','danger'); return; }
+  const rate=parseFloat(document.getElementById('nlRate').value)||0;
+  if(!document.getElementById('nlOrigin').value||!document.getElementById('nlDest').value||!rate){ toast('Please complete all required fields','danger'); return; }
+  const [oCity,oState]=document.getElementById('nlOrigin').value.split(',').map(s=>s.trim());
+  const [dCity,dState]=document.getElementById('nlDest').value.split(',').map(s=>s.trim());
+  const n = 'LOAD-'+String(460+LOADS.length).padStart(6,'0');
+  const nl = {id:uid('l'), number:n, customerId:cid, status:'BOOKED', equipment:document.getElementById('nlEquip').value, bookingSource:'DIRECT',
+    customerRate:rate, carrierRate:null, carrierId:null, dispatcherId:null, riskStatus:'NORMAL', podStatus:'NOT_RECEIVED', invoiced:false, rateConfirmation:false,
+    stops:[{seq:1,type:'PICKUP',city:oCity||'—',state:oState||'', appt:'2026-08-16T09:00',arrival:null,departure:null,status:'PENDING'},
+           {seq:2,type:'DELIVERY',city:dCity||'—',state:dState||'', appt:'2026-08-16T17:00',arrival:null,departure:null,status:'PENDING'}],
+    dispatch:null, sourcing:[], checkCalls:[], charges:[CHARGE('Linehaul','CUSTOMER',rate,'Base linehaul')], invoiceId:null, carrierPayments:[]};
+  LOADS.unshift(nl); auditLog('Load Booked Directly (No Quote)', n);
+  closeOverlay(); toast(n+' booked','success'); nav('load-detail',{id:nl.id});
+}
+
+/* ---------- Load Drawer (quick preview, shared by Table/Kanban/Calendar) ---------- */
+function openLoadDrawer(id){
+  const l=loadById(id); const cust=customerById(l.customerId); const carr=l.carrierId?carrierById(l.carrierId):null;
+  const fin = financeVisibleFor(l);
+  const nextAction = primaryActionFor(l);
+  openDrawer(`
+    <div class="panel-head"><h3>${l.number}</h3><button class="x-btn" onclick="closeOverlay()">${icon('close',18)}</button></div>
+    <div class="panel-body">
+      <div class="badges-row">${loadStatusBadge(l.status)}${riskBadge(l)}${podBadge(l.podStatus)}</div>
+      <div class="divider"></div>
+      <div class="kv-list">
+        <div class="kv-row"><span class="k">Customer</span><span class="v">${cust.name}</span></div>
+        <div class="kv-row"><span class="k">Carrier</span><span class="v">${carr?carr.name:'Not yet assigned'}</span></div>
+        <div class="kv-row"><span class="k">Equipment</span><span class="v">${l.equipment}</span></div>
+        ${fin.show?`<div class="kv-row"><span class="k">Customer Rate</span><span class="v tabular">${fmtMoney(l.customerRate)}</span></div>`:''}
+      </div>
+      <div class="divider"></div>
+      <h3 style="font-size:12px;color:var(--n-500);text-transform:uppercase;margin-bottom:8px">Stops</h3>
+      ${l.stops.map(s=>`<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--n-100);font-size:12.5px"><span>${s.type==='PICKUP'?'⬆':'⬇'} ${s.city}, ${s.state}</span>${stopStatusBadge(s.status)}</div>`).join('')}
+    </div>
+    <div class="panel-foot">
+      ${nextAction?`<button class="btn btn-primary" style="flex:1" onclick="closeOverlay();${nextAction.action}">${nextAction.label}</button>`:''}
+      <button class="btn btn-secondary" onclick="nav('load-detail',{id:'${id}'})">Open Full Detail →</button>
+    </div>`);
+}
+
+/* =========================================================
+   BOOTSTRAP (moved to true end of script — function hoisting
+   means declaration order doesn't matter, but this keeps the
+   entry point unambiguous)
+   ========================================================= */
+render();
+</script>

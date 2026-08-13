@@ -1,0 +1,31 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+build/
+
+# Env files (never commit real secrets)
+.env
+.env.local
+.env.*.local
+
+# Test/coverage
+coverage/
+
+# Prisma
+backend/prisma/migrations/dev.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS/editor
+.DS_Store
+.vscode/
+.idea/
+
+# Local Claude Code harness settings (not part of the application)
+.claude/
+
+# Docker volumes are named volumes (not bind mounts), nothing local to ignore

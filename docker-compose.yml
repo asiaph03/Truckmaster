@@ -1,0 +1,58 @@
+# Local development infrastructure only — not a deployment configuration
+# (Stage 6 §12.5 / Stage 7 explicitly defers real deployment config).
+# Matches backend/.env.example.
+#
+# Usage:
+#   docker compose up -d
+#   cd backend && npm run prisma:migrate   (once Phase 1 adds models)
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: tms
+      POSTGRES_PASSWORD: tms_dev_password
+      POSTGRES_DB: tms_dev
+    ports:
+      - "5432:5432"
+    volumes:
+      - tms_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tms -d tms_dev"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: tms_minio_admin
+      MINIO_ROOT_PASSWORD: tms_minio_dev_password
+    ports:
+      - "9000:9000" # S3 API
+      - "9001:9001" # Web console
+    volumes:
+      - tms_minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  tms_postgres_data:
+  tms_minio_data:

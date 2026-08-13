@@ -1,0 +1,269 @@
+// Truck Master TMS — Prisma schema
+// Source of truth for the data model: docs/DATABASE_DESIGN.md
+//
+// Phase 0 (Foundation): datasource + generator only.
+// Phase 1 (Identity & Tenancy) — THIS FILE — adds the first models:
+// User, Organization, OrganizationMembership, MembershipRole,
+// OrganizationSequence — per docs/TECHNICAL_ARCHITECTURE.md §15 Phase 1
+// and docs/DATABASE_DESIGN.md §2–3.
+//
+// Row-Level Security policies are NOT expressed here — Prisma has no RLS
+// DSL. RLS policies ship as raw SQL migrations applied immediately after
+// each `prisma migrate dev`/`deploy` run. See prisma/rls/README.md for the
+// mechanism and policy pattern (TECHNICAL_ARCHITECTURE.md §4.6).
+//
+// `User` and `Organization` are the only two tables with NO organization_id
+// column and NO RLS policy (DATABASE_DESIGN.md §1, §26) — every other
+// model below is organization_id-scoped and RLS-protected.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------
+// Enums (DATABASE_DESIGN.md §2–3) — native Postgres ENUM types, per
+// TECHNICAL_ARCHITECTURE.md §4.4: these are closed, locked vocabularies
+// (Workflow 1), not organization-extensible, so a DB-level guarantee is
+// appropriate (unlike DocumentTypeDefinition/ChargeTypeDefinition, which
+// remain lookup tables starting Phase 2/6 because those ARE extensible).
+// ---------------------------------------------------------------------
+
+enum UserStatus {
+  PENDING_VERIFICATION
+  ACTIVE
+  SUSPENDED
+}
+
+enum OrganizationStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+enum PaymentTerms {
+  DUE_ON_RECEIPT
+  NET_15
+  NET_30
+  NET_45
+  NET_60
+}
+
+enum MembershipStatus {
+  PENDING_VERIFICATION
+  INVITED
+  ACTIVE
+  INACTIVE
+  EXPIRED
+  CANCELLED
+}
+
+enum MembershipRoleName {
+  ADMIN
+  OPERATIONS_MANAGER
+  DISPATCHER
+  SALES_BOOKING
+  ACCOUNTING
+  COMPLIANCE_REVIEWER
+}
+
+enum OrganizationSequenceType {
+  LOAD
+  QUOTE
+  INVOICE
+}
+
+/// Architecture Decision 8 — reserved now, AI unused until a future phase.
+enum ActorType {
+  HUMAN
+  SYSTEM
+  AI
+}
+
+// ---------------------------------------------------------------------
+// Models
+// ---------------------------------------------------------------------
+
+/// Global identity (Architecture Decision 1). No organization_id — a
+/// person's login identity is shared across every org they belong to.
+model User {
+  id                    String     @id @default(uuid()) @db.Uuid
+  email                 String     @unique
+  passwordHash          String?    @map("password_hash")
+  name                  String
+  isPlatformSuperAdmin  Boolean    @default(false) @map("is_platform_super_admin")
+  status                UserStatus @default(PENDING_VERIFICATION)
+  emailVerifiedAt       DateTime?  @map("email_verified_at")
+  createdAt             DateTime   @default(now()) @map("created_at")
+
+  // Reverse relations
+  organizationsCreated   Organization[]         @relation("OrganizationCreatedBy")
+  memberships            OrganizationMembership[] @relation("MembershipUser")
+  invitationsSent        OrganizationMembership[] @relation("MembershipInvitedBy")
+  deactivationsPerformed  OrganizationMembership[] @relation("MembershipDeactivatedBy")
+
+  @@map("user")
+}
+
+/// Tenant root. No organization_id on itself (it IS the tenant boundary);
+/// no RLS policy — access is gated entirely by the application layer
+/// joining through OrganizationMembership first (DATABASE_DESIGN.md §26).
+model Organization {
+  id                  String             @id @default(uuid()) @db.Uuid
+  legalName           String             @map("legal_name")
+  addressLine1        String             @map("address_line1")
+  city                String
+  state               String
+  zip                 String
+  country             String             @default("US")
+  primaryContactName  String             @map("primary_contact_name")
+  primaryContactEmail String             @map("primary_contact_email")
+  primaryContactPhone String             @map("primary_contact_phone")
+  defaultPaymentTerms PaymentTerms       @default(NET_30) @map("default_payment_terms")
+  status              OrganizationStatus @default(ACTIVE)
+  createdByUserId     String             @map("created_by_user_id") @db.Uuid
+  createdBy           User               @relation("OrganizationCreatedBy", fields: [createdByUserId], references: [id])
+  createdAt           DateTime           @default(now()) @map("created_at")
+
+  memberships OrganizationMembership[]
+  sequences   OrganizationSequence[]
+
+  @@map("organization")
+}
+
+/// A person's relationship to one organization — status, invitation
+/// lifecycle, roles. RLS-protected (organization_id-scoped).
+model OrganizationMembership {
+  id     String @id @default(uuid()) @db.Uuid
+
+  organizationId String       @map("organization_id") @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  userId String @map("user_id") @db.Uuid
+  user   User   @relation("MembershipUser", fields: [userId], references: [id])
+
+  status MembershipStatus @default(INVITED)
+
+  invitedByUserId String? @map("invited_by_user_id") @db.Uuid
+  invitedBy       User?   @relation("MembershipInvitedBy", fields: [invitedByUserId], references: [id])
+  invitedAt       DateTime? @map("invited_at")
+
+  invitationTokenHash  String?   @map("invitation_token_hash")
+  invitationExpiresAt  DateTime? @map("invitation_expires_at")
+
+  activatedAt DateTime? @map("activated_at")
+
+  deactivatedAt       DateTime? @map("deactivated_at")
+  deactivatedByUserId String?   @map("deactivated_by_user_id") @db.Uuid
+  deactivatedBy        User?    @relation("MembershipDeactivatedBy", fields: [deactivatedByUserId], references: [id])
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  roles MembershipRole[]
+
+  @@unique([organizationId, userId])
+  @@index([organizationId])
+  @@index([userId])
+  @@map("organization_membership")
+}
+
+/// Multi-role support (Workflow 1 §7). organization_id is denormalized
+/// here (also present, redundantly with the parent membership) purely so
+/// every RLS-protected table has a simple, join-free policy
+/// (TECHNICAL_ARCHITECTURE.md §4.4/Decision Log D2).
+model MembershipRole {
+  id String @id @default(uuid()) @db.Uuid
+
+  organizationId String @map("organization_id") @db.Uuid
+
+  membershipId String                  @map("membership_id") @db.Uuid
+  membership   OrganizationMembership @relation(fields: [membershipId], references: [id])
+
+  role MembershipRoleName
+
+  @@unique([membershipId, role])
+  @@index([organizationId])
+  @@map("membership_role")
+}
+
+/// Org-scoped counter for Load/Quote/Invoice numbering (Decision Log D3).
+/// Not consumed by anything yet in Phase 1 — Load/Quote/Invoice don't
+/// exist until Phase 3/6 — but implemented now per the explicit Phase 1
+/// entity list, with its row-locking increment method built and tested
+/// (TECHNICAL_ARCHITECTURE.md §4.5/§4.7) so it's ready the moment it's
+/// needed.
+model OrganizationSequence {
+  organizationId String                   @map("organization_id") @db.Uuid
+  organization   Organization             @relation(fields: [organizationId], references: [id])
+  sequenceType   OrganizationSequenceType @map("sequence_type")
+  currentValue   BigInt                   @default(0) @map("current_value")
+
+  @@id([organizationId, sequenceType])
+  @@map("organization_sequence")
+}
+
+/// Universal audit log (DATABASE_DESIGN.md §23, Decision 7/Decision Log
+/// D15). Explicitly called out as Phase 1 scope in
+/// TECHNICAL_ARCHITECTURE.md §15 ("AuditLog/DomainEvent service — used by
+/// everything after") — Workflow 1 itself requires an audit event for
+/// every action it defines (Organization Created, User Invited, User
+/// Activated, User Deactivated, etc.), so this is a hard dependency for
+/// correctly implementing Phase 1, not scope creep.
+///
+/// correlationId (TECHNICAL_ARCHITECTURE.md §9.3, a ✅-confirmed Stage 6
+/// addition) carries the request's requestId (RequestContext, Phase 0) so
+/// every audit entry is traceable back to the API call that produced it.
+model AuditLog {
+  id String @id @default(uuid()) @db.Uuid
+
+  organizationId String @map("organization_id") @db.Uuid
+
+  actorUserId String?   @map("actor_user_id") @db.Uuid
+  actorType   ActorType @default(HUMAN) @map("actor_type")
+
+  action     String
+  entityType String @map("entity_type")
+  entityId   String @map("entity_id") @db.Uuid
+
+  previousValue Json? @map("previous_value")
+  newValue      Json? @map("new_value")
+  reason        String?
+
+  correlationId String? @map("correlation_id")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([organizationId, entityType, entityId, createdAt])
+  @@index([organizationId, actorUserId, createdAt])
+  @@map("audit_log")
+}
+
+/// Internal event backbone (DATABASE_DESIGN.md §24). No subscribers exist
+/// yet in Phase 1 (Notification is Phase 7) — written now alongside every
+/// AuditLog entry per TECHNICAL_ARCHITECTURE.md §9.1's "written
+/// transactionally together...by the same service-layer call," so future
+/// phases only need to *subscribe*, never touch the ~13 modules that
+/// already emit events.
+model DomainEvent {
+  id String @id @default(uuid()) @db.Uuid
+
+  organizationId String @map("organization_id") @db.Uuid
+
+  eventType  String @map("event_type")
+  entityType String @map("entity_type")
+  entityId   String @map("entity_id") @db.Uuid
+  payload    Json
+
+  actorUserId String?   @map("actor_user_id") @db.Uuid
+  actorType   ActorType @default(HUMAN) @map("actor_type")
+
+  correlationId String? @map("correlation_id")
+
+  occurredAt DateTime @default(now()) @map("occurred_at")
+
+  @@index([organizationId, eventType, occurredAt])
+  @@map("domain_event")
+}
