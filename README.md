@@ -39,16 +39,20 @@ npm run prisma:migrate:deploy
 #    see backend/prisma/rls/README.md for why)
 npm run prisma:apply-rls
 
-# 5. Run the app
+# 5. Seed system-default document types (W9, COI, Rate Confirmation, etc. —
+#    Phase 2, DATABASE_DESIGN.md §7 Decision Log D13)
+npm run prisma:seed
+
+# 6. Run the app
 npm run start:dev
 ```
 
-### Verifying Phase 1 (Identity & Tenancy) against real infrastructure
+### Verifying Phase 1 + Phase 2 against real infrastructure
 
-The sandbox this codebase has been developed in has no Docker/PostgreSQL/Redis
-available, so Phase 1 has only ever been verified against a mocked Prisma
-layer (unit tests) — never against a live database. Run this on a machine
-with Docker to close that gap:
+The sandbox this codebase has been developed in has no Docker/PostgreSQL/Redis/
+MinIO available, so neither phase has ever been verified against live
+infrastructure — only against a mocked Prisma layer (unit tests). Run this on
+a machine with Docker to close that gap:
 
 ```bash
 # From the repo root
@@ -59,34 +63,45 @@ cp .env.example .env
 
 npm run build              # TypeScript compiles
 npm run lint                # ESLint, zero warnings
-npm test                    # unit tests (39 tests as of Phase 1)
+npm test                    # unit tests (84 tests as of Phase 2)
 
-npm run prisma:migrate:deploy   # applies the Phase 1 migration to Postgres
-npm run prisma:apply-rls         # applies FORCE ROW LEVEL SECURITY policies
+npm run prisma:migrate:deploy   # applies the Phase 1 + Phase 2 migrations to Postgres
+npm run prisma:apply-rls         # applies FORCE ROW LEVEL SECURITY policies (both phases)
+npm run prisma:seed              # seeds the 13 system-default document types
 
-npm run test:e2e            # full Workflow 1 lifecycle + existing-identity
-                             # reuse + cross-tenant RLS proof, against the
-                             # real Postgres/Redis started above
+npm run test:e2e            # full Workflow 1 + Workflow 2/3 lifecycle, malware-
+                             # scan quarantine, and cross-tenant RLS proof,
+                             # against the real Postgres/Redis/MinIO started above
 ```
 
-`test/identity.e2e-spec.ts` is the file to watch: it proves the Workflow 1
-lifecycle end-to-end (org creation → verification → invite → activation →
-login → zero-Admin protection), the existing-global-User reuse path on
-organization creation, and — critically — that PostgreSQL's `FORCE ROW LEVEL
-SECURITY` itself rejects a raw cross-tenant query even when the app-layer
-`WHERE` clause is bypassed entirely, not just that the service layer happens
-to filter correctly. If any of these fail against real infrastructure, Phase 1
-is not actually done regardless of what the mocked unit tests show.
+Two files to watch:
+
+- `test/identity.e2e-spec.ts` — the Workflow 1 lifecycle end-to-end (org
+  creation → verification → invite → activation → login → zero-Admin
+  protection), the existing-global-User reuse path on organization creation,
+  and cross-tenant RLS isolation for the Phase 1 tables.
+- `test/core-master-data.e2e-spec.ts` — Customer creation + duplicate
+  detection (Workflow 2), full Carrier onboarding through Activation
+  including self-review prevention and the 7-condition eligibility gate
+  (Workflow 3), a real presigned-URL document upload with the malware-scan
+  worker actually quarantining an injected "infected" result, and
+  cross-tenant RLS isolation for the Phase 2 tables.
+
+Both prove that PostgreSQL's `FORCE ROW LEVEL SECURITY` itself rejects a raw
+cross-tenant query even when the app-layer `WHERE` clause is bypassed
+entirely, not just that the service layer happens to filter correctly. If
+any of these fail against real infrastructure, the corresponding phase is
+not actually done regardless of what the mocked unit tests show.
 
 ## Current Status
 
-**Stage 7, Phase 1 (Identity & Tenancy) implemented; build/lint/unit tests
-green.** Live-infrastructure verification (Prisma migration apply, RLS
-policy apply, E2E lifecycle, cross-tenant RLS proof) is written and ready
-to run but has not been executed against a real PostgreSQL/Redis instance —
-see "Verifying Phase 1" above. See
-[`docs/TECHNICAL_ARCHITECTURE.md`](docs/TECHNICAL_ARCHITECTURE.md) §15 for
-the full phase sequence. Phase 2 (Core Master Data) is next once that
-verification is complete.
+**Stage 7, Phase 2 (Core Master Data) implemented; build/lint/unit tests
+green.** Live-infrastructure verification (Prisma migrations, RLS policy
+apply, E2E lifecycles for both phases, cross-tenant RLS proof, malware-scan
+quarantine proof) is written and ready to run but has not been executed
+against real PostgreSQL/Redis/MinIO — see "Verifying Phase 1 + Phase 2"
+above. See [`docs/TECHNICAL_ARCHITECTURE.md`](docs/TECHNICAL_ARCHITECTURE.md)
+§15 for the full phase sequence. Phase 3 (Load Lifecycle Core) is next once
+that verification is complete.
 
 Every business rule implemented in this codebase traces back to a specific section of a document in `docs/` — when in doubt about *why* the code does something, the docs are authoritative, not the code's comments.

@@ -11,6 +11,9 @@ import { AppExceptionFilter } from './common/filters/app-exception.filter';
 import { HealthModule } from './health/health.module';
 import { IdentityModule } from './modules/identity/identity.module';
 import { SessionAuthGuard } from './modules/identity/guards/session-auth.guard';
+import { CustomerModule } from './modules/customer/customer.module';
+import { CarrierModule } from './modules/carrier/carrier.module';
+import { DocumentModule } from './modules/document/document.module';
 
 /**
  * Root module.
@@ -24,9 +27,11 @@ import { SessionAuthGuard } from './modules/identity/guards/session-auth.guard';
  * (TECHNICAL_ARCHITECTURE.md §2.5/§3 — tenant isolation and authorization
  * implemented from the beginning, not layered on later).
  *
- * Remaining feature modules (Customer, Carrier, Quote/Load, Sourcing,
- * Dispatch, Document, Billing, CarrierPay, Notification, Reporting —
- * §1.2) are added one at a time starting Phase 2.
+ * Phase 2 (Core Master Data) adds: CustomerModule, CarrierModule,
+ * DocumentModule (malware-scan queue/worker included).
+ *
+ * Remaining feature modules (Quote/Load, Sourcing, Dispatch, Billing,
+ * CarrierPay, Notification, Reporting — §1.2) are added starting Phase 3.
  */
 @Module({
   imports: [
@@ -40,6 +45,9 @@ import { SessionAuthGuard } from './modules/identity/guards/session-auth.guard';
     AuditModule,
     HealthModule,
     IdentityModule,
+    CustomerModule,
+    CarrierModule,
+    DocumentModule,
   ],
   providers: [
     {

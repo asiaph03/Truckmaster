@@ -90,20 +90,29 @@ enum ActorType {
 /// Global identity (Architecture Decision 1). No organization_id — a
 /// person's login identity is shared across every org they belong to.
 model User {
-  id                    String     @id @default(uuid()) @db.Uuid
-  email                 String     @unique
-  passwordHash          String?    @map("password_hash")
-  name                  String
-  isPlatformSuperAdmin  Boolean    @default(false) @map("is_platform_super_admin")
-  status                UserStatus @default(PENDING_VERIFICATION)
-  emailVerifiedAt       DateTime?  @map("email_verified_at")
-  createdAt             DateTime   @default(now()) @map("created_at")
+  id                   String     @id @default(uuid()) @db.Uuid
+  email                String     @unique
+  passwordHash         String?    @map("password_hash")
+  name                 String
+  isPlatformSuperAdmin Boolean    @default(false) @map("is_platform_super_admin")
+  status               UserStatus @default(PENDING_VERIFICATION)
+  emailVerifiedAt      DateTime?  @map("email_verified_at")
+  createdAt            DateTime   @default(now()) @map("created_at")
 
   // Reverse relations
-  organizationsCreated   Organization[]         @relation("OrganizationCreatedBy")
+  organizationsCreated   Organization[]           @relation("OrganizationCreatedBy")
   memberships            OrganizationMembership[] @relation("MembershipUser")
   invitationsSent        OrganizationMembership[] @relation("MembershipInvitedBy")
-  deactivationsPerformed  OrganizationMembership[] @relation("MembershipDeactivatedBy")
+  deactivationsPerformed OrganizationMembership[] @relation("MembershipDeactivatedBy")
+
+  // Phase 2 reverse relations
+  customersOwned              Customer[]                 @relation("CustomerAccountOwner")
+  customersCreated            Customer[]                 @relation("CustomerCreatedBy")
+  carriersCreated             Carrier[]                  @relation("CarrierCreatedBy")
+  fmcsaVerificationsPerformed CarrierFmcsaVerification[] @relation("FmcsaVerifiedBy")
+  serviceAreasCreated         CarrierServiceArea[]       @relation("ServiceAreaCreatedBy")
+  documentsUploaded           Document[]                 @relation("DocumentUploadedBy")
+  documentsReviewed           Document[]                 @relation("DocumentReviewedBy")
 
   @@map("user")
 }
@@ -131,13 +140,23 @@ model Organization {
   memberships OrganizationMembership[]
   sequences   OrganizationSequence[]
 
+  // Phase 2 reverse relations — Customer/Carrier are direct children in the
+  // relationship map (DATABASE_DESIGN.md §29), same tier as
+  // OrganizationMembership, so they get a full Prisma relation + FK
+  // constraint. Child/detail tables below (contacts, locations, insurance,
+  // documents, etc.) intentionally do NOT — see the note above the
+  // Customer model for why.
+  customers               Customer[]
+  carriers                Carrier[]
+  documentTypeDefinitions DocumentTypeDefinition[]
+
   @@map("organization")
 }
 
 /// A person's relationship to one organization — status, invitation
 /// lifecycle, roles. RLS-protected (organization_id-scoped).
 model OrganizationMembership {
-  id     String @id @default(uuid()) @db.Uuid
+  id String @id @default(uuid()) @db.Uuid
 
   organizationId String       @map("organization_id") @db.Uuid
   organization   Organization @relation(fields: [organizationId], references: [id])
@@ -147,18 +166,18 @@ model OrganizationMembership {
 
   status MembershipStatus @default(INVITED)
 
-  invitedByUserId String? @map("invited_by_user_id") @db.Uuid
-  invitedBy       User?   @relation("MembershipInvitedBy", fields: [invitedByUserId], references: [id])
+  invitedByUserId String?   @map("invited_by_user_id") @db.Uuid
+  invitedBy       User?     @relation("MembershipInvitedBy", fields: [invitedByUserId], references: [id])
   invitedAt       DateTime? @map("invited_at")
 
-  invitationTokenHash  String?   @map("invitation_token_hash")
-  invitationExpiresAt  DateTime? @map("invitation_expires_at")
+  invitationTokenHash String?   @map("invitation_token_hash")
+  invitationExpiresAt DateTime? @map("invitation_expires_at")
 
   activatedAt DateTime? @map("activated_at")
 
   deactivatedAt       DateTime? @map("deactivated_at")
   deactivatedByUserId String?   @map("deactivated_by_user_id") @db.Uuid
-  deactivatedBy        User?    @relation("MembershipDeactivatedBy", fields: [deactivatedByUserId], references: [id])
+  deactivatedBy       User?     @relation("MembershipDeactivatedBy", fields: [deactivatedByUserId], references: [id])
 
   createdAt DateTime @default(now()) @map("created_at")
 
@@ -179,7 +198,7 @@ model MembershipRole {
 
   organizationId String @map("organization_id") @db.Uuid
 
-  membershipId String                  @map("membership_id") @db.Uuid
+  membershipId String                 @map("membership_id") @db.Uuid
   membership   OrganizationMembership @relation(fields: [membershipId], references: [id])
 
   role MembershipRoleName
@@ -228,8 +247,8 @@ model AuditLog {
   entityType String @map("entity_type")
   entityId   String @map("entity_id") @db.Uuid
 
-  previousValue Json? @map("previous_value")
-  newValue      Json? @map("new_value")
+  previousValue Json?   @map("previous_value")
+  newValue      Json?   @map("new_value")
   reason        String?
 
   correlationId String? @map("correlation_id")
@@ -266,4 +285,557 @@ model DomainEvent {
 
   @@index([organizationId, eventType, occurredAt])
   @@map("domain_event")
+}
+
+// ---------------------------------------------------------------------
+// Phase 2 — Core Master Data (DATABASE_DESIGN.md §4-7)
+//
+// Schema-fidelity note applying to every model below: DATABASE_DESIGN.md
+// lists "organization_id UUID FK → Organization" on every table. For the
+// two top-level entities (Customer, Carrier — direct children of
+// Organization in the relationship map, §29, same tier as
+// OrganizationMembership) that FK is a real Prisma relation. For child/
+// detail tables (contacts, locations, insurance, drivers/trucks/trailers,
+// documents, etc.) organization_id is a plain UUID column with NO Prisma
+// relation object — this mirrors the precedent already set in Phase 1 for
+// AuditLog/DomainEvent (see migration 20260813122226_phase1_identity_tenancy),
+// where the same choice was made to avoid an explosion of reverse-array
+// noise on Organization for tables that are always actually queried
+// scoped by their own more specific parent (customerId/carrierId), with
+// RLS (§26) + the application-layer organization_id filter — not the FK
+// constraint itself — doing the real tenant-isolation work (Decision 4).
+// ---------------------------------------------------------------------
+
+enum CustomerStatus {
+  PROSPECT
+  ACTIVE
+  INACTIVE
+  BLOCKED
+}
+
+enum PaymentTermsSource {
+  INHERITED
+  OVERRIDE
+}
+
+enum CustomerContactRole {
+  BOOKING
+  OPERATIONS
+  BILLING
+  MANAGEMENT
+  OTHER
+}
+
+enum CustomerLocationType {
+  PICKUP
+  DELIVERY
+  OTHER
+}
+
+/// Shared by CustomerRateAgreement.equipment_type, Truck.truck_type,
+/// Trailer.trailer_type (DATABASE_DESIGN.md §4/§6 — same closed
+/// vocabulary in all three places).
+enum EquipmentType {
+  DRY_VAN
+  REEFER
+  FLATBED
+}
+
+enum CarrierStatus {
+  PENDING
+  ACTIVE
+  INACTIVE
+  BLOCKED
+}
+
+enum CarrierContactRole {
+  DISPATCH
+  SAFETY_COMPLIANCE
+  BILLING
+  FACTORING
+  MANAGEMENT
+  OTHER
+}
+
+enum InsuranceCoverageType {
+  AUTO_LIABILITY
+  CARGO
+}
+
+enum CarrierServiceAreaType {
+  LANE
+  REGION
+}
+
+enum DocumentEntityType {
+  LOAD
+  STOP
+  CUSTOMER
+  CARRIER
+  DRIVER
+  TRUCK
+  TRAILER
+  INVOICE
+  CARRIER_PAYMENT
+}
+
+enum DocumentScanStatus {
+  PENDING
+  CLEAN
+  INFECTED
+  SCAN_FAILED
+}
+
+enum DocumentReviewStatus {
+  NOT_APPLICABLE
+  PENDING_REVIEW
+  APPROVED
+  REJECTED
+  EXPIRED
+}
+
+/// Matches the two groupings in PRD §9 (Decision Log D13).
+enum DocumentTypeCategory {
+  LOAD
+  CARRIER_COMPLIANCE
+}
+
+/// DATABASE_DESIGN.md §4. Workflow 2 §2.1 — always starts at Prospect
+/// regardless of who creates it or how complete the record is.
+model Customer {
+  id String @id @default(uuid()) @db.Uuid
+
+  organizationId String       @map("organization_id") @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  legalName String @map("legal_name")
+
+  billingAddressLine1 String @map("billing_address_line1")
+  billingCity         String @map("billing_city")
+  billingState        String @map("billing_state")
+  billingZip          String @map("billing_zip")
+  billingCountry      String @default("US") @map("billing_country")
+
+  primaryContactName  String @map("primary_contact_name")
+  primaryContactEmail String @map("primary_contact_email")
+  primaryContactPhone String @map("primary_contact_phone")
+
+  status CustomerStatus @default(PROSPECT)
+
+  accountOwnerUserId String? @map("account_owner_user_id") @db.Uuid
+  accountOwner       User?   @relation("CustomerAccountOwner", fields: [accountOwnerUserId], references: [id])
+
+  paymentTerms       PaymentTerms       @map("payment_terms")
+  paymentTermsSource PaymentTermsSource @map("payment_terms_source")
+
+  createdByUserId String @map("created_by_user_id") @db.Uuid
+  createdBy       User   @relation("CustomerCreatedBy", fields: [createdByUserId], references: [id])
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  contacts       CustomerContact[]
+  locations      CustomerLocation[]
+  rateAgreements CustomerRateAgreement[]
+
+  @@index([organizationId, status])
+  @@index([organizationId, legalName])
+  @@map("customer")
+}
+
+model CustomerContact {
+  id String @id @default(uuid()) @db.Uuid
+
+  organizationId String @map("organization_id") @db.Uuid
+
+  customerId String   @map("customer_id") @db.Uuid
+  customer   Customer @relation(fields: [customerId], references: [id])
+
+  name  String
+  email String?
+  phone String?
+
+  role      CustomerContactRole
+  isPrimary Boolean             @default(false) @map("is_primary")
+
+  @@index([organizationId, customerId])
+  @@map("customer_contact")
+}
+
+model CustomerLocation {
+  id String @id @default(uuid()) @db.Uuid
+
+  organizationId String @map("organization_id") @db.Uuid
+
+  customerId String   @map("customer_id") @db.Uuid
+  customer   Customer @relation(fields: [customerId], references: [id])
+
+  name String
+
+  addressLine1 String @map("address_line1")
+  city         String
+  state        String
+  zip          String
+  country      String @default("US")
+
+  locationType CustomerLocationType @map("location_type")
+
+  contactName  String? @map("contact_name")
+  contactPhone String? @map("contact_phone")
+  contactEmail String? @map("contact_email")
+
+  operatingHours          String? @map("operating_hours")
+  appointmentRequirements String? @map("appointment_requirements")
+  notes                   String?
+
+  @@index([organizationId, customerId])
+  @@map("customer_location")
+}
+
+model CustomerRateAgreement {
+  id String @id @default(uuid()) @db.Uuid
+
+  organizationId String @map("organization_id") @db.Uuid
+
+  customerId String   @map("customer_id") @db.Uuid
+  customer   Customer @relation(fields: [customerId], references: [id])
+
+  originCity  String @map("origin_city")
+  originState String @map("origin_state")
+
+  destinationCity  String @map("destination_city")
+  destinationState String @map("destination_state")
+
+  equipmentType EquipmentType @map("equipment_type")
+
+  rate     Decimal @db.Decimal(12, 2)
+  rateType String  @map("rate_type")
+
+  effectiveDate  DateTime  @map("effective_date") @db.Date
+  expirationDate DateTime? @map("expiration_date") @db.Date
+
+  fuelSurchargeRules String? @map("fuel_surcharge_rules")
+  notes              String?
+
+  @@index([organizationId, customerId])
+  @@map("customer_rate_agreement")
+}
+
+/// DATABASE_DESIGN.md §5. Workflow 3 §3.1 — always starts PENDING /
+/// assignment_eligible=false; §3.2's MC/DOT uniqueness is a hard block,
+/// enforced here at the DB level too (not just app-layer) via the
+/// composite unique constraints below.
+model Carrier {
+  id String @id @default(uuid()) @db.Uuid
+
+  organizationId String       @map("organization_id") @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  legalName String  @map("legal_name")
+  dba       String?
+
+  mcNumber  String @map("mc_number")
+  dotNumber String @map("dot_number")
+
+  addressLine1 String @map("address_line1")
+  city         String
+  state        String
+  zip          String
+
+  primaryContactName  String @map("primary_contact_name")
+  primaryContactPhone String @map("primary_contact_phone")
+  primaryContactEmail String @map("primary_contact_email")
+
+  status               CarrierStatus @default(PENDING)
+  assignmentEligible   Boolean       @default(false) @map("assignment_eligible")
+  ineligibilityReasons Json?         @map("ineligibility_reasons")
+
+  createdByUserId String @map("created_by_user_id") @db.Uuid
+  createdBy       User   @relation("CarrierCreatedBy", fields: [createdByUserId], references: [id])
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  contacts           CarrierContact[]
+  insuranceRecords   CarrierInsurance[]
+  fmcsaVerifications CarrierFmcsaVerification[]
+  serviceAreas       CarrierServiceArea[]
+  factoringInfo      CarrierFactoringInfo?
+  drivers            Driver[]
+  trucks             Truck[]
+  trailers           Trailer[]
+
+  @@unique([organizationId, mcNumber])
+  @@unique([organizationId, dotNumber])
+  @@index([organizationId, assignmentEligible])
+  @@index([organizationId, status])
+  @@map("carrier")
+}
+
+model CarrierContact {
+  id String @id @default(uuid()) @db.Uuid
+
+  organizationId String @map("organization_id") @db.Uuid
+
+  carrierId String  @map("carrier_id") @db.Uuid
+  carrier   Carrier @relation(fields: [carrierId], references: [id])
+
+  name  String
+  email String?
+  phone String?
+
+  role      CarrierContactRole
+  isPrimary Boolean            @default(false) @map("is_primary")
+
+  @@index([organizationId, carrierId])
+  @@map("carrier_contact")
+}
+
+/// Workflow 3 §3.6/§3.9 — structured coverage records, separate from the
+/// supporting COI `Document`, so expiration/eligibility never depend on
+/// parsing an uploaded file (§3.9's explicit clarification).
+model CarrierInsurance {
+  id String @id @default(uuid()) @db.Uuid
+
+  organizationId String @map("organization_id") @db.Uuid
+
+  carrierId String  @map("carrier_id") @db.Uuid
+  carrier   Carrier @relation(fields: [carrierId], references: [id])
+
+  coverageType     InsuranceCoverageType @map("coverage_type")
+  coverageAmount   Decimal               @map("coverage_amount") @db.Decimal(12, 2)
+  insuranceCompany String                @map("insurance_company")
+  agentContact     String?               @map("agent_contact")
+
+  effectiveDate  DateTime @map("effective_date") @db.Date
+  expirationDate DateTime @map("expiration_date") @db.Date
+
+  coiDocumentId String   @map("coi_document_id") @db.Uuid
+  coiDocument   Document @relation("CarrierInsuranceCoiDocument", fields: [coiDocumentId], references: [id])
+
+  @@index([organizationId, carrierId])
+  @@map("carrier_insurance")
+}
+
+model CarrierFmcsaVerification {
+  id String @id @default(uuid()) @db.Uuid
+
+  organizationId String @map("organization_id") @db.Uuid
+
+  carrierId String  @map("carrier_id") @db.Uuid
+  carrier   Carrier @relation(fields: [carrierId], references: [id])
+
+  verificationDate DateTime @map("verification_date") @db.Date
+  resultStatus     String   @map("result_status")
+
+  verifiedByUserId String @map("verified_by_user_id") @db.Uuid
+  verifiedBy       User   @relation("FmcsaVerifiedBy", fields: [verifiedByUserId], references: [id])
+
+  authorityInfo String? @map("authority_info")
+  notes         String?
+
+  @@index([organizationId, carrierId])
+  @@map("carrier_fmcsa_verification")
+}
+
+/// DATABASE_DESIGN.md §5, Decision Log D16 (Stage 5 addendum) — pure
+/// storage/display data, no matching/scoring logic, no bearing on
+/// assignment_eligible.
+model CarrierServiceArea {
+  id String @id @default(uuid()) @db.Uuid
+
+  organizationId String @map("organization_id") @db.Uuid
+
+  carrierId String  @map("carrier_id") @db.Uuid
+  carrier   Carrier @relation(fields: [carrierId], references: [id])
+
+  type CarrierServiceAreaType
+
+  originCity  String? @map("origin_city")
+  originState String? @map("origin_state")
+
+  destinationCity  String? @map("destination_city")
+  destinationState String? @map("destination_state")
+
+  regionLabel String? @map("region_label")
+  notes       String?
+
+  createdByUserId String @map("created_by_user_id") @db.Uuid
+  createdBy       User   @relation("ServiceAreaCreatedBy", fields: [createdByUserId], references: [id])
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([organizationId, carrierId])
+  @@map("carrier_service_area")
+}
+
+/// Workflow 3 §3.11 — informational only, no eligibility linkage.
+model CarrierFactoringInfo {
+  carrierId String  @id @map("carrier_id") @db.Uuid
+  carrier   Carrier @relation(fields: [carrierId], references: [id])
+
+  organizationId String @map("organization_id") @db.Uuid
+
+  usesFactoring       Boolean @default(false) @map("uses_factoring")
+  factoringCompany    String? @map("factoring_company")
+  remitToAddress      String? @map("remit_to_address")
+  factoringContact    String? @map("factoring_contact")
+  paymentInstructions String? @map("payment_instructions")
+  noaStatus           String? @map("noa_status")
+
+  noaDocumentId String?   @map("noa_document_id") @db.Uuid
+  noaDocument   Document? @relation("CarrierFactoringNoaDocument", fields: [noaDocumentId], references: [id])
+
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("carrier_factoring_info")
+}
+
+/// DATABASE_DESIGN.md §6 — lightweight, carrier-linked, reusable records.
+/// Compliance fields (CDL, medical card, HOS, ELD, drug/alcohol)
+/// explicitly NOT in V1 schema (§28) — future columns, not new tables.
+model Driver {
+  id String @id @default(uuid()) @db.Uuid
+
+  organizationId String @map("organization_id") @db.Uuid
+
+  carrierId String  @map("carrier_id") @db.Uuid
+  carrier   Carrier @relation(fields: [carrierId], references: [id])
+
+  firstName String  @map("first_name")
+  lastName  String  @map("last_name")
+  phone     String
+  email     String?
+
+  licenseNumber String? @map("license_number")
+  notes         String?
+  active        Boolean @default(true)
+
+  @@index([organizationId, carrierId])
+  @@map("driver")
+}
+
+model Truck {
+  id String @id @default(uuid()) @db.Uuid
+
+  organizationId String @map("organization_id") @db.Uuid
+
+  carrierId String  @map("carrier_id") @db.Uuid
+  carrier   Carrier @relation(fields: [carrierId], references: [id])
+
+  unitNumber String        @map("unit_number")
+  truckType  EquipmentType @map("truck_type")
+
+  make  String?
+  model String?
+  year  Int?
+
+  vin   String?
+  plate String?
+
+  active Boolean @default(true)
+  notes  String?
+
+  @@index([organizationId, carrierId])
+  @@map("truck")
+}
+
+model Trailer {
+  id String @id @default(uuid()) @db.Uuid
+
+  organizationId String @map("organization_id") @db.Uuid
+
+  carrierId String  @map("carrier_id") @db.Uuid
+  carrier   Carrier @relation(fields: [carrierId], references: [id])
+
+  unitNumber  String        @map("unit_number")
+  trailerType EquipmentType @map("trailer_type")
+
+  vin   String?
+  plate String?
+
+  active Boolean @default(true)
+  notes  String?
+
+  @@index([organizationId, carrierId])
+  @@map("trailer")
+}
+
+/// DATABASE_DESIGN.md §7, Decision Log D13 — lookup table (not a fixed
+/// enum) because the PRD requires org-level custom document types.
+/// organization_id nullable = system-provided default, available to
+/// every organization (seeded at deploy time — prisma/seed.ts).
+model DocumentTypeDefinition {
+  id String @id @default(uuid()) @db.Uuid
+
+  organizationId String?       @map("organization_id") @db.Uuid
+  organization   Organization? @relation(fields: [organizationId], references: [id])
+
+  category DocumentTypeCategory
+  code     String
+  label    String
+
+  requiresReview  Boolean @default(false) @map("requires_review")
+  isSystemDefault Boolean @default(false) @map("is_system_default")
+
+  documents Document[]
+
+  @@index([organizationId, category])
+  @@map("document_type_definition")
+}
+
+/// DATABASE_DESIGN.md §7 — universal, polymorphic, versioned. Per
+/// Architecture Decision 3 (generic polymorphic columns) and Decision 10
+/// (mandatory malware scanning, gates download).
+///
+/// entity_id has NO native FK (explicit in DATABASE_DESIGN.md §7 —
+/// "Application-layer-validated (no native FK across polymorphic
+/// types)") since entity_type varies; entity existence/access is checked
+/// in DocumentService, not the database.
+model Document {
+  id String @id @default(uuid()) @db.Uuid
+
+  organizationId String @map("organization_id") @db.Uuid
+
+  /// Stable across every version of "the same document" (Decision Log D4).
+  documentFamilyId String @default(uuid()) @map("document_family_id") @db.Uuid
+
+  entityType DocumentEntityType @map("entity_type")
+  entityId   String             @map("entity_id") @db.Uuid
+
+  documentTypeId  String                 @map("document_type_id") @db.Uuid
+  documentType    DocumentTypeDefinition @relation(fields: [documentTypeId], references: [id])
+  customTypeLabel String?                @map("custom_type_label")
+
+  fileStorageKey String @map("file_storage_key")
+  fileName       String @map("file_name")
+  fileSizeBytes  BigInt @map("file_size_bytes")
+  mimeType       String @map("mime_type")
+
+  versionNumber    Int     @default(1) @map("version_number")
+  isCurrentVersion Boolean @default(true) @map("is_current_version")
+
+  scanStatus   DocumentScanStatus @default(PENDING) @map("scan_status")
+  scannedAt    DateTime?          @map("scanned_at")
+  scanProvider String?            @map("scan_provider")
+
+  reviewStatus DocumentReviewStatus? @map("review_status")
+
+  reviewedByUserId String?   @map("reviewed_by_user_id") @db.Uuid
+  reviewedBy       User?     @relation("DocumentReviewedBy", fields: [reviewedByUserId], references: [id])
+  reviewedAt       DateTime? @map("reviewed_at")
+  rejectionReason  String?   @map("rejection_reason")
+
+  expirationDate DateTime? @map("expiration_date") @db.Date
+
+  uploadedByUserId String   @map("uploaded_by_user_id") @db.Uuid
+  uploadedBy       User     @relation("DocumentUploadedBy", fields: [uploadedByUserId], references: [id])
+  uploadedAt       DateTime @default(now()) @map("uploaded_at")
+
+  carrierInsuranceCoiFor CarrierInsurance[]     @relation("CarrierInsuranceCoiDocument")
+  carrierFactoringNoaFor CarrierFactoringInfo[] @relation("CarrierFactoringNoaDocument")
+
+  @@index([organizationId, entityType, entityId, isCurrentVersion])
+  @@index([organizationId, scanStatus])
+  @@index([organizationId, documentFamilyId])
+  @@map("document")
 }

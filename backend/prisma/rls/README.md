@@ -58,7 +58,15 @@ the primary guard, but the whole point of RLS here is not to depend on that filt
 `membership_role`, `organization_sequence`, `audit_log`, and `domain_event` (all five
 tenant-scoped tables introduced in Phase 1 — the latter two per TECHNICAL_ARCHITECTURE.md
 §15's explicit "AuditLog/DomainEvent service" Phase 1 scope). Enabled with `FORCE ROW LEVEL SECURITY` (not just `ENABLE`) so the policy applies
-even to the table-owning role the application connects as. Not yet applied against a live
-database in this environment — see the Phase 1 report for why (no Postgres available in the
-sandbox this was built in). Apply via `npm run prisma:apply-rls` once
-`prisma migrate deploy` has run against a real database.
+even to the table-owning role the application connects as.
+
+**Phase 2: `0002_core_master_data_rls.sql` implemented**, covering all 14 tenant-scoped
+tables introduced in Phase 2 (`customer` + 3 child tables, `carrier` + 6 child tables,
+`driver`, `truck`, `trailer`, `document`) plus `document_type_definition`, which gets a
+variant policy (`organization_id IS NULL OR organization_id = current_setting(...)`) since
+that table's `organization_id` is intentionally nullable for system-default rows.
+
+Neither Phase 1 nor Phase 2's RLS files have been applied against a live database in this
+environment — no Postgres available in the sandbox this was built in. Apply via
+`npm run prisma:apply-rls` once `prisma migrate deploy` has run against a real database (it
+applies every `prisma/rls/*.sql` file in filename order, so both phases apply in one run).

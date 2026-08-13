@@ -20,6 +20,7 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:migrate:deploy": "prisma migrate deploy",
     "prisma:apply-rls": "ts-node -T scripts/apply-rls.ts",
+    "prisma:seed": "ts-node -T prisma/seed.ts",
     "prisma:studio": "prisma studio"
   },
   "dependencies": {
@@ -68,6 +69,9 @@
     "ts-node": "^10.9.2",
     "tsconfig-paths": "^4.2.0",
     "typescript": "^5.6.2"
+  },
+  "prisma": {
+    "seed": "ts-node -T prisma/seed.ts"
   },
   "jest": {
     "moduleFileExtensions": ["js", "json", "ts"],

@@ -1,6 +1,12 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import {
+  CopyObjectCommand,
+  DeleteObjectCommand,
+  GetObjectCommand,
+  PutObjectCommand,
+  S3Client,
+} from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { AppConfig } from '../../config/configuration';
 
@@ -56,5 +62,25 @@ export class StorageService {
   async getDownloadUrl(key: string, expiresInSeconds = 300): Promise<string> {
     const command = new GetObjectCommand({ Bucket: this.bucket, Key: key });
     return getSignedUrl(this.client, command, { expiresIn: expiresInSeconds });
+  }
+
+  /**
+   * Moves an object from the documents prefix to the quarantine prefix
+   * (Decision 10, §8.1 step 5) — S3 has no native move, so this is a
+   * copy-then-delete. A bucket policy denying signed-URL generation
+   * against the quarantine prefix is the second enforcement layer beyond
+   * the application's own `scan_status` check (§8.1) — not configured
+   * here (bucket policy is deployment-stage infrastructure, not
+   * application code).
+   */
+  async moveToQuarantine(fromKey: string, toKey: string): Promise<void> {
+    await this.client.send(
+      new CopyObjectCommand({
+        Bucket: this.bucket,
+        CopySource: `${this.bucket}/${fromKey}`,
+        Key: toKey,
+      }),
+    );
+    await this.client.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: fromKey }));
   }
 }

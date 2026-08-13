@@ -1,0 +1,535 @@
+import { Test, TestingModule } from '@nestjs/testing';
+import { INestApplication } from '@nestjs/common';
+import request from 'supertest';
+import { AppModule } from '../src/app.module';
+import { PrismaService } from '../src/common/prisma/prisma.service';
+import { PasswordService } from '../src/modules/identity/services/password.service';
+import { EMAIL_SENDER, IEmailSender } from '../src/common/email/email-sender.interface';
+import {
+  MALWARE_SCANNER,
+  MalwareScanResult,
+} from '../src/common/malware-scan/malware-scanner.interface';
+
+type SuperAgentTest = ReturnType<typeof request.agent>;
+
+/**
+ * Phase 2 (Core Master Data) end-to-end proof: Customer creation +
+ * duplicate detection, full Carrier onboarding through Activation
+ * (compliance docs, insurance, FMCSA, self-review prevention,
+ * eligibility), document malware-scan quarantine, and cross-tenant RLS
+ * isolation for the new tables — run against a live app instance with a
+ * live PostgreSQL + Redis + S3-compatible (MinIO) store.
+ *
+ * Requires the same setup as test/identity.e2e-spec.ts, PLUS the Phase 2
+ * migration/RLS and a reachable MinIO (for the real presigned-URL PUT
+ * this file performs against a running document upload). See the Phase 2
+ * report's "infrastructure verification status" — NOT executed in this
+ * sandbox; written and reviewed as source only.
+ *
+ *   npx prisma migrate deploy
+ *   npm run prisma:apply-rls
+ *   npm run prisma:seed
+ *   npm run test:e2e
+ */
+describe('Core Master Data (e2e)', () => {
+  let app: INestApplication;
+  let prisma: PrismaService;
+  let sentEmails: { to: string; subject: string; body: string }[];
+  const scanOverrides = new Map<string, MalwareScanResult>();
+
+  const superAdminEmail = 'super-admin@trucktms.internal';
+  const superAdminPassword = 'SuperAdminPass123';
+
+  let orgId: string;
+  let adminAgent: SuperAgentTest;
+  let reviewerAgent: SuperAgentTest;
+
+  let w9TypeId: string;
+  let coiTypeId: string;
+  let carrierAgreementTypeId: string;
+  let mcAuthorityTypeId: string;
+
+  beforeAll(async () => {
+    sentEmails = [];
+    const captureEmailSender: IEmailSender = {
+      send: async (message) => {
+        sentEmails.push(message);
+      },
+    };
+
+    // A configurable test double, per TECHNICAL_ARCHITECTURE.md §16's own
+    // testing strategy ("Mock IMalwareScanner returning each status") —
+    // not the production StubMalwareScanner, which always reports CLEAN.
+    const configurableScanner = {
+      scan: async (storageKey: string): Promise<MalwareScanResult> =>
+        scanOverrides.get(storageKey) ?? { status: 'CLEAN', provider: 'test-double' },
+    };
+
+    const moduleFixture: TestingModule = await Test.createTestingModule({
+      imports: [AppModule],
+    })
+      .overrideProvider(EMAIL_SENDER)
+      .useValue(captureEmailSender)
+      .overrideProvider(MALWARE_SCANNER)
+      .useValue(configurableScanner)
+      .compile();
+
+    app = moduleFixture.createNestApplication();
+    await app.init();
+
+    prisma = app.get(PrismaService);
+    const passwordService = app.get(PasswordService);
+
+    await prisma.user.create({
+      data: {
+        email: superAdminEmail,
+        name: 'Platform Super Admin',
+        status: 'ACTIVE',
+        isPlatformSuperAdmin: true,
+        passwordHash: await passwordService.hash(superAdminPassword),
+      },
+    });
+
+    // The 4 compliance-gating system-default document types (out of the
+    // full 13 in prisma/seed.ts) actually exercised by this suite.
+    const types = await Promise.all(
+      [
+        { code: 'W9', label: 'W9', requiresReview: true },
+        { code: 'COI', label: 'Certificate of Insurance', requiresReview: true },
+        { code: 'CARRIER_AGREEMENT', label: 'Carrier Agreement', requiresReview: true },
+        { code: 'MC_AUTHORITY', label: 'MC Authority', requiresReview: true },
+      ].map((t) =>
+        prisma.documentTypeDefinition.create({
+          data: {
+            organizationId: null,
+            category: 'CARRIER_COMPLIANCE',
+            isSystemDefault: true,
+            ...t,
+          },
+        }),
+      ),
+    );
+    [w9TypeId, coiTypeId, carrierAgreementTypeId, mcAuthorityTypeId] = types.map((t) => t.id);
+  });
+
+  afterAll(async () => {
+    await app.close();
+  });
+
+  function extractToken(body: string): string {
+    const match = body.match(/token=([a-f0-9]{64})/);
+    if (!match) throw new Error(`No invitation token found in email body: ${body}`);
+    return match[1];
+  }
+
+  function lastEmailTo(to: string) {
+    const email = [...sentEmails].reverse().find((m) => m.to === to);
+    if (!email) throw new Error(`No email captured for ${to}`);
+    return email;
+  }
+
+  /**
+   * `seed` must be unique per call within this file — reusing an email
+   * across two organizations would trigger Decision 1's existing-identity
+   * reuse (Phase 1) and give the second org's "admin" a multi-org session
+   * that doesn't auto-select an organization, breaking every downstream
+   * call's `RequestContextStore.requireOrganizationId()`. That multi-org
+   * login interaction is already covered by identity.e2e-spec.ts — not
+   * this file's concern.
+   */
+  async function setUpOrganization(seed: string) {
+    const superAdminAgent = request.agent(app.getHttpServer());
+    await superAdminAgent
+      .post('/auth/login')
+      .send({ email: superAdminEmail, password: superAdminPassword })
+      .expect(200);
+
+    const adminEmail = `admin-${seed}@phase2-test.test`;
+    const reviewerEmail = `reviewer-${seed}@phase2-test.test`;
+
+    const createRes = await superAdminAgent
+      .post('/platform/organizations')
+      .send({
+        legalName: `Phase 2 Test Org ${seed}`,
+        addressLine1: '1 Main St',
+        city: 'Dallas',
+        state: 'TX',
+        zip: '75201',
+        primaryContactName: 'Org Admin',
+        primaryContactEmail: adminEmail,
+        primaryContactPhone: '555-0100',
+      })
+      .expect(201);
+    const newOrgId: string = createRes.body.organization.id;
+
+    const adminToken = extractToken(lastEmailTo(adminEmail).body);
+    await request(app.getHttpServer())
+      .post('/auth/activate')
+      .send({ token: adminToken, password: 'OrgAdminPass123' })
+      .expect(200);
+
+    const agent = request.agent(app.getHttpServer());
+    await agent
+      .post('/auth/login')
+      .send({ email: adminEmail, password: 'OrgAdminPass123' })
+      .expect(200);
+
+    // A second identity holding ONLY the Compliance Reviewer role, so
+    // Workflow 3 §3.4's uploader != reviewer separation is a real,
+    // distinct actor — not just a role check against the same user.
+    const inviteRes = await agent
+      .post('/memberships/invite')
+      .send({ email: reviewerEmail, roles: ['COMPLIANCE_REVIEWER'] })
+      .expect(201);
+    const reviewerToken = extractToken(lastEmailTo(reviewerEmail).body);
+    await request(app.getHttpServer())
+      .post('/auth/activate')
+      .send({ token: reviewerToken, password: 'ReviewerPass123' })
+      .expect(200);
+
+    const revAgent = request.agent(app.getHttpServer());
+    await revAgent
+      .post('/auth/login')
+      .send({ email: reviewerEmail, password: 'ReviewerPass123' })
+      .expect(200);
+
+    return {
+      organizationId: newOrgId,
+      adminAgent: agent,
+      reviewerAgent: revAgent,
+      reviewerMembershipId: inviteRes.body.id,
+    };
+  }
+
+  async function uploadAndConfirm(
+    agent: SuperAgentTest,
+    carrierId: string,
+    documentTypeId: string,
+    fileName: string,
+  ): Promise<string> {
+    const initiateRes = await agent
+      .post(`/carriers/${carrierId}/documents`)
+      .send({ documentTypeId, fileName, mimeType: 'application/pdf', fileSizeBytes: 1024 })
+      .expect(201);
+
+    const documentId: string = initiateRes.body.document.id;
+    const uploadUrl: string = initiateRes.body.uploadUrl;
+
+    // Real PUT to the presigned URL, exactly as a browser client would —
+    // requires MinIO actually reachable.
+    await fetch(uploadUrl, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/pdf' },
+      body: Buffer.from('%PDF-1.4 fake test content'),
+    });
+
+    await agent.post(`/documents/${documentId}/confirm`).expect(200);
+    return documentId;
+  }
+
+  async function waitForScanStatus(documentId: string, timeoutMs = 10_000): Promise<string> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const doc = await prisma.document.findUnique({ where: { id: documentId } });
+      if (doc && doc.scanStatus !== 'PENDING') return doc.scanStatus;
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+    throw new Error(`Document ${documentId} scan did not complete within ${timeoutMs}ms`);
+  }
+
+  beforeAll(async () => {
+    const org = await setUpOrganization('main');
+    orgId = org.organizationId;
+    adminAgent = org.adminAgent;
+    reviewerAgent = org.reviewerAgent;
+  });
+
+  describe('Customer — Workflow 2', () => {
+    const baseDto = {
+      legalName: 'Northbound Shippers Inc',
+      billingAddressLine1: '10 Commerce St',
+      billingCity: 'Fort Worth',
+      billingState: 'TX',
+      billingZip: '76102',
+      primaryContactName: 'Pat Booker',
+      primaryContactEmail: 'pat@northbound-shippers.test',
+      primaryContactPhone: '555-0200',
+    };
+
+    it('creates a Customer at status Prospect inheriting the org default payment terms', async () => {
+      const res = await adminAgent.post('/customers').send(baseDto).expect(201);
+      expect(res.body.status).toBe('PROSPECT');
+      expect(res.body.paymentTerms).toBe('NET_30');
+      expect(res.body.paymentTermsSource).toBe('INHERITED');
+    });
+
+    it('warns (409) on a likely duplicate, then proceeds once acknowledged', async () => {
+      await adminAgent
+        .post('/customers')
+        .send({ ...baseDto, primaryContactEmail: 'different@northbound-shippers.test' })
+        .expect(409);
+
+      await adminAgent
+        .post('/customers')
+        .send({
+          ...baseDto,
+          primaryContactEmail: 'different@northbound-shippers.test',
+          acknowledgeDuplicates: true,
+        })
+        .expect(201);
+    });
+
+    it('adds a contact, a location, and a rate agreement', async () => {
+      const customer = await adminAgent
+        .post('/customers')
+        .send({ ...baseDto, primaryContactEmail: 'unique@northbound-shippers.test' })
+        .expect(201);
+      const customerId = customer.body.id;
+
+      await adminAgent
+        .post(`/customers/${customerId}/contacts`)
+        .send({ name: 'Ops Contact', role: 'OPERATIONS' })
+        .expect(201);
+      await adminAgent
+        .post(`/customers/${customerId}/locations`)
+        .send({
+          name: 'Main DC',
+          addressLine1: '1 Warehouse Way',
+          city: 'Plano',
+          state: 'TX',
+          zip: '75024',
+          locationType: 'PICKUP',
+        })
+        .expect(201);
+      await adminAgent
+        .post(`/customers/${customerId}/rate-agreements`)
+        .send({
+          originCity: 'Dallas',
+          originState: 'TX',
+          destinationCity: 'Atlanta',
+          destinationState: 'GA',
+          equipmentType: 'DRY_VAN',
+          rate: '2450.00',
+          rateType: 'flat',
+          effectiveDate: '2026-01-01',
+        })
+        .expect(201);
+    });
+  });
+
+  describe('Carrier — Workflow 3 full onboarding to Active', () => {
+    let carrierId: string;
+
+    it('creates a Carrier at status PENDING, ineligible by default', async () => {
+      const res = await adminAgent
+        .post('/carriers')
+        .send({
+          legalName: 'Reliable Freight Carriers LLC',
+          mcNumber: 'MC-900001',
+          dotNumber: 'DOT-900001',
+          addressLine1: '5 Dock Rd',
+          city: 'Memphis',
+          state: 'TN',
+          zip: '38103',
+          primaryContactName: 'Carrier Dispatch',
+          primaryContactPhone: '555-0300',
+          primaryContactEmail: 'dispatch@reliable-freight.test',
+        })
+        .expect(201);
+
+      carrierId = res.body.id;
+      expect(res.body.status).toBe('PENDING');
+      expect(res.body.assignmentEligible).toBe(false);
+    });
+
+    it('hard-blocks a second carrier with the same MC number (no acknowledge override exists)', async () => {
+      await adminAgent
+        .post('/carriers')
+        .send({
+          legalName: 'A Different Name',
+          mcNumber: 'MC-900001',
+          dotNumber: 'DOT-999999',
+          addressLine1: '1 Other Rd',
+          city: 'Memphis',
+          state: 'TN',
+          zip: '38103',
+          primaryContactName: 'Someone',
+          primaryContactPhone: '555-0301',
+          primaryContactEmail: 'other@example.test',
+        })
+        .expect(409);
+    });
+
+    it('blocks activation while requirements are unmet, then activates once all 7 conditions are satisfied', async () => {
+      await adminAgent.post(`/carriers/${carrierId}/activate`).expect(409);
+
+      const w9Id = await uploadAndConfirm(adminAgent, carrierId, w9TypeId, 'w9.pdf');
+      const caId = await uploadAndConfirm(
+        adminAgent,
+        carrierId,
+        carrierAgreementTypeId,
+        'agreement.pdf',
+      );
+      const mcId = await uploadAndConfirm(
+        adminAgent,
+        carrierId,
+        mcAuthorityTypeId,
+        'mc-authority.pdf',
+      );
+      const coiId = await uploadAndConfirm(adminAgent, carrierId, coiTypeId, 'coi.pdf');
+
+      for (const id of [w9Id, caId, mcId, coiId]) {
+        expect(await waitForScanStatus(id)).toBe('CLEAN');
+      }
+
+      // Self-review prevention (§3.4): the reviewer cannot approve a
+      // document they themselves uploaded.
+      const reviewerOwnUpload = await uploadAndConfirm(
+        reviewerAgent,
+        carrierId,
+        mcAuthorityTypeId,
+        'v2.pdf',
+      );
+      await waitForScanStatus(reviewerOwnUpload);
+      await reviewerAgent
+        .post(`/carriers/${carrierId}/documents/${reviewerOwnUpload}/review`)
+        .send({ decision: 'APPROVED' })
+        .expect(403);
+
+      // Reviewer approves the Admin-uploaded documents (different actor
+      // than the uploader — the success path).
+      for (const id of [w9Id, caId, mcId]) {
+        await reviewerAgent
+          .post(`/carriers/${carrierId}/documents/${id}/review`)
+          .send({ decision: 'APPROVED' })
+          .expect(200);
+      }
+      await reviewerAgent
+        .post(`/carriers/${carrierId}/documents/${coiId}/review`)
+        .send({ decision: 'APPROVED' })
+        .expect(200);
+
+      const futureDate = '2030-01-01';
+      await adminAgent
+        .post(`/carriers/${carrierId}/insurance`)
+        .send({
+          coverageType: 'AUTO_LIABILITY',
+          coverageAmount: '1000000.00',
+          insuranceCompany: 'Test Insurance Co',
+          effectiveDate: '2026-01-01',
+          expirationDate: futureDate,
+          coiDocumentId: coiId,
+        })
+        .expect(201);
+      await adminAgent
+        .post(`/carriers/${carrierId}/insurance`)
+        .send({
+          coverageType: 'CARGO',
+          coverageAmount: '100000.00',
+          insuranceCompany: 'Test Insurance Co',
+          effectiveDate: '2026-01-01',
+          expirationDate: futureDate,
+          coiDocumentId: coiId,
+        })
+        .expect(201);
+
+      await reviewerAgent
+        .post(`/carriers/${carrierId}/fmcsa-verification`)
+        .send({ verificationDate: '2026-01-01', resultStatus: 'Authorized' })
+        .expect(201);
+
+      const activateRes = await reviewerAgent.post(`/carriers/${carrierId}/activate`).expect(200);
+      expect(activateRes.body.status).toBe('ACTIVE');
+
+      const carrierRes = await adminAgent.get(`/carriers/${carrierId}`).expect(200);
+      expect(carrierRes.body.assignmentEligible).toBe(true);
+      expect(carrierRes.body.ineligibilityReasons).toEqual([]);
+    });
+
+    it('rejects re-activating an already-Active carrier', async () => {
+      await adminAgent.post(`/carriers/${carrierId}/activate`).expect(422);
+    });
+  });
+
+  describe('Document malware scan — quarantine (Decision 10)', () => {
+    it('quarantines an infected upload and refuses to issue a download URL for it', async () => {
+      const carrier = await adminAgent
+        .post('/carriers')
+        .send({
+          legalName: 'Quarantine Test Carrier',
+          mcNumber: 'MC-900002',
+          dotNumber: 'DOT-900002',
+          addressLine1: '1 Dock Rd',
+          city: 'Memphis',
+          state: 'TN',
+          zip: '38103',
+          primaryContactName: 'Dispatch',
+          primaryContactPhone: '555-0400',
+          primaryContactEmail: 'dispatch@quarantine-test.test',
+        })
+        .expect(201);
+
+      const initiateRes = await adminAgent
+        .post(`/carriers/${carrier.body.id}/documents`)
+        .send({
+          documentTypeId: w9TypeId,
+          fileName: 'infected.pdf',
+          mimeType: 'application/pdf',
+          fileSizeBytes: 10,
+        })
+        .expect(201);
+      const documentId: string = initiateRes.body.document.id;
+      const storageKey: string = initiateRes.body.document.fileStorageKey;
+
+      scanOverrides.set(storageKey, { status: 'INFECTED', provider: 'test-double' });
+
+      await fetch(initiateRes.body.uploadUrl, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/pdf' },
+        body: Buffer.from('fake infected content'),
+      });
+      await adminAgent.post(`/documents/${documentId}/confirm`).expect(200);
+
+      expect(await waitForScanStatus(documentId)).toBe('INFECTED');
+      await adminAgent.get(`/documents/${documentId}/download-url`).expect(422);
+    });
+  });
+
+  describe('Cross-tenant isolation for Phase 2 tables', () => {
+    it("one organization's Customers/Carriers are never visible to another, at the app layer and at the RLS layer", async () => {
+      const orgB = await setUpOrganization('rls-cross-tenant');
+
+      await orgB.adminAgent
+        .post('/customers')
+        .send({
+          legalName: 'Org B Only Customer',
+          billingAddressLine1: '1 B St',
+          billingCity: 'Houston',
+          billingState: 'TX',
+          billingZip: '77002',
+          primaryContactName: 'B Contact',
+          primaryContactEmail: 'b@orgb-test.test',
+          primaryContactPhone: '555-0500',
+        })
+        .expect(201);
+
+      const orgACustomers = await adminAgent.get('/customers').expect(200);
+      const names = orgACustomers.body.map((c: { legalName: string }) => c.legalName);
+      expect(names).not.toContain('Org B Only Customer');
+
+      const rowsFromWrongTenant = await prisma.withTenantTransaction(
+        orgB.organizationId,
+        (tx) =>
+          tx.$queryRaw<unknown[]>`SELECT * FROM customer WHERE organization_id = ${orgId}::uuid`,
+      );
+      expect(rowsFromWrongTenant).toHaveLength(0);
+
+      const rowsFromOwnTenant = await prisma.withTenantTransaction(
+        orgId,
+        (tx) =>
+          tx.$queryRaw<unknown[]>`SELECT * FROM customer WHERE organization_id = ${orgId}::uuid`,
+      );
+      expect(rowsFromOwnTenant.length).toBeGreaterThan(0);
+    });
+  });
+});
