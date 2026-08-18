@@ -5,8 +5,10 @@ import { REDIS_CLIENT } from '../../common/redis/redis.module';
 import { MALWARE_SCANNER } from '../../common/malware-scan/malware-scanner.interface';
 import { StubMalwareScanner } from '../../common/malware-scan/stub-malware-scanner';
 import { CarrierModule } from '../carrier/carrier.module';
+import { QuoteLoadModule } from '../quote-load/quote-load.module';
 import { DocumentController } from './controllers/document.controller';
 import { CarrierDocumentsController } from './controllers/carrier-documents.controller';
+import { PodDocumentsController } from './controllers/pod-documents.controller';
 import { DocumentService } from './services/document.service';
 import { MalwareScanWorker } from './services/malware-scan.worker';
 import { MALWARE_SCAN_QUEUE, MALWARE_SCAN_QUEUE_NAME } from './services/malware-scan.constants';
@@ -21,8 +23,8 @@ import { MALWARE_SCAN_QUEUE, MALWARE_SCAN_QUEUE_NAME } from './services/malware-
 const MALWARE_SCAN_QUEUE_CONNECTION = 'MALWARE_SCAN_QUEUE_CONNECTION';
 
 @Module({
-  imports: [CarrierModule],
-  controllers: [DocumentController, CarrierDocumentsController],
+  imports: [CarrierModule, QuoteLoadModule],
+  controllers: [DocumentController, CarrierDocumentsController, PodDocumentsController],
   providers: [
     DocumentService,
     MalwareScanWorker,

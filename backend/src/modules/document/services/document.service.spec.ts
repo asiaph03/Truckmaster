@@ -51,6 +51,7 @@ describe('DocumentService.review — Workflow 3 §3.4 self-review prevention', (
     const carrierEligibility = {
       recalculate: jest.fn().mockResolvedValue({ eligible: true, reasons: [] }),
     };
+    const loadPodStatus = { recalculatePodStatus: jest.fn().mockResolvedValue('NOT_RECEIVED') };
     const scanQueue = { add: jest.fn() };
 
     const service = new DocumentService(
@@ -58,6 +59,7 @@ describe('DocumentService.review — Workflow 3 §3.4 self-review prevention', (
       audit as never,
       storage as never,
       carrierEligibility as never,
+      loadPodStatus as never,
       scanQueue as never,
     );
 
@@ -167,6 +169,7 @@ describe('DocumentService.applyScanResult — malware scan / quarantine (Decisio
       moveToQuarantine: jest.fn().mockResolvedValue(undefined),
     };
     const carrierEligibility = { recalculate: jest.fn() };
+    const loadPodStatus = { recalculatePodStatus: jest.fn().mockResolvedValue('NOT_RECEIVED') };
     const scanQueue = { add: jest.fn() };
 
     const service = new DocumentService(
@@ -174,10 +177,11 @@ describe('DocumentService.applyScanResult — malware scan / quarantine (Decisio
       audit as never,
       storage as never,
       carrierEligibility as never,
+      loadPodStatus as never,
       scanQueue as never,
     );
 
-    return { service, tx, audit, storage, document };
+    return { service, tx, audit, storage, document, loadPodStatus };
   }
 
   it('marks a clean file CLEAN without touching storage', async () => {
@@ -244,6 +248,7 @@ describe('DocumentService.getDownloadUrl — §8.4 gates on scan_status', () => 
     };
     const storage = { getDownloadUrl: jest.fn().mockResolvedValue('https://signed-url.example') };
     const carrierEligibility = {};
+    const loadPodStatus = {};
     const scanQueue = {};
     const audit = {};
 
@@ -252,6 +257,7 @@ describe('DocumentService.getDownloadUrl — §8.4 gates on scan_status', () => 
       audit as never,
       storage as never,
       carrierEligibility as never,
+      loadPodStatus as never,
       scanQueue as never,
     );
   }
@@ -301,6 +307,7 @@ describe('DocumentService upload permission — entity-aware (§2.5)', () => {
       getUploadUrl: jest.fn().mockResolvedValue('https://upload-url.example'),
     };
     const carrierEligibility = {};
+    const loadPodStatus = {};
     const scanQueue = { add: jest.fn() };
 
     return new DocumentService(
@@ -308,6 +315,7 @@ describe('DocumentService upload permission — entity-aware (§2.5)', () => {
       audit as never,
       storage as never,
       carrierEligibility as never,
+      loadPodStatus as never,
       scanQueue as never,
     );
   }
@@ -335,5 +343,213 @@ describe('DocumentService upload permission — entity-aware (§2.5)', () => {
         /requires Admin, Operations Manager, or Dispatcher/,
       );
     });
+  });
+});
+
+describe('DocumentService — Phase 5 POD/Stop uploads (Workflow 7 §7.1)', () => {
+  const ORG_ID = 'org-1';
+
+  function buildService(opts: {
+    stop?: Record<string, unknown> | null;
+    documentType?: Record<string, unknown>;
+    existingDocumentFamilyId?: string;
+  }) {
+    const stop =
+      'stop' in opts ? opts.stop : { id: 'stop-1', loadId: 'load-1', stopType: 'DELIVERY' };
+    const documentType = opts.documentType ?? {
+      id: 'pod-type-1',
+      code: 'POD',
+      requiresReview: false,
+    };
+
+    const tx = {
+      stop: { findFirst: jest.fn().mockResolvedValue(stop) },
+      documentTypeDefinition: { findFirst: jest.fn().mockResolvedValue(documentType) },
+      document: {
+        findFirst: jest.fn().mockResolvedValue(
+          opts.existingDocumentFamilyId
+            ? {
+                id: 'prior-doc',
+                versionNumber: 1,
+                documentFamilyId: opts.existingDocumentFamilyId,
+              }
+            : null,
+        ),
+        create: jest.fn().mockImplementation(({ data }) => ({ id: 'doc-1', ...data })),
+        update: jest.fn().mockImplementation(({ data }) => ({ id: 'doc-1', ...data })),
+      },
+    };
+
+    const prisma = {
+      withTenantTransaction: jest
+        .fn()
+        .mockImplementation((_orgId: string, fn: (tx: unknown) => unknown) => fn(tx)),
+    };
+    const audit = { record: jest.fn().mockResolvedValue(undefined) };
+    const storage = {
+      buildDocumentKey: jest.fn().mockReturnValue('key'),
+      getUploadUrl: jest.fn().mockResolvedValue('https://upload-url.example'),
+    };
+    const carrierEligibility = {};
+    const loadPodStatus = { recalculatePodStatus: jest.fn().mockResolvedValue('PARTIAL') };
+    const scanQueue = { add: jest.fn() };
+
+    const service = new DocumentService(
+      prisma as never,
+      audit as never,
+      storage as never,
+      carrierEligibility as never,
+      loadPodStatus as never,
+      scanQueue as never,
+    );
+
+    return { service, tx, audit, loadPodStatus };
+  }
+
+  const POD_UPLOAD_DTO = {
+    entityType: 'STOP' as const,
+    entityId: 'stop-1',
+    documentTypeId: 'pod-type-1',
+    fileName: 'pod.pdf',
+    mimeType: 'application/pdf',
+    fileSizeBytes: 1024,
+  };
+
+  it("allows Accounting to upload a POD (Workflow 7's own actor list includes Accounting)", async () => {
+    const { service } = buildService({});
+    await RequestContextStore.run({ requestId: 'r1', roles: ['ACCOUNTING'] }, async () => {
+      await expect(service.initiateUpload(ORG_ID, POD_UPLOAD_DTO, 'user-1')).resolves.toBeDefined();
+    });
+  });
+
+  it('blocks Sales/Booking from uploading a POD', async () => {
+    const { service } = buildService({});
+    await RequestContextStore.run({ requestId: 'r2', roles: ['SALES_BOOKING'] }, async () => {
+      await expect(service.initiateUpload(ORG_ID, POD_UPLOAD_DTO, 'user-1')).rejects.toThrow(
+        /requires Admin, Operations Manager, Dispatcher, or Accounting/,
+      );
+    });
+  });
+
+  it('rejects uploading a non-POD document type against a Stop', async () => {
+    const { service } = buildService({ documentType: { id: 'bol-1', code: 'BOL' } });
+    await RequestContextStore.run({ requestId: 'r3', roles: ['ADMIN'] }, async () => {
+      await expect(
+        service.initiateUpload(ORG_ID, { ...POD_UPLOAD_DTO, documentTypeId: 'bol-1' }, 'user-1'),
+      ).rejects.toThrow(/Only POD documents can be uploaded against a Stop/);
+    });
+  });
+
+  it('rejects a POD upload against a non-delivery Stop', async () => {
+    const { service } = buildService({
+      stop: { id: 'stop-1', loadId: 'load-1', stopType: 'PICKUP' },
+    });
+    await RequestContextStore.run({ requestId: 'r4', roles: ['ADMIN'] }, async () => {
+      await expect(service.initiateUpload(ORG_ID, POD_UPLOAD_DTO, 'user-1')).rejects.toThrow(
+        /delivery Stop/,
+      );
+    });
+  });
+
+  it("writes 'POD Uploaded' for a brand-new POD", async () => {
+    const { service, audit } = buildService({});
+    await RequestContextStore.run({ requestId: 'r5', roles: ['ADMIN'] }, async () => {
+      await service.initiateUpload(ORG_ID, POD_UPLOAD_DTO, 'user-1');
+    });
+    expect(audit.record).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ action: 'POD Uploaded' }),
+    );
+  });
+
+  it("writes 'POD Document Version Added' when replacing an existing POD", async () => {
+    const { service, audit } = buildService({ existingDocumentFamilyId: 'family-1' });
+    await RequestContextStore.run({ requestId: 'r6', roles: ['ADMIN'] }, async () => {
+      await service.initiateUpload(
+        ORG_ID,
+        { ...POD_UPLOAD_DTO, existingDocumentFamilyId: 'family-1' },
+        'user-1',
+      );
+    });
+    expect(audit.record).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ action: 'POD Document Version Added' }),
+    );
+  });
+});
+
+describe('DocumentService.applyScanResult — Phase 5 POD milestone recalculation hook', () => {
+  const ORG_ID = 'org-1';
+  const DOC_ID = 'doc-1';
+
+  function buildService(entityType: 'STOP' | 'CARRIER') {
+    const document = {
+      id: DOC_ID,
+      organizationId: ORG_ID,
+      entityType,
+      entityId: entityType === 'STOP' ? 'stop-1' : 'carrier-1',
+      fileStorageKey: `org_${ORG_ID}/documents/${DOC_ID}`,
+      scanStatus: 'PENDING',
+    };
+
+    const tx = {
+      document: {
+        findFirst: jest.fn().mockResolvedValue(document),
+        update: jest.fn().mockResolvedValue(document),
+      },
+      stop: { findFirst: jest.fn().mockResolvedValue({ id: 'stop-1', loadId: 'load-1' }) },
+    };
+    const prisma = {
+      withTenantTransaction: jest
+        .fn()
+        .mockImplementation((_orgId: string, fn: (tx: unknown) => unknown) => fn(tx)),
+    };
+    const audit = { record: jest.fn().mockResolvedValue(undefined) };
+    const storage = {
+      buildQuarantineKey: jest.fn().mockReturnValue(`org_${ORG_ID}/quarantine/${DOC_ID}`),
+      moveToQuarantine: jest.fn().mockResolvedValue(undefined),
+    };
+    const carrierEligibility = { recalculate: jest.fn() };
+    const loadPodStatus = { recalculatePodStatus: jest.fn().mockResolvedValue('PARTIAL') };
+    const scanQueue = { add: jest.fn() };
+
+    const service = new DocumentService(
+      prisma as never,
+      audit as never,
+      storage as never,
+      carrierEligibility as never,
+      loadPodStatus as never,
+      scanQueue as never,
+    );
+
+    return { service, tx, loadPodStatus };
+  }
+
+  it('recalculates pod_status after a CLEAN scan of a Stop-attached (POD) document', async () => {
+    const { service, loadPodStatus } = buildService('STOP');
+
+    await service.applyScanResult(ORG_ID, DOC_ID, { status: 'CLEAN', provider: 'stub' });
+
+    expect(loadPodStatus.recalculatePodStatus).toHaveBeenCalledWith(
+      expect.anything(),
+      ORG_ID,
+      'load-1',
+    );
+  });
+
+  it('still recalculates pod_status after an INFECTED scan — the query itself excludes non-CLEAN documents', async () => {
+    const { service, loadPodStatus } = buildService('STOP');
+
+    await service.applyScanResult(ORG_ID, DOC_ID, { status: 'INFECTED', provider: 'stub' });
+
+    expect(loadPodStatus.recalculatePodStatus).toHaveBeenCalled();
+  });
+
+  it('never touches pod_status recalculation for a non-Stop document', async () => {
+    const { service, loadPodStatus } = buildService('CARRIER');
+
+    await service.applyScanResult(ORG_ID, DOC_ID, { status: 'CLEAN', provider: 'stub' });
+
+    expect(loadPodStatus.recalculatePodStatus).not.toHaveBeenCalled();
   });
 });

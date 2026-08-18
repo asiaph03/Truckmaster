@@ -6,6 +6,7 @@ import { AuditService } from '../../../common/audit/audit.service';
 import { StorageService } from '../../../common/storage/storage.service';
 import { RequestContextStore } from '../../../common/tenant-context/request-context';
 import { CreateDocumentDto } from '../dto/create-document.dto';
+import { UploadPodDocumentDto } from '../dto/upload-pod-document.dto';
 import { ReviewDocumentDto } from '../dto/review-document.dto';
 import {
   BusinessRuleError,
@@ -14,6 +15,7 @@ import {
   SelfReviewForbiddenError,
 } from '../../../common/errors/app-error';
 import { CarrierEligibilityService } from '../../carrier/services/carrier-eligibility.service';
+import { LoadPodStatusService } from '../../quote-load/services/load-pod-status.service';
 import { MALWARE_SCAN_QUEUE } from './malware-scan.constants';
 
 /**
@@ -33,11 +35,26 @@ const CARRIER_DOCUMENT_UPLOAD_ROLES: MembershipRoleName[] = [
 ];
 
 /**
- * Entities whose existence can actually be validated in Phase 2 (Load,
- * Stop, Invoice, CarrierPayment don't exist as tables until later phases
- * — DATABASE_DESIGN.md §7's entity_type enum anticipates them, but this
- * module only accepts uploads against entities that actually exist yet,
- * rather than silently allowing an orphaned polymorphic reference).
+ * Workflow 7's own Actors table ("Uploading User: Admin, Operations
+ * Manager, Dispatcher, or Accounting") — 🔒 LOCKED (Phase 5 sign-off):
+ * Sales/Booking explicitly excluded, a different role set than
+ * CARRIER_DOCUMENT_UPLOAD_ROLES (which lacks Accounting).
+ */
+const POD_UPLOAD_ROLES: MembershipRoleName[] = [
+  'ADMIN',
+  'OPERATIONS_MANAGER',
+  'DISPATCHER',
+  'ACCOUNTING',
+];
+
+/**
+ * Entities whose existence can actually be validated (Load/Invoice/
+ * CarrierPayment don't exist as tables — Invoice/CarrierPayment are
+ * Phase 6 — or have no upload path wired yet; DATABASE_DESIGN.md §7's
+ * entity_type enum anticipates all of them, but this module only accepts
+ * uploads against entities/paths that actually exist, rather than
+ * silently allowing an orphaned polymorphic reference). STOP added in
+ * Phase 5 for per-delivery-stop POD upload (Workflow 7).
  */
 const SUPPORTED_ENTITY_TYPES: DocumentEntityType[] = [
   'CARRIER',
@@ -45,6 +62,7 @@ const SUPPORTED_ENTITY_TYPES: DocumentEntityType[] = [
   'DRIVER',
   'TRUCK',
   'TRAILER',
+  'STOP',
 ];
 
 @Injectable()
@@ -54,6 +72,7 @@ export class DocumentService {
     private readonly audit: AuditService,
     private readonly storage: StorageService,
     private readonly carrierEligibility: CarrierEligibilityService,
+    private readonly loadPodStatus: LoadPodStatusService,
     @Inject(MALWARE_SCAN_QUEUE) private readonly scanQueue: Queue,
   ) {}
 
@@ -91,6 +110,8 @@ export class DocumentService {
         return !!(await tx.truck.findFirst({ where: { id: entityId, organizationId } }));
       case 'TRAILER':
         return !!(await tx.trailer.findFirst({ where: { id: entityId, organizationId } }));
+      case 'STOP':
+        return !!(await tx.stop.findFirst({ where: { id: entityId, organizationId } }));
       default:
         return false;
     }
@@ -102,6 +123,14 @@ export class DocumentService {
       if (!CARRIER_DOCUMENT_UPLOAD_ROLES.some((r) => roles.includes(r))) {
         throw new PermissionError(
           'Uploading carrier documents requires Admin, Operations Manager, or Dispatcher.',
+        );
+      }
+    }
+    if (entityType === 'STOP') {
+      const { roles = [] } = RequestContextStore.current();
+      if (!POD_UPLOAD_ROLES.some((r) => roles.includes(r))) {
+        throw new PermissionError(
+          'Uploading a POD document requires Admin, Operations Manager, Dispatcher, or Accounting.',
         );
       }
     }
@@ -118,6 +147,21 @@ export class DocumentService {
         where: { id: dto.documentTypeId, OR: [{ organizationId }, { organizationId: null }] },
       });
       if (!documentType) throw new NotFoundError('Document type not found.');
+
+      // Workflow 7 §7.1 — POD attaches only to a delivery Stop, and a Stop
+      // may only ever receive a POD-type document (no other document type
+      // has a defined Stop-level business process in any locked workflow).
+      if (dto.entityType === 'STOP') {
+        if (documentType.code !== 'POD') {
+          throw new BusinessRuleError('Only POD documents can be uploaded against a Stop.');
+        }
+        const stop = await tx.stop.findFirst({ where: { id: dto.entityId, organizationId } });
+        if (stop?.stopType !== 'DELIVERY') {
+          throw new BusinessRuleError(
+            'POD documents can only be uploaded against a delivery Stop.',
+          );
+        }
+      }
 
       let documentFamilyId: string | undefined;
       let versionNumber = 1;
@@ -166,9 +210,20 @@ export class DocumentService {
         data: { fileStorageKey: storageKey },
       });
 
+      // Workflow 7 §7.1/§7.3 — POD uploads use their own locked audit-event
+      // names instead of the generic 'Document Uploaded', distinguishing a
+      // brand-new POD from a replacement version of an already-documented
+      // stop.
+      const isPodUpload = dto.entityType === 'STOP' && documentType.code === 'POD';
+      const auditAction = isPodUpload
+        ? documentFamilyId
+          ? 'POD Document Version Added'
+          : 'POD Uploaded'
+        : 'Document Uploaded';
+
       await this.audit.record(tx, {
         organizationId,
-        action: 'Document Uploaded',
+        action: auditAction,
         entityType: dto.entityType,
         entityId: dto.entityId,
         newValue: {
@@ -182,6 +237,42 @@ export class DocumentService {
       const uploadUrl = await this.storage.getUploadUrl(storageKey, dto.mimeType);
       return { document: updated, uploadUrl };
     });
+  }
+
+  /**
+   * Workflow 7 §7.1/§7.3 — the PodDocumentsController entry point.
+   * Resolves the target delivery Stop (by loadId + sequence, mirroring
+   * DispatchTrackingService's own lookup pattern) and the seeded POD
+   * document type, then delegates entirely to `initiateUpload` — no
+   * duplicated upload/versioning/permission logic, matching the
+   * established "convenience wrapper, one implementation" pattern already
+   * used for Carrier documents.
+   */
+  async initiatePodUpload(
+    organizationId: string,
+    loadId: string,
+    sequence: number,
+    dto: UploadPodDocumentDto,
+    actingUserId: string,
+  ) {
+    const { stop, podType } = await this.prisma.withTenantTransaction(
+      organizationId,
+      async (tx) => {
+        const stop = await tx.stop.findFirst({ where: { loadId, organizationId, sequence } });
+        if (!stop) throw new NotFoundError('Stop not found.');
+        const podType = await tx.documentTypeDefinition.findFirst({
+          where: { code: 'POD', OR: [{ organizationId }, { organizationId: null }] },
+        });
+        if (!podType) throw new NotFoundError('POD document type is not configured.');
+        return { stop, podType };
+      },
+    );
+
+    return this.initiateUpload(
+      organizationId,
+      { ...dto, entityType: 'STOP', entityId: stop.id, documentTypeId: podType.id },
+      actingUserId,
+    );
   }
 
   /** §8.1 step 3 — client confirms the direct-to-S3 upload completed; enqueues the scan job. */
@@ -346,6 +437,23 @@ export class DocumentService {
         newValue: { documentId, scanStatus: result.status, provider: result.provider },
         actorType: 'SYSTEM',
       });
+
+      // Workflow 7 §7.2 / TECHNICAL_ARCHITECTURE §6.4 — 🔒 LOCKED (Phase 5
+      // sign-off): only a CLEAN scan result can ever make a POD count
+      // toward pod_status, so recalculation is driven from here (after the
+      // scan outcome is known) rather than from initiateUpload. Run
+      // unconditionally on every outcome (CLEAN/INFECTED/SCAN_FAILED) —
+      // LoadPodStatusService's own query already filters to scanStatus=
+      // CLEAN, so a non-CLEAN result correctly never counts without any
+      // extra branching here.
+      if (document.entityType === 'STOP') {
+        const stop = await tx.stop.findFirst({
+          where: { id: document.entityId, organizationId },
+        });
+        if (stop) {
+          await this.loadPodStatus.recalculatePodStatus(tx, organizationId, stop.loadId);
+        }
+      }
     });
   }
 }

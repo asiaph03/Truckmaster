@@ -16,6 +16,7 @@ import { RateAgreementMatchingService } from './services/rate-agreement-matching
 import { CarrierSourcingService } from './services/carrier-sourcing.service';
 import { DispatchTrackingService } from './services/dispatch-tracking.service';
 import { LoadStatusDerivationService } from './services/load-status-derivation.service';
+import { LoadPodStatusService } from './services/load-pod-status.service';
 import { RateConfirmationGenerationWorker } from './services/rate-confirmation-generation.worker';
 import {
   RATE_CONFIRMATION_QUEUE,
@@ -36,6 +37,12 @@ import {
  * EMAIL_SENDER/PDF_GENERATOR are registered locally here rather than
  * exported from IdentityModule/elsewhere, keeping this module
  * self-contained and Phase 1-3 modules untouched.
+ *
+ * Phase 5 (POD Receipt & Documentation) adds `LoadPodStatusService`,
+ * exported so DocumentModule can inject it (mirroring how DocumentService
+ * already injects CarrierEligibilityService from CarrierModule for the
+ * exact same "recalculate a derived milestone after a document event"
+ * pattern) — no schema/RLS change, purely an additive service export.
  */
 const RATE_CONFIRMATION_QUEUE_CONNECTION = 'RATE_CONFIRMATION_QUEUE_CONNECTION';
 
@@ -49,6 +56,7 @@ const RATE_CONFIRMATION_QUEUE_CONNECTION = 'RATE_CONFIRMATION_QUEUE_CONNECTION';
     CarrierSourcingService,
     DispatchTrackingService,
     LoadStatusDerivationService,
+    LoadPodStatusService,
     RateConfirmationGenerationWorker,
     { provide: EMAIL_SENDER, useClass: ConsoleEmailSender },
     { provide: PDF_GENERATOR, useClass: StubPdfGenerator },
@@ -63,6 +71,7 @@ const RATE_CONFIRMATION_QUEUE_CONNECTION = 'RATE_CONFIRMATION_QUEUE_CONNECTION';
       inject: [RATE_CONFIRMATION_QUEUE_CONNECTION],
     },
   ],
+  exports: [LoadPodStatusService],
 })
 export class QuoteLoadModule implements OnModuleDestroy {
   constructor(

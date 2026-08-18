@@ -47,6 +47,9 @@ function buildService(opts: {
         .fn()
         .mockImplementation(({ data }) => ({ id: 'load-1', status: 'BOOKED', ...data })),
     },
+    document: {
+      findMany: jest.fn().mockResolvedValue([]),
+    },
   };
 
   const prisma = {

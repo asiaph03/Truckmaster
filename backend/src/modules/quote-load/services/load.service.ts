@@ -72,15 +72,41 @@ export class LoadService {
     actingUserId: string,
     actingRoles: MembershipRoleName[],
   ) {
-    const load = await this.prisma.withTenantTransaction(organizationId, (tx) =>
-      tx.load.findFirst({
+    const load = await this.prisma.withTenantTransaction(organizationId, async (tx) => {
+      const found = await tx.load.findFirst({
         where: { id, organizationId },
         // Phase 4 addition — sourcingAttempts/dispatchRecord/checkCalls are
         // purely additive read-side includes (new Phase 4 relations); no
         // Phase 3 business rule changes.
         include: { stops: true, sourcingAttempts: true, dispatchRecord: true, checkCalls: true },
-      }),
-    );
+      });
+      if (!found) return null;
+
+      // Phase 5 addition — Document has no native Prisma relation to Stop
+      // (deliberately polymorphic, DATABASE_DESIGN.md §7), so per-stop POD
+      // presence is queried separately rather than via a relational
+      // include, then merged onto each stop as `hasPod`. Only CLEAN,
+      // current-version POD documents count (mirrors
+      // LoadPodStatusService.recalculatePodStatus's own query exactly).
+      const deliveryStopIds = found.stops.filter((s) => s.stopType === 'DELIVERY').map((s) => s.id);
+      const podDocuments = await tx.document.findMany({
+        where: {
+          organizationId,
+          entityType: 'STOP',
+          entityId: { in: deliveryStopIds },
+          isCurrentVersion: true,
+          scanStatus: 'CLEAN',
+          documentType: { code: 'POD' },
+        },
+        select: { entityId: true },
+      });
+      const stopIdsWithPod = new Set(podDocuments.map((d) => d.entityId));
+
+      return {
+        ...found,
+        stops: found.stops.map((s) => ({ ...s, hasPod: stopIdsWithPod.has(s.id) })),
+      };
+    });
     if (!load) throw new NotFoundError('Load not found.');
     return shapeFinancialFields(load, actingRoles, actingUserId);
   }
