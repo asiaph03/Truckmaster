@@ -29,3 +29,7 @@ npm-debug.log*
 .claude/
 
 # Docker volumes are named volumes (not bind mounts), nothing local to ignore
+
+# Local s3rver data directory (native-Windows S3-compatible dev storage —
+# see backend/scripts/start-local-s3.ts / README.md)
+backend/.local-s3-data/

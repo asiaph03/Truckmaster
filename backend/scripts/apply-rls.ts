@@ -9,7 +9,18 @@
  */
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { config as loadEnv } from 'dotenv';
 import { PrismaClient } from '@prisma/client';
+
+// Unlike the `prisma` CLI (which auto-loads `.env` internally — this is
+// why `prisma migrate deploy` works without this line but a plain
+// ts-node script does not), nothing loads environment variables for this
+// standalone script by default. Must run before `new PrismaClient()`
+// below, which reads DATABASE_URL at construction time. Resolved
+// relative to this file, matching the same __dirname-relative pattern
+// already used for rlsDir below, so it works regardless of the caller's
+// cwd.
+loadEnv({ path: join(__dirname, '..', '.env') });
 
 async function main() {
   const rlsDir = join(__dirname, '..', 'prisma', 'rls');
@@ -35,10 +46,28 @@ async function main() {
       // because these RLS files are hand-authored and simple (no
       // semicolons inside string literals/function bodies) — not a
       // general-purpose SQL statement splitter.
+      //
+      // Comment lines are stripped from each chunk (not just checked on
+      // the chunk's first line) before deciding whether it's empty: a
+      // chunk that is a `--` comment block immediately followed by a real
+      // statement — e.g. an explanatory comment directly above an ALTER
+      // TABLE, with no other `;` in between — previously had its whole
+      // chunk (comment AND the real statement after it) silently dropped,
+      // because the old check only looked at whether the chunk *started*
+      // with `--`. That silently skipped ENABLE ROW LEVEL SECURITY for
+      // every table whose statement happened to be preceded by a comment
+      // — a real, deterministic bug, confirmed by re-deriving live
+      // pg_class.relrowsecurity state after a from-scratch reset.
       const statements = raw
         .split(/;\s*(?:\n|$)/)
-        .map((s) => s.trim())
-        .filter((s) => s.length > 0 && !s.startsWith('--'));
+        .map((chunk) =>
+          chunk
+            .split('\n')
+            .filter((line) => !line.trim().startsWith('--'))
+            .join('\n')
+            .trim(),
+        )
+        .filter((s) => s.length > 0);
 
       for (const statement of statements) {
         // Policies/ALTER TABLE statements are not parameterizable and are

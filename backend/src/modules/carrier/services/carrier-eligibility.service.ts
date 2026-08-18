@@ -10,14 +10,14 @@ export interface EligibilityResult {
 const REQUIRED_COMPLIANCE_CODES = ['CARRIER_AGREEMENT', 'W9', 'MC_AUTHORITY'] as const;
 
 /**
- * Workflow 3 §3.5's example acceptable-result values ("Authorized" vs.
- * "Not Authorized"/"Out of Service") are the only guidance given —
- * `CarrierFmcsaVerification.resultStatus` is a free-text VARCHAR by
- * design (DATABASE_DESIGN.md §5), not a locked enum, so there is no
- * closed vocabulary to check against precisely. Implemented as an exact
- * (case-insensitive) match on "Authorized" — a defensible technical
- * default, not a silently-invented business rule, and flagged explicitly
- * in the Phase 2 report as an open decision worth confirming.
+ * 🔒 LOCKED (Phase 2 sign-off): for V1, `resultStatus = "Authorized"`
+ * (case-insensitive) is the ONLY value that satisfies the FMCSA
+ * eligibility condition. `CarrierFmcsaVerification.resultStatus` remains
+ * a free-text VARCHAR by design (DATABASE_DESIGN.md §5, no locked enum),
+ * so this is a closed-vocabulary check applied to an open-text field —
+ * "Conditional" and every other status are treated as NOT acceptable
+ * unless a future business decision explicitly changes this rule. Do not
+ * broaden this match without an explicit sign-off.
  */
 function isAcceptableFmcsaResult(resultStatus: string): boolean {
   return resultStatus.trim().toLowerCase() === 'authorized';
@@ -77,14 +77,18 @@ export class CarrierEligibilityService {
   }
 
   /**
-   * Workflow 3 §3.7's activation gate checks the 6 compliance conditions
-   * (§3.8 items 2-7) — NOT condition 1 (Carrier status = ACTIVE) — since
-   * that condition can only ever become true as a RESULT of activation
-   * succeeding. Checking it as a precondition would make activation
-   * impossible for every carrier, contradicting §3.7's entire purpose.
-   * This resolution is flagged explicitly in the Phase 2 report as an
-   * interpretation of a genuine circularity in the locked spec, not a
-   * silently-invented rule — see "newly discovered gaps."
+   * 🔒 LOCKED (Phase 2 sign-off) — the V1 interpretation of a genuine
+   * circularity in Workflow 3 §3.7/§3.8: condition 1 ("Carrier status =
+   * ACTIVE") can only ever become true as a RESULT of activation
+   * succeeding, so checking it as a precondition would make activation
+   * permanently impossible for every carrier. The activation gate
+   * therefore checks only the 6 compliance conditions (§3.8 items 2-7).
+   * If those pass, the activation action itself (CarrierService.activate)
+   * is what flips `Carrier.status` PENDING → ACTIVE; only *after* that
+   * transition does the normal `recalculate()` above (which does include
+   * condition 1) run and confirm eligibility. This is a locked V1
+   * interpretation, not a redesign of the state machine — do not change
+   * this split without an explicit sign-off.
    */
   async checkActivationReadiness(
     tx: Prisma.TransactionClient,

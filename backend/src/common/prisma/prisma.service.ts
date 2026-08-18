@@ -65,4 +65,55 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
       return fn(tx);
     });
   }
+
+  /**
+   * Identity-bootstrap counterpart to `withTenantTransaction`, for the
+   * narrow set of queries that must run *before* an organization context
+   * exists — login's cross-org membership discovery, role resolution, and
+   * the membership check that precedes selecting/switching an org (see
+   * `organization_membership` / `membership_role`'s `tenant_isolation`
+   * policies in prisma/rls/0001_identity_rls.sql for the matching
+   * `app.current_user_id`-based policy clause). Sets a transaction-local
+   * `app.current_user_id` instead of `app.current_org_id`; same
+   * `set_config(..., true)` / no-leak-across-pooled-connections reasoning
+   * applies.
+   */
+  async withUserTransaction<T>(
+    userId: string,
+    fn: (tx: Prisma.TransactionClient) => Promise<T>,
+  ): Promise<T> {
+    if (!UUID_RE.test(userId)) {
+      throw new Error(`Invalid userId passed to withUserTransaction: ${userId}`);
+    }
+    return this.$transaction(async (tx: Prisma.TransactionClient) => {
+      await tx.$executeRaw`SELECT set_config('app.current_user_id', ${userId}, true)`;
+      return fn(tx);
+    });
+  }
+
+  /**
+   * Identity-bootstrap helper for the one query that precedes even
+   * `withUserTransaction`: accepting an invitation / verifying an account
+   * by a mailed, single-use token. At that point no user is authenticated
+   * yet — the token hash itself is the credential — so neither
+   * `app.current_org_id` nor `app.current_user_id` can apply. Sets a
+   * transaction-local `app.current_invitation_token_hash` that
+   * `organization_membership`'s policy matches against
+   * `invitation_token_hash` directly (not a UUID, so no UUID_RE check —
+   * `TokenService.hash()` always produces a 64-char hex SHA-256 digest,
+   * and set_config's bound parameter means there's no injection surface
+   * regardless).
+   */
+  async withInvitationTokenTransaction<T>(
+    tokenHash: string,
+    fn: (tx: Prisma.TransactionClient) => Promise<T>,
+  ): Promise<T> {
+    if (!tokenHash) {
+      throw new Error('Invalid tokenHash passed to withInvitationTokenTransaction: empty value');
+    }
+    return this.$transaction(async (tx: Prisma.TransactionClient) => {
+      await tx.$executeRaw`SELECT set_config('app.current_invitation_token_hash', ${tokenHash}, true)`;
+      return fn(tx);
+    });
+  }
 }

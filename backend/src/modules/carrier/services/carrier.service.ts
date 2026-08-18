@@ -29,34 +29,38 @@ export class CarrierService {
   ) {}
 
   async findById(organizationId: string, id: string) {
-    const carrier = await this.prisma.carrier.findFirst({
-      where: { id, organizationId },
-      include: {
-        contacts: true,
-        insuranceRecords: true,
-        fmcsaVerifications: { orderBy: { verificationDate: 'desc' } },
-        serviceAreas: true,
-        factoringInfo: true,
-        drivers: true,
-        trucks: true,
-        trailers: true,
-      },
-    });
+    const carrier = await this.prisma.withTenantTransaction(organizationId, (tx) =>
+      tx.carrier.findFirst({
+        where: { id, organizationId },
+        include: {
+          contacts: true,
+          insuranceRecords: true,
+          fmcsaVerifications: { orderBy: { verificationDate: 'desc' } },
+          serviceAreas: true,
+          factoringInfo: true,
+          drivers: true,
+          trucks: true,
+          trailers: true,
+        },
+      }),
+    );
     if (!carrier) throw new NotFoundError('Carrier not found.');
     return carrier;
   }
 
   list(organizationId: string, filters: { status?: string; assignmentEligible?: boolean } = {}) {
-    return this.prisma.carrier.findMany({
-      where: {
-        organizationId,
-        ...(filters.status ? { status: filters.status as Carrier['status'] } : {}),
-        ...(filters.assignmentEligible !== undefined
-          ? { assignmentEligible: filters.assignmentEligible }
-          : {}),
-      },
-      orderBy: { legalName: 'asc' },
-    });
+    return this.prisma.withTenantTransaction(organizationId, (tx) =>
+      tx.carrier.findMany({
+        where: {
+          organizationId,
+          ...(filters.status ? { status: filters.status as Carrier['status'] } : {}),
+          ...(filters.assignmentEligible !== undefined
+            ? { assignmentEligible: filters.assignmentEligible }
+            : {}),
+        },
+        orderBy: { legalName: 'asc' },
+      }),
+    );
   }
 
   /** Workflow 3 §3.1 (creation) + §3.2 (MC/DOT hard-block duplicate check). */

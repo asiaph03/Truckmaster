@@ -50,6 +50,19 @@ export class StorageService {
     return `org_${organizationId}/quarantine/${documentId}`;
   }
 
+  /**
+   * Phase 4 addition — direct server-side upload, for content the
+   * application itself generates (e.g. a Rate Confirmation PDF rendered by
+   * the RateConfirmationWorker) rather than a client-provided file. Every
+   * other write path in this class remains the presigned-URL flow
+   * (Decision 9); this is additive, not a replacement for it.
+   */
+  async putObject(key: string, body: Buffer, contentType: string): Promise<void> {
+    await this.client.send(
+      new PutObjectCommand({ Bucket: this.bucket, Key: key, Body: body, ContentType: contentType }),
+    );
+  }
+
   async getUploadUrl(key: string, contentType: string, expiresInSeconds = 300): Promise<string> {
     const command = new PutObjectCommand({
       Bucket: this.bucket,

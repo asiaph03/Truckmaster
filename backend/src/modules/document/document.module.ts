@@ -11,6 +11,15 @@ import { DocumentService } from './services/document.service';
 import { MalwareScanWorker } from './services/malware-scan.worker';
 import { MALWARE_SCAN_QUEUE, MALWARE_SCAN_QUEUE_NAME } from './services/malware-scan.constants';
 
+/**
+ * Internal token for the Queue producer's own duplicated Redis connection
+ * — kept as a separate provider (rather than inlined into the
+ * MALWARE_SCAN_QUEUE factory below) purely so DocumentModule's
+ * onModuleDestroy can inject and explicitly `.quit()` it. BullMQ does not
+ * close an externally-supplied ioredis instance on `queue.close()`.
+ */
+const MALWARE_SCAN_QUEUE_CONNECTION = 'MALWARE_SCAN_QUEUE_CONNECTION';
+
 @Module({
   imports: [CarrierModule],
   controllers: [DocumentController, CarrierDocumentsController],
@@ -19,18 +28,26 @@ import { MALWARE_SCAN_QUEUE, MALWARE_SCAN_QUEUE_NAME } from './services/malware-
     MalwareScanWorker,
     { provide: MALWARE_SCANNER, useClass: StubMalwareScanner },
     {
-      provide: MALWARE_SCAN_QUEUE,
-      useFactory: (redis: Redis) =>
-        new Queue(MALWARE_SCAN_QUEUE_NAME, { connection: redis.duplicate() }),
+      provide: MALWARE_SCAN_QUEUE_CONNECTION,
+      useFactory: (redis: Redis) => redis.duplicate(),
       inject: [REDIS_CLIENT],
+    },
+    {
+      provide: MALWARE_SCAN_QUEUE,
+      useFactory: (connection: Redis) => new Queue(MALWARE_SCAN_QUEUE_NAME, { connection }),
+      inject: [MALWARE_SCAN_QUEUE_CONNECTION],
     },
   ],
   exports: [DocumentService],
 })
 export class DocumentModule implements OnModuleDestroy {
-  constructor(@Inject(MALWARE_SCAN_QUEUE) private readonly scanQueue: Queue) {}
+  constructor(
+    @Inject(MALWARE_SCAN_QUEUE) private readonly scanQueue: Queue,
+    @Inject(MALWARE_SCAN_QUEUE_CONNECTION) private readonly scanQueueConnection: Redis,
+  ) {}
 
   async onModuleDestroy(): Promise<void> {
     await this.scanQueue.close();
+    await this.scanQueueConnection.quit();
   }
 }

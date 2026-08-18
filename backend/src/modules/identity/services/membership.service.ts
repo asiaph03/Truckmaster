@@ -32,26 +32,32 @@ export class MembershipService {
   // ---------------------------------------------------------------------
 
   async getRoles(organizationId: string, userId: string): Promise<MembershipRoleName[]> {
-    const membership = await this.prisma.organizationMembership.findFirst({
-      where: { organizationId, userId, status: 'ACTIVE' },
-      include: { roles: true },
+    return this.prisma.withUserTransaction(userId, async (tx) => {
+      const membership = await tx.organizationMembership.findFirst({
+        where: { organizationId, userId, status: 'ACTIVE' },
+        include: { roles: true },
+      });
+      return membership?.roles.map((r) => r.role) ?? [];
     });
-    return membership?.roles.map((r) => r.role) ?? [];
   }
 
   async listActiveMemberships(userId: string) {
-    return this.prisma.organizationMembership.findMany({
-      where: { userId, status: 'ACTIVE' },
-      include: { organization: true },
-    });
+    return this.prisma.withUserTransaction(userId, (tx) =>
+      tx.organizationMembership.findMany({
+        where: { userId, status: 'ACTIVE' },
+        include: { organization: true },
+      }),
+    );
   }
 
   async listMemberships(organizationId: string) {
-    return this.prisma.organizationMembership.findMany({
-      where: { organizationId },
-      include: { user: true, roles: true },
-      orderBy: { createdAt: 'asc' },
-    });
+    return this.prisma.withTenantTransaction(organizationId, (tx) =>
+      tx.organizationMembership.findMany({
+        where: { organizationId },
+        include: { user: true, roles: true },
+        orderBy: { createdAt: 'asc' },
+      }),
+    );
   }
 
   // ---------------------------------------------------------------------
@@ -67,31 +73,31 @@ export class MembershipService {
 
     let user = await this.userService.findByEmail(dto.email);
 
-    if (user) {
-      const existingMembership = await this.prisma.organizationMembership.findUnique({
-        where: { organizationId_userId: { organizationId, userId: user.id } },
-      });
-      if (existingMembership && existingMembership.status === 'ACTIVE') {
-        throw new ConflictError(
-          'This email already belongs to an active user in this organization.',
-        );
-      }
-      if (
-        existingMembership &&
-        (existingMembership.status === 'INVITED' ||
-          existingMembership.status === 'PENDING_VERIFICATION')
-      ) {
-        throw new ConflictError(
-          'This email already has a pending invitation to this organization. Resend it instead of creating a new one.',
-        );
-      }
-    }
-
     const { raw: rawToken, hash: tokenHash } = this.tokenService.generate();
     const invitationExpiresAt = new Date();
     invitationExpiresAt.setDate(invitationExpiresAt.getDate() + INVITATION_EXPIRY_DAYS);
 
     const membership = await this.prisma.withTenantTransaction(organizationId, async (tx) => {
+      if (user) {
+        const existingMembership = await tx.organizationMembership.findUnique({
+          where: { organizationId_userId: { organizationId, userId: user.id } },
+        });
+        if (existingMembership && existingMembership.status === 'ACTIVE') {
+          throw new ConflictError(
+            'This email already belongs to an active user in this organization.',
+          );
+        }
+        if (
+          existingMembership &&
+          (existingMembership.status === 'INVITED' ||
+            existingMembership.status === 'PENDING_VERIFICATION')
+        ) {
+          throw new ConflictError(
+            'This email already has a pending invitation to this organization. Resend it instead of creating a new one.',
+          );
+        }
+      }
+
       // Decision 1's "mechanics" note: reuse an existing global identity
       // if one exists for this email (no new password, no re-verification
       // needed) — this is the one case where reuse IS explicitly locked,
@@ -232,9 +238,11 @@ export class MembershipService {
 
   async activate(rawToken: string, password?: string): Promise<OrganizationMembership> {
     const tokenHash = this.tokenService.hash(rawToken);
-    const found = await this.prisma.organizationMembership.findFirst({
-      where: { invitationTokenHash: tokenHash },
-    });
+    const found = await this.prisma.withInvitationTokenTransaction(tokenHash, (tx) =>
+      tx.organizationMembership.findFirst({
+        where: { invitationTokenHash: tokenHash },
+      }),
+    );
 
     if (!found) {
       throw new NotFoundError('Invalid or already-used invitation link.');

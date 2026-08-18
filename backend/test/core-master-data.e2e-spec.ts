@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
+import { configureApp } from '../src/configure-app';
 import { PrismaService } from '../src/common/prisma/prisma.service';
 import { PasswordService } from '../src/modules/identity/services/password.service';
 import { EMAIL_SENDER, IEmailSender } from '../src/common/email/email-sender.interface';
@@ -12,6 +13,9 @@ import {
 
 type SuperAgentTest = ReturnType<typeof request.agent>;
 
+/** Every route except /health sits behind the global prefix (main.ts / configure-app.ts). */
+const API = '/api/v1';
+
 /**
  * Phase 2 (Core Master Data) end-to-end proof: Customer creation +
  * duplicate detection, full Carrier onboarding through Activation
@@ -21,12 +25,15 @@ type SuperAgentTest = ReturnType<typeof request.agent>;
  * live PostgreSQL + Redis + S3-compatible (MinIO) store.
  *
  * Requires the same setup as test/identity.e2e-spec.ts, PLUS the Phase 2
- * migration/RLS and a reachable MinIO (for the real presigned-URL PUT
- * this file performs against a running document upload). See the Phase 2
- * report's "infrastructure verification status" — NOT executed in this
- * sandbox; written and reviewed as source only.
+ * migration/RLS and a reachable S3-compatible store on `S3_ENDPOINT` (for
+ * the real presigned-URL PUT this file performs against a running
+ * document upload) — natively (README.md "Local Development": native
+ * `minio.exe`, `tms-documents` bucket created once) or via
+ * `docker compose up -d` (its `minio-init` service creates the bucket
+ * automatically). See the Phase 2 verification report for current
+ * pass/fail status against real infrastructure.
  *
- *   npx prisma migrate deploy
+ *   npm run prisma:migrate:deploy
  *   npm run prisma:apply-rls
  *   npm run prisma:seed
  *   npm run test:e2e
@@ -37,7 +44,11 @@ describe('Core Master Data (e2e)', () => {
   let sentEmails: { to: string; subject: string; body: string }[];
   const scanOverrides = new Map<string, MalwareScanResult>();
 
-  const superAdminEmail = 'super-admin@trucktms.internal';
+  // Distinct from identity.e2e-spec.ts's own super-admin fixture email —
+  // e2e spec files run in parallel workers against the same live shared
+  // database (no per-file reset), so an identical literal here previously
+  // raced identity.e2e-spec.ts's beforeAll for the same unique email.
+  const superAdminEmail = 'core-master-data-suite-super-admin@trucktms.internal';
   const superAdminPassword = 'SuperAdminPass123';
 
   let orgId: string;
@@ -75,6 +86,7 @@ describe('Core Master Data (e2e)', () => {
       .compile();
 
     app = moduleFixture.createNestApplication();
+    configureApp(app);
     await app.init();
 
     prisma = app.get(PrismaService);
@@ -140,7 +152,7 @@ describe('Core Master Data (e2e)', () => {
   async function setUpOrganization(seed: string) {
     const superAdminAgent = request.agent(app.getHttpServer());
     await superAdminAgent
-      .post('/auth/login')
+      .post(`${API}/auth/login`)
       .send({ email: superAdminEmail, password: superAdminPassword })
       .expect(200);
 
@@ -148,7 +160,7 @@ describe('Core Master Data (e2e)', () => {
     const reviewerEmail = `reviewer-${seed}@phase2-test.test`;
 
     const createRes = await superAdminAgent
-      .post('/platform/organizations')
+      .post(`${API}/platform/organizations`)
       .send({
         legalName: `Phase 2 Test Org ${seed}`,
         addressLine1: '1 Main St',
@@ -164,13 +176,13 @@ describe('Core Master Data (e2e)', () => {
 
     const adminToken = extractToken(lastEmailTo(adminEmail).body);
     await request(app.getHttpServer())
-      .post('/auth/activate')
+      .post(`${API}/auth/activate`)
       .send({ token: adminToken, password: 'OrgAdminPass123' })
       .expect(200);
 
     const agent = request.agent(app.getHttpServer());
     await agent
-      .post('/auth/login')
+      .post(`${API}/auth/login`)
       .send({ email: adminEmail, password: 'OrgAdminPass123' })
       .expect(200);
 
@@ -178,18 +190,18 @@ describe('Core Master Data (e2e)', () => {
     // Workflow 3 §3.4's uploader != reviewer separation is a real,
     // distinct actor — not just a role check against the same user.
     const inviteRes = await agent
-      .post('/memberships/invite')
+      .post(`${API}/memberships/invite`)
       .send({ email: reviewerEmail, roles: ['COMPLIANCE_REVIEWER'] })
       .expect(201);
     const reviewerToken = extractToken(lastEmailTo(reviewerEmail).body);
     await request(app.getHttpServer())
-      .post('/auth/activate')
+      .post(`${API}/auth/activate`)
       .send({ token: reviewerToken, password: 'ReviewerPass123' })
       .expect(200);
 
     const revAgent = request.agent(app.getHttpServer());
     await revAgent
-      .post('/auth/login')
+      .post(`${API}/auth/login`)
       .send({ email: reviewerEmail, password: 'ReviewerPass123' })
       .expect(200);
 
@@ -208,7 +220,7 @@ describe('Core Master Data (e2e)', () => {
     fileName: string,
   ): Promise<string> {
     const initiateRes = await agent
-      .post(`/carriers/${carrierId}/documents`)
+      .post(`${API}/carriers/${carrierId}/documents`)
       .send({ documentTypeId, fileName, mimeType: 'application/pdf', fileSizeBytes: 1024 })
       .expect(201);
 
@@ -223,14 +235,16 @@ describe('Core Master Data (e2e)', () => {
       body: Buffer.from('%PDF-1.4 fake test content'),
     });
 
-    await agent.post(`/documents/${documentId}/confirm`).expect(200);
+    await agent.post(`${API}/documents/${documentId}/confirm`).expect(200);
     return documentId;
   }
 
   async function waitForScanStatus(documentId: string, timeoutMs = 10_000): Promise<string> {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
-      const doc = await prisma.document.findUnique({ where: { id: documentId } });
+      const doc = await prisma.withTenantTransaction(orgId, (tx) =>
+        tx.document.findUnique({ where: { id: documentId } }),
+      );
       if (doc && doc.scanStatus !== 'PENDING') return doc.scanStatus;
       await new Promise((resolve) => setTimeout(resolve, 200));
     }
@@ -257,7 +271,7 @@ describe('Core Master Data (e2e)', () => {
     };
 
     it('creates a Customer at status Prospect inheriting the org default payment terms', async () => {
-      const res = await adminAgent.post('/customers').send(baseDto).expect(201);
+      const res = await adminAgent.post(`${API}/customers`).send(baseDto).expect(201);
       expect(res.body.status).toBe('PROSPECT');
       expect(res.body.paymentTerms).toBe('NET_30');
       expect(res.body.paymentTermsSource).toBe('INHERITED');
@@ -265,12 +279,12 @@ describe('Core Master Data (e2e)', () => {
 
     it('warns (409) on a likely duplicate, then proceeds once acknowledged', async () => {
       await adminAgent
-        .post('/customers')
+        .post(`${API}/customers`)
         .send({ ...baseDto, primaryContactEmail: 'different@northbound-shippers.test' })
         .expect(409);
 
       await adminAgent
-        .post('/customers')
+        .post(`${API}/customers`)
         .send({
           ...baseDto,
           primaryContactEmail: 'different@northbound-shippers.test',
@@ -280,18 +294,26 @@ describe('Core Master Data (e2e)', () => {
     });
 
     it('adds a contact, a location, and a rate agreement', async () => {
+      // Same legalName/billingAddress as the two customers created above —
+      // findDuplicates() matches on legalName OR billingAddress OR email
+      // (customer.service.ts), so this also needs acknowledgeDuplicates
+      // regardless of using a fresh email.
       const customer = await adminAgent
-        .post('/customers')
-        .send({ ...baseDto, primaryContactEmail: 'unique@northbound-shippers.test' })
+        .post(`${API}/customers`)
+        .send({
+          ...baseDto,
+          primaryContactEmail: 'unique@northbound-shippers.test',
+          acknowledgeDuplicates: true,
+        })
         .expect(201);
       const customerId = customer.body.id;
 
       await adminAgent
-        .post(`/customers/${customerId}/contacts`)
+        .post(`${API}/customers/${customerId}/contacts`)
         .send({ name: 'Ops Contact', role: 'OPERATIONS' })
         .expect(201);
       await adminAgent
-        .post(`/customers/${customerId}/locations`)
+        .post(`${API}/customers/${customerId}/locations`)
         .send({
           name: 'Main DC',
           addressLine1: '1 Warehouse Way',
@@ -302,7 +324,7 @@ describe('Core Master Data (e2e)', () => {
         })
         .expect(201);
       await adminAgent
-        .post(`/customers/${customerId}/rate-agreements`)
+        .post(`${API}/customers/${customerId}/rate-agreements`)
         .send({
           originCity: 'Dallas',
           originState: 'TX',
@@ -322,7 +344,7 @@ describe('Core Master Data (e2e)', () => {
 
     it('creates a Carrier at status PENDING, ineligible by default', async () => {
       const res = await adminAgent
-        .post('/carriers')
+        .post(`${API}/carriers`)
         .send({
           legalName: 'Reliable Freight Carriers LLC',
           mcNumber: 'MC-900001',
@@ -344,7 +366,7 @@ describe('Core Master Data (e2e)', () => {
 
     it('hard-blocks a second carrier with the same MC number (no acknowledge override exists)', async () => {
       await adminAgent
-        .post('/carriers')
+        .post(`${API}/carriers`)
         .send({
           legalName: 'A Different Name',
           mcNumber: 'MC-900001',
@@ -361,7 +383,10 @@ describe('Core Master Data (e2e)', () => {
     });
 
     it('blocks activation while requirements are unmet, then activates once all 7 conditions are satisfied', async () => {
-      await adminAgent.post(`/carriers/${carrierId}/activate`).expect(409);
+      // POST /carriers/:id/activate is @Roles('COMPLIANCE_REVIEWER') only
+      // (carrier.controller.ts) — must use reviewerAgent, matching the
+      // success-path call later in this same test.
+      await reviewerAgent.post(`${API}/carriers/${carrierId}/activate`).expect(409);
 
       const w9Id = await uploadAndConfirm(adminAgent, carrierId, w9TypeId, 'w9.pdf');
       const caId = await uploadAndConfirm(
@@ -383,35 +408,68 @@ describe('Core Master Data (e2e)', () => {
       }
 
       // Self-review prevention (§3.4): the reviewer cannot approve a
-      // document they themselves uploaded.
-      const reviewerOwnUpload = await uploadAndConfirm(
-        reviewerAgent,
+      // document they themselves uploaded. CARRIER_DOCUMENT_UPLOAD_ROLES
+      // (document.service.ts) doesn't include COMPLIANCE_REVIEWER, so a
+      // reviewer-only actor can never upload a carrier document in the
+      // first place — the self-review case can only arise for someone who
+      // holds an upload-permitted role AND COMPLIANCE_REVIEWER at once.
+      // review()'s check is purely uploadedByUserId === actingUserId (not
+      // role-based), so this exercises the identical rule the pure-role
+      // reviewer scenario would have, without requiring a permission the
+      // matrix doesn't grant.
+      const dualRoleEmail = 'dual-role-reviewer@phase2-test.test';
+      await adminAgent
+        .post(`${API}/memberships/invite`)
+        .send({ email: dualRoleEmail, roles: ['ADMIN', 'COMPLIANCE_REVIEWER'] })
+        .expect(201);
+      const dualRoleToken = extractToken(lastEmailTo(dualRoleEmail).body);
+      await request(app.getHttpServer())
+        .post(`${API}/auth/activate`)
+        .send({ token: dualRoleToken, password: 'DualRolePass123' })
+        .expect(200);
+      const dualRoleAgent = request.agent(app.getHttpServer());
+      await dualRoleAgent
+        .post(`${API}/auth/login`)
+        .send({ email: dualRoleEmail, password: 'DualRolePass123' })
+        .expect(200);
+
+      const dualRoleOwnUpload = await uploadAndConfirm(
+        dualRoleAgent,
         carrierId,
         mcAuthorityTypeId,
         'v2.pdf',
       );
-      await waitForScanStatus(reviewerOwnUpload);
-      await reviewerAgent
-        .post(`/carriers/${carrierId}/documents/${reviewerOwnUpload}/review`)
+      await waitForScanStatus(dualRoleOwnUpload);
+      await dualRoleAgent
+        .post(`${API}/carriers/${carrierId}/documents/${dualRoleOwnUpload}/review`)
         .send({ decision: 'APPROVED' })
         .expect(403);
+      // A genuinely different reviewer CAN approve it — otherwise this
+      // extra mc-authority upload (more recent than mcId, per
+      // carrier-eligibility.service.ts's uploadedAt-desc pick of the
+      // "current" document for a given required type) would permanently
+      // block activation despite mcId already being approved below.
+      await reviewerAgent
+        .post(`${API}/carriers/${carrierId}/documents/${dualRoleOwnUpload}/review`)
+        .send({ decision: 'APPROVED' })
+        .expect(200);
 
       // Reviewer approves the Admin-uploaded documents (different actor
       // than the uploader — the success path).
       for (const id of [w9Id, caId, mcId]) {
         await reviewerAgent
-          .post(`/carriers/${carrierId}/documents/${id}/review`)
+          .post(`${API}/carriers/${carrierId}/documents/${id}/review`)
           .send({ decision: 'APPROVED' })
           .expect(200);
       }
       await reviewerAgent
-        .post(`/carriers/${carrierId}/documents/${coiId}/review`)
+        .post(`${API}/carriers/${carrierId}/documents/${coiId}/review`)
         .send({ decision: 'APPROVED' })
         .expect(200);
 
       const futureDate = '2030-01-01';
       await adminAgent
-        .post(`/carriers/${carrierId}/insurance`)
+        .post(`${API}/carriers/${carrierId}/insurance`)
         .send({
           coverageType: 'AUTO_LIABILITY',
           coverageAmount: '1000000.00',
@@ -422,7 +480,7 @@ describe('Core Master Data (e2e)', () => {
         })
         .expect(201);
       await adminAgent
-        .post(`/carriers/${carrierId}/insurance`)
+        .post(`${API}/carriers/${carrierId}/insurance`)
         .send({
           coverageType: 'CARGO',
           coverageAmount: '100000.00',
@@ -434,27 +492,29 @@ describe('Core Master Data (e2e)', () => {
         .expect(201);
 
       await reviewerAgent
-        .post(`/carriers/${carrierId}/fmcsa-verification`)
+        .post(`${API}/carriers/${carrierId}/fmcsa-verification`)
         .send({ verificationDate: '2026-01-01', resultStatus: 'Authorized' })
         .expect(201);
 
-      const activateRes = await reviewerAgent.post(`/carriers/${carrierId}/activate`).expect(200);
+      const activateRes = await reviewerAgent
+        .post(`${API}/carriers/${carrierId}/activate`)
+        .expect(200);
       expect(activateRes.body.status).toBe('ACTIVE');
 
-      const carrierRes = await adminAgent.get(`/carriers/${carrierId}`).expect(200);
+      const carrierRes = await adminAgent.get(`${API}/carriers/${carrierId}`).expect(200);
       expect(carrierRes.body.assignmentEligible).toBe(true);
       expect(carrierRes.body.ineligibilityReasons).toEqual([]);
     });
 
     it('rejects re-activating an already-Active carrier', async () => {
-      await adminAgent.post(`/carriers/${carrierId}/activate`).expect(422);
+      await reviewerAgent.post(`${API}/carriers/${carrierId}/activate`).expect(422);
     });
   });
 
   describe('Document malware scan — quarantine (Decision 10)', () => {
     it('quarantines an infected upload and refuses to issue a download URL for it', async () => {
       const carrier = await adminAgent
-        .post('/carriers')
+        .post(`${API}/carriers`)
         .send({
           legalName: 'Quarantine Test Carrier',
           mcNumber: 'MC-900002',
@@ -470,7 +530,7 @@ describe('Core Master Data (e2e)', () => {
         .expect(201);
 
       const initiateRes = await adminAgent
-        .post(`/carriers/${carrier.body.id}/documents`)
+        .post(`${API}/carriers/${carrier.body.id}/documents`)
         .send({
           documentTypeId: w9TypeId,
           fileName: 'infected.pdf',
@@ -488,10 +548,10 @@ describe('Core Master Data (e2e)', () => {
         headers: { 'Content-Type': 'application/pdf' },
         body: Buffer.from('fake infected content'),
       });
-      await adminAgent.post(`/documents/${documentId}/confirm`).expect(200);
+      await adminAgent.post(`${API}/documents/${documentId}/confirm`).expect(200);
 
       expect(await waitForScanStatus(documentId)).toBe('INFECTED');
-      await adminAgent.get(`/documents/${documentId}/download-url`).expect(422);
+      await adminAgent.get(`${API}/documents/${documentId}/download-url`).expect(422);
     });
   });
 
@@ -500,7 +560,7 @@ describe('Core Master Data (e2e)', () => {
       const orgB = await setUpOrganization('rls-cross-tenant');
 
       await orgB.adminAgent
-        .post('/customers')
+        .post(`${API}/customers`)
         .send({
           legalName: 'Org B Only Customer',
           billingAddressLine1: '1 B St',
@@ -513,7 +573,7 @@ describe('Core Master Data (e2e)', () => {
         })
         .expect(201);
 
-      const orgACustomers = await adminAgent.get('/customers').expect(200);
+      const orgACustomers = await adminAgent.get(`${API}/customers`).expect(200);
       const names = orgACustomers.body.map((c: { legalName: string }) => c.legalName);
       expect(names).not.toContain('Org B Only Customer');
 

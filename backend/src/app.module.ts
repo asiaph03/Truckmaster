@@ -14,6 +14,7 @@ import { SessionAuthGuard } from './modules/identity/guards/session-auth.guard';
 import { CustomerModule } from './modules/customer/customer.module';
 import { CarrierModule } from './modules/carrier/carrier.module';
 import { DocumentModule } from './modules/document/document.module';
+import { QuoteLoadModule } from './modules/quote-load/quote-load.module';
 
 /**
  * Root module.
@@ -30,8 +31,11 @@ import { DocumentModule } from './modules/document/document.module';
  * Phase 2 (Core Master Data) adds: CustomerModule, CarrierModule,
  * DocumentModule (malware-scan queue/worker included).
  *
- * Remaining feature modules (Quote/Load, Sourcing, Dispatch, Billing,
- * CarrierPay, Notification, Reporting — §1.2) are added starting Phase 3.
+ * Phase 3 (Load Lifecycle Core) adds: QuoteLoadModule (Quote, Load, Stop;
+ * direct booking + Quote conversion; numbering).
+ *
+ * Remaining feature modules (Sourcing, Dispatch, Billing, CarrierPay,
+ * Notification, Reporting — §1.2) are added starting Phase 4.
  */
 @Module({
   imports: [
@@ -48,6 +52,7 @@ import { DocumentModule } from './modules/document/document.module';
     CustomerModule,
     CarrierModule,
     DocumentModule,
+    QuoteLoadModule,
   ],
   providers: [
     {

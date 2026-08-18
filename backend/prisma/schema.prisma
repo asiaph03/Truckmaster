@@ -114,6 +114,17 @@ model User {
   documentsUploaded           Document[]                 @relation("DocumentUploadedBy")
   documentsReviewed           Document[]                 @relation("DocumentReviewedBy")
 
+  // Phase 3 reverse relations
+  quotesCreated             Quote[] @relation("QuoteCreatedBy")
+  loadsCreated              Load[]  @relation("LoadCreatedBy")
+  loadsAssignedAsDispatcher Load[]  @relation("LoadAssignedDispatcher")
+  loadsClosed               Load[]  @relation("LoadClosedBy")
+
+  // Phase 4 reverse relations
+  sourcingAttemptsLogged CarrierSourcingAttempt[] @relation("SourcingAttemptLoggedBy")
+  dispatchesPerformed    DispatchRecord[]         @relation("DispatchedBy")
+  checkCallsLogged       CheckCall[]               @relation("CheckCallLoggedBy")
+
   @@map("user")
 }
 
@@ -149,6 +160,11 @@ model Organization {
   customers               Customer[]
   carriers                Carrier[]
   documentTypeDefinitions DocumentTypeDefinition[]
+
+  // Phase 3 — Quote/Load are direct children of Organization (same tier
+  // as Customer/Carrier), so they get a full Prisma relation here too.
+  quotes Quote[]
+  loads  Load[]
 
   @@map("organization")
 }
@@ -438,6 +454,10 @@ model Customer {
   locations      CustomerLocation[]
   rateAgreements CustomerRateAgreement[]
 
+  // Phase 3 reverse relations
+  quotes Quote[]
+  loads  Load[]
+
   @@index([organizationId, status])
   @@index([organizationId, legalName])
   @@map("customer")
@@ -488,6 +508,10 @@ model CustomerLocation {
   appointmentRequirements String? @map("appointment_requirements")
   notes                   String?
 
+  // Phase 3 reverse relation — Stop.customerLocationId, when a Load's
+  // stop reuses a saved Customer location.
+  stops Stop[]
+
   @@index([organizationId, customerId])
   @@map("customer_location")
 }
@@ -516,6 +540,10 @@ model CustomerRateAgreement {
 
   fuelSurchargeRules String? @map("fuel_surcharge_rules")
   notes              String?
+
+  // Phase 3 reverse relations — Workflow 4 §4.4 Rate Agreement matching.
+  quotesUsingRate Quote[]
+  loadsUsingRate  Load[]
 
   @@index([organizationId, customerId])
   @@map("customer_rate_agreement")
@@ -563,6 +591,12 @@ model Carrier {
   drivers            Driver[]
   trucks             Truck[]
   trailers           Trailer[]
+
+  // Phase 3 reverse relation — Load.assignedCarrierId (Phase 4 populates).
+  assignedLoads Load[]
+
+  // Phase 4 reverse relation
+  sourcingAttempts CarrierSourcingAttempt[]
 
   @@unique([organizationId, mcNumber])
   @@unique([organizationId, dotNumber])
@@ -710,6 +744,10 @@ model Driver {
   notes         String?
   active        Boolean @default(true)
 
+  // Phase 4 reverse relation — DispatchRecord.sourceDriverId, when dispatch
+  // snapshots this record (snapshot only, not a live reference — §6.2).
+  dispatchRecordsSourced DispatchRecord[] @relation("DispatchSourceDriver")
+
   @@index([organizationId, carrierId])
   @@map("driver")
 }
@@ -735,6 +773,9 @@ model Truck {
   active Boolean @default(true)
   notes  String?
 
+  // Phase 4 reverse relation — DispatchRecord.sourceTruckId (snapshot only).
+  dispatchRecordsSourced DispatchRecord[] @relation("DispatchSourceTruck")
+
   @@index([organizationId, carrierId])
   @@map("truck")
 }
@@ -755,6 +796,9 @@ model Trailer {
 
   active Boolean @default(true)
   notes  String?
+
+  // Phase 4 reverse relation — DispatchRecord.sourceTrailerId (snapshot only).
+  dispatchRecordsSourced DispatchRecord[] @relation("DispatchSourceTrailer")
 
   @@index([organizationId, carrierId])
   @@map("trailer")
@@ -838,4 +882,445 @@ model Document {
   @@index([organizationId, scanStatus])
   @@index([organizationId, documentFamilyId])
   @@map("document")
+}
+
+// ---------------------------------------------------------------------
+// Phase 3 — Load Lifecycle Core (DATABASE_DESIGN.md §8-9)
+//
+// Quote/Load are top-level entities (direct children of Organization,
+// same tier as Customer/Carrier — real Prisma relation to Organization).
+// QuoteStop/Stop are child/detail tables (plain organizationId column, no
+// direct Organization relation), following the exact Phase 2 convention
+// documented above the Customer model.
+// ---------------------------------------------------------------------
+
+enum QuoteStatus {
+  OPEN
+  WON
+  LOST
+}
+
+/// Shared by Quote.rate_source and Load.rate_source (Workflow 4 §4.4).
+enum RateSource {
+  MANUAL
+  RATE_AGREEMENT
+  MANUAL_OVERRIDE
+}
+
+/// QuoteStop's type set has no OTHER — quotes only ever need lane
+/// endpoints (Workflow 4 §4.2), unlike Load's fuller Stop model.
+enum QuoteStopType {
+  PICKUP
+  DELIVERY
+}
+
+enum BookingSource {
+  QUOTE
+  DIRECT
+}
+
+/// Full lifecycle (Workflows 4-6, 10). Phase 3 only ever creates a Load
+/// at BOOKED — every later state is set by its owning phase.
+enum LoadStatus {
+  BOOKED
+  CARRIER_SOURCING
+  CARRIER_ASSIGNED
+  RATE_CONFIRMATION
+  DISPATCHED
+  PICKUP
+  IN_TRANSIT
+  DELIVERED
+  CLOSED
+}
+
+/// Persisted derived field (Workflow 7 §7.2) — Phase 5 owns the
+/// derivation logic; the column exists now per the full-schema-now
+/// approach (see note on Load below).
+enum PodStatus {
+  NOT_RECEIVED
+  PARTIAL
+  COMPLETE
+}
+
+/// Independent of Load.status (Workflow 6 §6.8) — Phase 4/6 owns this.
+enum RiskStatus {
+  NORMAL
+  AT_RISK
+  DELAYED
+}
+
+/// Stop's type set includes OTHER, unlike QuoteStop.
+enum StopType {
+  PICKUP
+  DELIVERY
+  OTHER
+}
+
+enum StopStatus {
+  PENDING
+  ARRIVED
+  COMPLETED
+}
+
+/// DATABASE_DESIGN.md §8. Workflow 4 §4.2 — non-binding, expires after
+/// `expirationDate` (default now + 7 days) unless explicitly converted or
+/// marked Lost first. `OPEN -> WON | LOST` is permanently terminal in
+/// both directions (§4.6) — no reopening, no re-conversion, ever.
+model Quote {
+  id String @id @default(uuid()) @db.Uuid
+
+  organizationId String       @map("organization_id") @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  quoteNumber String @map("quote_number")
+
+  customerId String   @map("customer_id") @db.Uuid
+  customer   Customer @relation(fields: [customerId], references: [id])
+
+  equipmentType EquipmentType @map("equipment_type")
+
+  customerRate Decimal    @map("customer_rate") @db.Decimal(12, 2)
+  rateSource   RateSource @map("rate_source")
+
+  /// Retained even when the suggested rate is overridden (Workflow 4
+  /// §4.4 step 3b — "so the original agreement reference remains linked
+  /// for historical/reporting purposes").
+  rateAgreementId String?                @map("rate_agreement_id") @db.Uuid
+  rateAgreement   CustomerRateAgreement? @relation(fields: [rateAgreementId], references: [id])
+
+  status     QuoteStatus @default(OPEN)
+  lossReason String?     @map("loss_reason")
+
+  expirationDate DateTime @map("expiration_date") @db.Date
+
+  /// Set only on conversion (Workflow 4 §4.7 step 7). Unique — a Quote
+  /// converts into at most one Load ("Quote 1 -> 0..1 Load").
+  resultingLoadId String? @unique @map("resulting_load_id") @db.Uuid
+  resultingLoad   Load?   @relation("QuoteResultingLoad", fields: [resultingLoadId], references: [id])
+
+  createdByUserId String @map("created_by_user_id") @db.Uuid
+  createdBy       User   @relation("QuoteCreatedBy", fields: [createdByUserId], references: [id])
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  stops      QuoteStop[]
+  bookedLoad Load?       @relation("LoadOriginatingQuote")
+
+  @@unique([organizationId, quoteNumber])
+  @@index([organizationId, status])
+  @@index([organizationId, customerId])
+  @@map("quote")
+}
+
+/// DATABASE_DESIGN.md §8 — lane-level only (city/state/zip, no street
+/// address or full appointment detail): "Quotes need only lane-level
+/// info, not full appointment detail" (Workflow 4 §4.2).
+model QuoteStop {
+  id String @id @default(uuid()) @db.Uuid
+
+  organizationId String @map("organization_id") @db.Uuid
+
+  quoteId String @map("quote_id") @db.Uuid
+  quote   Quote  @relation(fields: [quoteId], references: [id])
+
+  sequence Int
+  stopType QuoteStopType @map("stop_type")
+
+  addressCity  String @map("address_city")
+  addressState String @map("address_state")
+  addressZip   String @map("address_zip")
+
+  appointmentNotes String? @map("appointment_notes")
+
+  @@index([organizationId, quoteId])
+  @@map("quote_stop")
+}
+
+/// DATABASE_DESIGN.md §9. Full lifecycle table, built complete now
+/// (rather than ALTER-TABLE-ing it in per phase) following the same
+/// precedent already set for OrganizationSequence in Phase 1: the doc
+/// defines Load as one schema unit with no phase-annotation on individual
+/// columns. Phase 3 (this module) only ever creates a Load at `BOOKED`
+/// and sets the fields Workflow 4 owns (§4.7/§4.8); every later-phase
+/// column below (assignedCarrierId, carrierRate, podStatus, riskStatus,
+/// currentLocation*, currentEta, invoiced, posted*, closedAt/closedBy,
+/// assignedDispatcherId) stays null/default until its owning phase
+/// (4/5/6/8, per TECHNICAL_ARCHITECTURE.md §15) implements the logic that
+/// populates it.
+model Load {
+  id String @id @default(uuid()) @db.Uuid
+
+  organizationId String       @map("organization_id") @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  loadNumber String @map("load_number")
+
+  customerId String   @map("customer_id") @db.Uuid
+  customer   Customer @relation(fields: [customerId], references: [id])
+
+  bookingSource BookingSource @map("booking_source")
+
+  /// Set only when bookingSource = QUOTE (Workflow 4 §4.7). Unique — a
+  /// Load originates from at most one Quote.
+  quoteId String? @unique @map("quote_id") @db.Uuid
+  quote   Quote?  @relation("LoadOriginatingQuote", fields: [quoteId], references: [id])
+
+  status LoadStatus @default(BOOKED)
+
+  equipmentType EquipmentType @map("equipment_type")
+
+  /// Original agreed rate — never overwritten (PRD §5.2).
+  customerRate Decimal    @map("customer_rate") @db.Decimal(12, 2)
+  rateSource   RateSource @map("rate_source")
+
+  rateAgreementId String?                @map("rate_agreement_id") @db.Uuid
+  rateAgreement   CustomerRateAgreement? @relation(fields: [rateAgreementId], references: [id])
+
+  /// Optional, addable at booking or any time after (Workflow 4 §4.10) —
+  /// never required to reach BOOKED.
+  customerPoNumber        String? @map("customer_po_number")
+  bolNumber               String? @map("bol_number")
+  pickupNumber            String? @map("pickup_number")
+  customerReferenceNumber String? @map("customer_reference_number")
+
+  /// Phase 4 (Sourcing & Dispatch) fields — unpopulated by Phase 3.
+  assignedCarrierId String?  @map("assigned_carrier_id") @db.Uuid
+  assignedCarrier   Carrier? @relation(fields: [assignedCarrierId], references: [id])
+  carrierRate       Decimal? @map("carrier_rate") @db.Decimal(12, 2)
+
+  /// Independent action per Workflow 4 §4.11 — always NULL at booking
+  /// regardless of path; set by a future Dispatch-assignment endpoint,
+  /// not this module.
+  assignedDispatcherId String? @map("assigned_dispatcher_id") @db.Uuid
+  assignedDispatcher   User?   @relation("LoadAssignedDispatcher", fields: [assignedDispatcherId], references: [id])
+
+  /// Phase 5 (POD & Documents Completion) — persisted derived field.
+  podStatus PodStatus @default(NOT_RECEIVED) @map("pod_status")
+
+  /// Phase 4/6 — independent of `status` (Workflow 6 §6.8).
+  riskStatus RiskStatus @default(NORMAL) @map("risk_status")
+  riskReason String?    @map("risk_reason")
+
+  currentLocationCity        String?   @map("current_location_city")
+  currentLocationState       String?   @map("current_location_state")
+  currentLocationZip         String?   @map("current_location_zip")
+  currentLocationDescription String?   @map("current_location_description")
+  currentLocationUpdatedAt   DateTime? @map("current_location_updated_at")
+  currentEta                 DateTime? @map("current_eta")
+
+  /// Phase 6 (Financials) — prevents double-billing (Workflow 8 §8.1).
+  invoiced Boolean @default(false)
+
+  /// External load-board placeholder (PRD §6.3.9) — Phase 4+.
+  postedExternally Boolean? @map("posted_externally")
+  postingPlatform  String?  @map("posting_platform")
+  postingStatus    String?  @map("posting_status")
+  postingNotes     String?  @map("posting_notes")
+
+  /// Phase 6 (Load Closing, Workflow 10).
+  closedAt       DateTime? @map("closed_at")
+  closedByUserId String?   @map("closed_by_user_id") @db.Uuid
+  closedBy       User?     @relation("LoadClosedBy", fields: [closedByUserId], references: [id])
+
+  createdByUserId String @map("created_by_user_id") @db.Uuid
+  createdBy       User   @relation("LoadCreatedBy", fields: [createdByUserId], references: [id])
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  stops         Stop[]
+  resultOfQuote Quote? @relation("QuoteResultingLoad")
+
+  // Phase 4 reverse relations
+  sourcingAttempts CarrierSourcingAttempt[]
+  dispatchRecord   DispatchRecord?
+  checkCalls       CheckCall[]
+
+  @@unique([organizationId, loadNumber])
+  @@index([organizationId, status])
+  @@index([organizationId, customerId])
+  @@index([organizationId, assignedDispatcherId])
+  @@map("load")
+}
+
+/// DATABASE_DESIGN.md §9. Phase 3 only creates Stops as input data at
+/// booking time (location/address/appointment) — arrival/departure
+/// recording, the PENDING/ARRIVED/COMPLETED lifecycle, and the derived
+/// Load-status transitions that consume `status`/`actualArrival`/
+/// `actualDeparture` all belong to Workflow 6 / Phase 4
+/// (TECHNICAL_ARCHITECTURE.md §6.3 deriveLoadStatus) — not this module.
+model Stop {
+  id String @id @default(uuid()) @db.Uuid
+
+  organizationId String @map("organization_id") @db.Uuid
+
+  loadId String @map("load_id") @db.Uuid
+  load   Load   @relation(fields: [loadId], references: [id])
+
+  sequence Int
+  stopType StopType @map("stop_type")
+
+  /// If reused from the customer's saved locations — address fields
+  /// below are still always populated inline, a snapshot at time of
+  /// booking (DATABASE_DESIGN.md §9), even when copied from here.
+  customerLocationId String?           @map("customer_location_id") @db.Uuid
+  customerLocation   CustomerLocation? @relation(fields: [customerLocationId], references: [id])
+
+  /// addressLine1 is nullable specifically because a Load booked via
+  /// Quote conversion (Workflow 4 §4.7) carries forward QuoteStop rows,
+  /// which are deliberately lane-level only (city/state/zip — §4.2's
+  /// "quotes need only lane-level info, not full appointment detail") and
+  /// never captured a street address. Direct-to-Booked stops (§4.8)
+  /// always populate it. city/state/zip remain required either way.
+  addressLine1 String? @map("address_line1")
+  city         String
+  state        String
+  zip          String
+
+  appointmentDatetime DateTime? @map("appointment_datetime")
+  actualArrival       DateTime? @map("actual_arrival")
+  actualDeparture     DateTime? @map("actual_departure")
+
+  status StopStatus @default(PENDING)
+
+  contactName  String? @map("contact_name")
+  contactPhone String? @map("contact_phone")
+  notes        String?
+
+  @@index([loadId, sequence])
+  @@index([organizationId, loadId])
+  @@map("stop")
+}
+
+// ---------------------------------------------------------------------
+// Phase 4 — Sourcing & Dispatch (DATABASE_DESIGN.md §10-12)
+//
+// CarrierSourcingAttempt and CheckCall are child/detail tables (plain
+// organizationId column, no direct Organization relation), following the
+// same Phase 2/3 convention documented above the Customer model.
+// DispatchRecord is also a child/detail table, keyed 1:1 on loadId itself
+// (mirroring the CarrierFactoringInfo precedent) rather than getting its
+// own surrogate id.
+// ---------------------------------------------------------------------
+
+/// Workflow 5 §5.5 — every attempt (assigned, declined, no-response,
+/// quoted, rejected-after-assignment) is its own permanent row, never
+/// overwritten.
+enum SourcingAttemptOutcome {
+  ASSIGNED
+  DECLINED
+  NO_RESPONSE
+  QUOTED
+  REJECTED_AFTER_ASSIGNMENT
+}
+
+/// Workflow 6 §6.7.
+enum CheckCallOnTimeStatus {
+  ON_TIME
+  LATE
+  UNKNOWN
+}
+
+/// DATABASE_DESIGN.md §10. Workflow 5 §5.4/§5.5/§5.6 — permanent sourcing
+/// history. The row created automatically at assignment (§5.4) and the row
+/// updated (not deleted) on rejection (§5.6) are the same mechanism as
+/// manually-logged attempts (§5.5) — one model, three write paths, always
+/// append-only except for the single in-place rejection update.
+model CarrierSourcingAttempt {
+  id String @id @default(uuid()) @db.Uuid
+
+  organizationId String @map("organization_id") @db.Uuid
+
+  loadId String @map("load_id") @db.Uuid
+  load   Load   @relation(fields: [loadId], references: [id])
+
+  carrierId String  @map("carrier_id") @db.Uuid
+  carrier   Carrier @relation(fields: [carrierId], references: [id])
+
+  carrierRate Decimal? @map("carrier_rate") @db.Decimal(12, 2)
+
+  outcome SourcingAttemptOutcome
+
+  rejectionReason String? @map("rejection_reason")
+
+  loggedByUserId String @map("logged_by_user_id") @db.Uuid
+  loggedBy       User   @relation("SourcingAttemptLoggedBy", fields: [loggedByUserId], references: [id])
+
+  loggedAt DateTime @default(now()) @map("logged_at")
+
+  @@index([organizationId, loadId])
+  @@index([organizationId, carrierId])
+  @@map("carrier_sourcing_attempt")
+}
+
+/// DATABASE_DESIGN.md §11, Decision Log D8. Mutable, current-state only —
+/// history lives in AuditLog (Workflow 6 §6.9's explicit language).
+/// driverName/driverPhone/truckNumber/trailerNumber are snapshotted values
+/// (Workflow 6 §6.2), not references — sourceDriverId/sourceTruckId/
+/// sourceTrailerId are optional provenance links only, kept purely so the
+/// UI can offer "reuse this Carrier's records" convenience; editing or
+/// deactivating the underlying Driver/Truck/Trailer after dispatch never
+/// changes this row.
+model DispatchRecord {
+  loadId String @id @map("load_id") @db.Uuid
+  load   Load   @relation(fields: [loadId], references: [id])
+
+  organizationId String @map("organization_id") @db.Uuid
+
+  driverName    String @map("driver_name")
+  driverPhone   String @map("driver_phone")
+  truckNumber   String @map("truck_number")
+  trailerNumber String @map("trailer_number")
+
+  sourceDriverId String? @map("source_driver_id") @db.Uuid
+  sourceDriver   Driver? @relation("DispatchSourceDriver", fields: [sourceDriverId], references: [id])
+
+  sourceTruckId String? @map("source_truck_id") @db.Uuid
+  sourceTruck   Truck?  @relation("DispatchSourceTruck", fields: [sourceTruckId], references: [id])
+
+  sourceTrailerId String?  @map("source_trailer_id") @db.Uuid
+  sourceTrailer   Trailer? @relation("DispatchSourceTrailer", fields: [sourceTrailerId], references: [id])
+
+  dispatchedByUserId String @map("dispatched_by_user_id") @db.Uuid
+  dispatchedBy       User   @relation("DispatchedBy", fields: [dispatchedByUserId], references: [id])
+  dispatchedAt        DateTime @default(now()) @map("dispatched_at")
+
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([organizationId])
+  @@map("dispatch_record")
+}
+
+/// DATABASE_DESIGN.md §12. Workflow 6 §6.7 — structured tracking log,
+/// gated to Load.status DISPATCHED or later. Load.riskStatus/riskReason
+/// (Workflow 6 §6.8) live directly on Load (already present from Phase 3),
+/// not here — a single current value, not a history.
+model CheckCall {
+  id String @id @default(uuid()) @db.Uuid
+
+  organizationId String @map("organization_id") @db.Uuid
+
+  loadId String @map("load_id") @db.Uuid
+  load   Load   @relation(fields: [loadId], references: [id])
+
+  loggedByUserId String @map("logged_by_user_id") @db.Uuid
+  loggedBy       User   @relation("CheckCallLoggedBy", fields: [loggedByUserId], references: [id])
+
+  occurredAt DateTime @map("occurred_at")
+
+  contactMethod   String @map("contact_method")
+  personContacted String @map("person_contacted")
+
+  locationCity  String? @map("location_city")
+  locationState String? @map("location_state")
+  locationZip   String? @map("location_zip")
+
+  eta DateTime?
+
+  onTimeStatus CheckCallOnTimeStatus @map("on_time_status")
+
+  notes String?
+
+  @@index([organizationId, loadId])
+  @@map("check_call")
 }

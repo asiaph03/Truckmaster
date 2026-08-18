@@ -38,15 +38,26 @@ describe('MembershipService.deactivate — zero-Admin protection', () => {
       },
     };
 
-    const prisma = {
-      withTenantTransaction: jest
-        .fn()
-        .mockImplementation((_orgId: string, fn: (tx: unknown) => unknown) => fn(tx)),
+    const userTx = {
       organizationMembership: {
         findFirst: jest.fn().mockResolvedValue({
           roles: (opts.actingUserRoles ?? ['ADMIN']).map((role) => ({ role })),
         }),
       },
+    };
+
+    const prisma = {
+      withTenantTransaction: jest
+        .fn()
+        .mockImplementation((_orgId: string, fn: (tx: unknown) => unknown) => fn(tx)),
+      // getRoles() (used by assertHasRole, called for both the acting user's
+      // permission check and the zero-Admin recount) now runs inside
+      // withUserTransaction rather than a bare prisma call — see
+      // membership.service.ts and the identity-bootstrap RLS note in
+      // prisma/rls/0001_identity_rls.sql.
+      withUserTransaction: jest
+        .fn()
+        .mockImplementation((_userId: string, fn: (tx: unknown) => unknown) => fn(userTx)),
     };
 
     const audit = { record: jest.fn().mockResolvedValue(undefined) };

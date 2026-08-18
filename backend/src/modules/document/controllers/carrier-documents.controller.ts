@@ -1,4 +1,4 @@
-import { Body, Controller, Param, ParseUUIDPipe, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, HttpCode, Param, ParseUUIDPipe, Post, UseGuards } from '@nestjs/common';
 import { DocumentService } from '../services/document.service';
 import { UploadCarrierDocumentDto } from '../dto/upload-carrier-document.dto';
 import { ReviewDocumentDto } from '../dto/review-document.dto';
@@ -37,6 +37,7 @@ export class CarrierDocumentsController {
 
   @Post(':docId/review')
   @Roles('COMPLIANCE_REVIEWER')
+  @HttpCode(200)
   review(@Param('docId', ParseUUIDPipe) docId: string, @Body() dto: ReviewDocumentDto) {
     const organizationId = RequestContextStore.requireOrganizationId();
     const actingUserId = RequestContextStore.requireUserId();

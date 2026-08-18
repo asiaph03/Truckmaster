@@ -190,9 +190,11 @@ export class DocumentService {
     documentId: string,
     actingUserId: string,
   ): Promise<Document> {
-    const document = await this.prisma.document.findFirst({
-      where: { id: documentId, organizationId },
-    });
+    const document = await this.prisma.withTenantTransaction(organizationId, (tx) =>
+      tx.document.findFirst({
+        where: { id: documentId, organizationId },
+      }),
+    );
     if (!document) throw new NotFoundError('Document not found.');
     if (document.scanStatus !== 'PENDING') {
       throw new BusinessRuleError('This document has already been confirmed.');
@@ -218,17 +220,21 @@ export class DocumentService {
   }
 
   list(organizationId: string, entityType: DocumentEntityType, entityId: string) {
-    return this.prisma.document.findMany({
-      where: { organizationId, entityType, entityId, isCurrentVersion: true },
-      orderBy: { uploadedAt: 'desc' },
-    });
+    return this.prisma.withTenantTransaction(organizationId, (tx) =>
+      tx.document.findMany({
+        where: { organizationId, entityType, entityId, isCurrentVersion: true },
+        orderBy: { uploadedAt: 'desc' },
+      }),
+    );
   }
 
   /** §8.4 — permission to view the parent entity (checked by caller/guard) + scan_status === CLEAN. */
   async getDownloadUrl(organizationId: string, documentId: string): Promise<{ url: string }> {
-    const document = await this.prisma.document.findFirst({
-      where: { id: documentId, organizationId },
-    });
+    const document = await this.prisma.withTenantTransaction(organizationId, (tx) =>
+      tx.document.findFirst({
+        where: { id: documentId, organizationId },
+      }),
+    );
     if (!document) throw new NotFoundError('Document not found.');
     if (document.scanStatus !== 'CLEAN') {
       throw new BusinessRuleError(

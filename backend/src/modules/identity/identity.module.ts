@@ -35,6 +35,6 @@ import { PlatformSuperAdminGuard } from './guards/platform-super-admin.guard';
     PlatformSuperAdminGuard,
     { provide: EMAIL_SENDER, useClass: ConsoleEmailSender },
   ],
-  exports: [UserService, MembershipService, AuthService],
+  exports: [UserService, MembershipService, AuthService, OrganizationSequenceService],
 })
 export class IdentityModule {}

@@ -32,25 +32,29 @@ export class CustomerService {
   ) {}
 
   async findById(organizationId: string, id: string) {
-    const customer = await this.prisma.customer.findFirst({
-      where: { id, organizationId },
-      include: { contacts: true, locations: true, rateAgreements: true },
-    });
+    const customer = await this.prisma.withTenantTransaction(organizationId, (tx) =>
+      tx.customer.findFirst({
+        where: { id, organizationId },
+        include: { contacts: true, locations: true, rateAgreements: true },
+      }),
+    );
     if (!customer) throw new NotFoundError('Customer not found.');
     return customer;
   }
 
   list(organizationId: string, filters: { status?: string; search?: string } = {}) {
-    return this.prisma.customer.findMany({
-      where: {
-        organizationId,
-        ...(filters.status ? { status: filters.status as Customer['status'] } : {}),
-        ...(filters.search
-          ? { legalName: { contains: filters.search, mode: 'insensitive' as const } }
-          : {}),
-      },
-      orderBy: { legalName: 'asc' },
-    });
+    return this.prisma.withTenantTransaction(organizationId, (tx) =>
+      tx.customer.findMany({
+        where: {
+          organizationId,
+          ...(filters.status ? { status: filters.status as Customer['status'] } : {}),
+          ...(filters.search
+            ? { legalName: { contains: filters.search, mode: 'insensitive' as const } }
+            : {}),
+        },
+        orderBy: { legalName: 'asc' },
+      }),
+    );
   }
 
   /**

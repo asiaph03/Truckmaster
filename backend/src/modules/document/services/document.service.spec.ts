@@ -236,7 +236,12 @@ describe('DocumentService.getDownloadUrl — §8.4 gates on scan_status', () => 
 
   function buildService(scanStatus: string) {
     const document = { id: DOC_ID, organizationId: ORG_ID, scanStatus, fileStorageKey: 'key' };
-    const prisma = { document: { findFirst: jest.fn().mockResolvedValue(document) } };
+    const tx = { document: { findFirst: jest.fn().mockResolvedValue(document) } };
+    const prisma = {
+      withTenantTransaction: jest
+        .fn()
+        .mockImplementation((_orgId: string, fn: (tx: unknown) => unknown) => fn(tx)),
+    };
     const storage = { getDownloadUrl: jest.fn().mockResolvedValue('https://signed-url.example') };
     const carrierEligibility = {};
     const scanQueue = {};

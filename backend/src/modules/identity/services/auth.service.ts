@@ -102,9 +102,11 @@ export class AuthService {
     userId: string,
     organizationId: string,
   ): Promise<SessionData> {
-    const membership = await this.prisma.organizationMembership.findFirst({
-      where: { userId, organizationId, status: 'ACTIVE' },
-    });
+    const membership = await this.prisma.withUserTransaction(userId, (tx) =>
+      tx.organizationMembership.findFirst({
+        where: { userId, organizationId, status: 'ACTIVE' },
+      }),
+    );
     if (!membership) {
       throw new AuthenticationError('No active membership found for that organization.');
     }

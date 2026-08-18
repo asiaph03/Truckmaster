@@ -2,9 +2,13 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
+import { configureApp } from '../src/configure-app';
 import { PrismaService } from '../src/common/prisma/prisma.service';
 import { PasswordService } from '../src/modules/identity/services/password.service';
 import { EMAIL_SENDER, IEmailSender } from '../src/common/email/email-sender.interface';
+
+/** Every route except /health sits behind the global prefix (main.ts / configure-app.ts). */
+const API = '/api/v1';
 
 /**
  * Phase 1 end-to-end proof: the full Workflow 1 lifecycle (org creation →
@@ -14,18 +18,19 @@ import { EMAIL_SENDER, IEmailSender } from '../src/common/email/email-sender.int
  * explicit RLS cross-tenant isolation proof, run against a live app
  * instance with a live PostgreSQL + Redis.
  *
- * Requires `docker compose up -d` (or equivalent) at the repo root AND the
- * Phase 1 migration + RLS policies applied:
- *   npx prisma migrate deploy
+ * Requires a live PostgreSQL + Redis, reachable via `DATABASE_URL`/
+ * `REDIS_URL` in `.env` — natively (README.md "Local Development": local
+ * PostgreSQL, Memurai for Redis) or via `docker compose up -d` at the repo
+ * root, either works identically. Also requires the Phase 1 migration +
+ * RLS policies applied:
+ *   npm run prisma:migrate:deploy
  *   npm run prisma:apply-rls
  *   npm run test:e2e
  *
- * NOT executed in this sandbox — no Docker/Postgres/Redis/MinIO is
- * available here (confirmed: `docker --version`, `psql`, `redis-cli` all
- * absent). This file is written and reviewed as source, but its pass/fail
- * status is UNVERIFIED. See the Phase 1 report's "unresolved issues"
- * section. Do not treat this file's existence as proof the flows work —
- * only the unit tests actually run in this sandbox are proof of anything.
+ * Do not treat this file's existence as proof the flows work — only an
+ * actual `test:e2e` run against reachable infrastructure is proof of
+ * anything; see the Phase 2 verification report for current pass/fail
+ * status.
  */
 type SuperAgentTest = ReturnType<typeof request.agent>;
 
@@ -53,6 +58,7 @@ describe('Identity & Tenancy (e2e)', () => {
       .compile();
 
     app = moduleFixture.createNestApplication();
+    configureApp(app);
     await app.init();
 
     prisma = app.get(PrismaService);
@@ -95,7 +101,7 @@ describe('Identity & Tenancy (e2e)', () => {
     superAdminAgent: SuperAgentTest;
   }) {
     const createRes = await opts.superAdminAgent
-      .post('/platform/organizations')
+      .post(`${API}/platform/organizations`)
       .send({
         legalName: opts.legalName,
         addressLine1: '1 Main St',
@@ -112,7 +118,7 @@ describe('Identity & Tenancy (e2e)', () => {
     const token = extractToken(lastEmailTo(opts.adminEmail).body);
 
     const activateRes = await request(app.getHttpServer())
-      .post('/auth/activate')
+      .post(`${API}/auth/activate`)
       .send({ token, password: opts.adminPassword })
       .expect(200);
 
@@ -120,7 +126,7 @@ describe('Identity & Tenancy (e2e)', () => {
 
     const agent = request.agent(app.getHttpServer());
     const loginRes = await agent
-      .post('/auth/login')
+      .post(`${API}/auth/login`)
       .send({ email: opts.adminEmail, password: opts.adminPassword })
       .expect(200);
     expect(loginRes.body.requiresOrganizationSelection).toBe(false);
@@ -131,7 +137,7 @@ describe('Identity & Tenancy (e2e)', () => {
   it('runs the full Workflow 1 lifecycle: org creation, verification, invite, activation, login, roles, zero-Admin protection', async () => {
     const superAdminAgent = request.agent(app.getHttpServer());
     await superAdminAgent
-      .post('/auth/login')
+      .post(`${API}/auth/login`)
       .send({ email: superAdminEmail, password: superAdminPassword })
       .expect(200);
 
@@ -146,7 +152,7 @@ describe('Identity & Tenancy (e2e)', () => {
 
     // §1.4 — Admin invites a Dispatcher.
     const inviteRes = await org.agent
-      .post('/memberships/invite')
+      .post(`${API}/memberships/invite`)
       .send({ email: 'dispatcher@acme-freight.test', roles: ['DISPATCHER'] })
       .expect(201);
     const dispatcherMembershipId: string = inviteRes.body.id;
@@ -154,25 +160,25 @@ describe('Identity & Tenancy (e2e)', () => {
     // §1.5 — invitee activates via the same mechanical operation as §1.3.
     const dispatcherToken = extractToken(lastEmailTo('dispatcher@acme-freight.test').body);
     await request(app.getHttpServer())
-      .post('/auth/activate')
+      .post(`${API}/auth/activate`)
       .send({ token: dispatcherToken, password: 'DispatcherPass123' })
       .expect(200);
 
     const dispatcherAgent = request.agent(app.getHttpServer());
     const dispatcherLogin = await dispatcherAgent
-      .post('/auth/login')
+      .post(`${API}/auth/login`)
       .send({ email: 'dispatcher@acme-freight.test', password: 'DispatcherPass123' })
       .expect(200);
     expect(dispatcherLogin.body.requiresOrganizationSelection).toBe(false);
 
     // §7 Permissions Matrix — a Dispatcher cannot invite members (Admin-only).
     await dispatcherAgent
-      .post('/memberships/invite')
+      .post(`${API}/memberships/invite`)
       .send({ email: 'someone-else@acme-freight.test', roles: ['DISPATCHER'] })
       .expect(403);
 
     // Admin can list both members.
-    const listRes = await org.agent.get('/memberships').expect(200);
+    const listRes = await org.agent.get(`${API}/memberships`).expect(200);
     expect(listRes.body).toHaveLength(2);
 
     // §1.7 zero-Admin protection: the sole Admin cannot deactivate anyone
@@ -181,16 +187,16 @@ describe('Identity & Tenancy (e2e)', () => {
     const adminMembership = listRes.body.find(
       (m: { user: { email: string } }) => m.user.email === 'admin@acme-freight.test',
     );
-    await org.agent.post(`/memberships/${adminMembership.id}/deactivate`).expect(422);
+    await org.agent.post(`${API}/memberships/${adminMembership.id}/deactivate`).expect(422);
 
     // A non-Admin member can be deactivated freely.
-    await org.agent.post(`/memberships/${dispatcherMembershipId}/deactivate`).expect(200);
+    await org.agent.post(`${API}/memberships/${dispatcherMembershipId}/deactivate`).expect(200);
   });
 
   it('reuses an existing global User as the initial Admin of a second organization, rather than creating a duplicate identity', async () => {
     const superAdminAgent = request.agent(app.getHttpServer());
     await superAdminAgent
-      .post('/auth/login')
+      .post(`${API}/auth/login`)
       .send({ email: superAdminEmail, password: superAdminPassword })
       .expect(200);
 
@@ -209,7 +215,7 @@ describe('Identity & Tenancy (e2e)', () => {
     // existing global User (no duplicate User row) and require an
     // explicit accept (status INVITED) rather than a new password.
     const createSecondRes = await superAdminAgent
-      .post('/platform/organizations')
+      .post(`${API}/platform/organizations`)
       .send({
         legalName: 'Second Org LLC',
         addressLine1: '2 Main St',
@@ -230,7 +236,7 @@ describe('Identity & Tenancy (e2e)', () => {
     // account is already verified from the first organization.
     const orgTwoToken = extractToken(reuseEmail.body);
     const activateSecondRes = await request(app.getHttpServer())
-      .post('/auth/activate')
+      .post(`${API}/auth/activate`)
       .send({ token: orgTwoToken })
       .expect(200);
     expect(activateSecondRes.body.organizationId).toBe(orgTwoId);
@@ -239,7 +245,7 @@ describe('Identity & Tenancy (e2e)', () => {
     // land in the org-pending state rather than auto-selecting one.
     const sharedAgent = request.agent(app.getHttpServer());
     const loginRes = await sharedAgent
-      .post('/auth/login')
+      .post(`${API}/auth/login`)
       .send({ email: sharedEmail, password: sharedPassword })
       .expect(200);
     expect(loginRes.body.requiresOrganizationSelection).toBe(true);
@@ -248,11 +254,11 @@ describe('Identity & Tenancy (e2e)', () => {
 
     // §3.3 — selecting/switching both resolve to the same underlying User.
     await sharedAgent
-      .post('/auth/select-organization')
+      .post(`${API}/auth/select-organization`)
       .send({ organizationId: orgOne.organizationId })
       .expect(200);
     await sharedAgent
-      .post('/auth/switch-organization')
+      .post(`${API}/auth/switch-organization`)
       .send({ organizationId: orgTwoId })
       .expect(200);
   });
@@ -260,7 +266,7 @@ describe('Identity & Tenancy (e2e)', () => {
   it("proves cross-tenant isolation: one organization cannot read, list, or act on another organization's membership data", async () => {
     const superAdminAgent = request.agent(app.getHttpServer());
     await superAdminAgent
-      .post('/auth/login')
+      .post(`${API}/auth/login`)
       .send({ email: superAdminEmail, password: superAdminPassword })
       .expect(200);
 
@@ -279,16 +285,16 @@ describe('Identity & Tenancy (e2e)', () => {
 
     // --- Application-layer proof --------------------------------------
     // Org B's membership list must never include Org A's Admin.
-    const orgBList = await orgB.agent.get('/memberships').expect(200);
+    const orgBList = await orgB.agent.get(`${API}/memberships`).expect(200);
     const emails = orgBList.body.map((m: { user: { email: string } }) => m.user.email);
     expect(emails).not.toContain('admin@northbound.test');
 
     // Org B cannot act on Org A's membership id, even by guessing it —
     // requireMembershipTx scopes by (id AND organizationId), so a
     // cross-tenant id is indistinguishable from a nonexistent one.
-    const orgAList = await orgA.agent.get('/memberships').expect(200);
+    const orgAList = await orgA.agent.get(`${API}/memberships`).expect(200);
     const orgAAdminMembershipId = orgAList.body[0].id;
-    await orgB.agent.post(`/memberships/${orgAAdminMembershipId}/deactivate`).expect(404);
+    await orgB.agent.post(`${API}/memberships/${orgAAdminMembershipId}/deactivate`).expect(404);
 
     // --- Database-layer (RLS) proof ------------------------------------
     // Bypass the service layer's own WHERE-clause scoping entirely and
