@@ -15,6 +15,8 @@ import { CustomerModule } from './modules/customer/customer.module';
 import { CarrierModule } from './modules/carrier/carrier.module';
 import { DocumentModule } from './modules/document/document.module';
 import { QuoteLoadModule } from './modules/quote-load/quote-load.module';
+import { BillingModule } from './modules/billing/billing.module';
+import { CarrierPayModule } from './modules/carrier-pay/carrier-pay.module';
 
 /**
  * Root module.
@@ -34,8 +36,18 @@ import { QuoteLoadModule } from './modules/quote-load/quote-load.module';
  * Phase 3 (Load Lifecycle Core) adds: QuoteLoadModule (Quote, Load, Stop;
  * direct booking + Quote conversion; numbering).
  *
- * Remaining feature modules (Sourcing, Dispatch, Billing, CarrierPay,
- * Notification, Reporting — §1.2) are added starting Phase 4.
+ * Phase 4 (Sourcing & Dispatch) extends QuoteLoadModule in place — no new
+ * top-level module. Phase 5 (POD Receipt & Documentation) extends
+ * DocumentModule/QuoteLoadModule similarly.
+ *
+ * Phase 6 (Financials) adds: BillingModule (ChargeTypeDefinition,
+ * ChargeLineItem management via LoadService, Invoice + full lifecycle) and
+ * CarrierPayModule (CarrierPayment + approval cycle) — two new modules per
+ * the locked Phase 6 module-boundary decision (TECHNICAL_ARCHITECTURE.md
+ * §1.2's module-ownership table).
+ *
+ * Remaining feature modules (Notification, Reporting — §1.2) are deferred
+ * beyond Phase 6.
  */
 @Module({
   imports: [
@@ -53,6 +65,8 @@ import { QuoteLoadModule } from './modules/quote-load/quote-load.module';
     CarrierModule,
     DocumentModule,
     QuoteLoadModule,
+    BillingModule,
+    CarrierPayModule,
   ],
   providers: [
     {

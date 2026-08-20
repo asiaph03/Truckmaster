@@ -51,6 +51,31 @@ const SYSTEM_DOCUMENT_TYPES = [
     requiresReview: false,
   },
   { code: 'SETTLEMENT', label: 'Settlement', category: 'LOAD', requiresReview: false },
+  // Phase 6 — Invoice PDF documents (Workflow 8, Document entityType=INVOICE,
+  // already anticipated in DocumentEntityType since Phase 2). Not seeded
+  // until now since no Invoice model existed to attach one to.
+  { code: 'INVOICE', label: 'Invoice', category: 'LOAD', requiresReview: false },
+] as const;
+
+/**
+ * Phase 6 — system-default ChargeTypeDefinition rows (DATABASE_DESIGN.md
+ * §14, Decision Log D9/D13), mirroring SYSTEM_DOCUMENT_TYPES's exact
+ * pattern: organizationId=null = available to every organization;
+ * organizations may add their own custom types on top via the
+ * (Admin-only, Decision Log B3) charge-type management endpoints. Code
+ * list taken verbatim from DATABASE_DESIGN.md §14's ChargeTypeDefinition
+ * field notes.
+ */
+const SYSTEM_CHARGE_TYPES = [
+  { code: 'LINEHAUL', label: 'Linehaul' },
+  { code: 'FUEL_SURCHARGE', label: 'Fuel Surcharge' },
+  { code: 'DETENTION', label: 'Detention' },
+  { code: 'LUMPER', label: 'Lumper' },
+  { code: 'LAYOVER', label: 'Layover' },
+  { code: 'TONU', label: 'TONU (Truck Ordered Not Used)' },
+  { code: 'ADDITIONAL_STOP', label: 'Additional Stop' },
+  { code: 'REDELIVERY', label: 'Redelivery' },
+  { code: 'OTHER', label: 'Other Accessorial' },
 ] as const;
 
 const prisma = new PrismaClient();
@@ -70,6 +95,23 @@ async function main() {
         label: type.label,
         category: type.category,
         requiresReview: type.requiresReview,
+        isSystemDefault: true,
+      },
+    });
+  }
+
+  for (const type of SYSTEM_CHARGE_TYPES) {
+    const existing = await prisma.chargeTypeDefinition.findFirst({
+      where: { organizationId: null, code: type.code },
+    });
+    if (existing) {
+      continue;
+    }
+    await prisma.chargeTypeDefinition.create({
+      data: {
+        organizationId: null,
+        code: type.code,
+        label: type.label,
         isSystemDefault: true,
       },
     });

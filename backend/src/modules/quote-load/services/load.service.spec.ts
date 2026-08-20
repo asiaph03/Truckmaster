@@ -37,6 +37,7 @@ function buildService(opts: {
     },
     load: {
       findFirst: jest.fn(),
+      findMany: jest.fn().mockResolvedValue([]),
       create: jest.fn().mockImplementation(({ data }) => ({
         ...data,
         id: 'load-1',
@@ -48,6 +49,19 @@ function buildService(opts: {
         .mockImplementation(({ data }) => ({ id: 'load-1', status: 'BOOKED', ...data })),
     },
     document: {
+      findFirst: jest.fn().mockResolvedValue(null),
+      findMany: jest.fn().mockResolvedValue([]),
+    },
+    chargeTypeDefinition: {
+      findFirst: jest.fn().mockResolvedValue({ id: 'linehaul-type-1', code: 'LINEHAUL' }),
+    },
+    chargeLineItem: {
+      create: jest.fn().mockImplementation(({ data }) => ({ id: 'charge-1', ...data })),
+    },
+    invoiceLoad: {
+      findFirst: jest.fn().mockResolvedValue(null),
+    },
+    carrierPayment: {
       findMany: jest.fn().mockResolvedValue([]),
     },
   };
@@ -103,6 +117,38 @@ describe('LoadService.createDirect — Workflow 4 §4.8', () => {
     expect(audit.record).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ action: 'Load Booked Directly (No Quote)' }),
+    );
+  });
+
+  it('Phase 6: creates an ORIGINAL customer-side LINEHAUL ChargeLineItem at booking time (DATABASE_DESIGN.md §14)', async () => {
+    const { service, tx } = buildService({});
+
+    await service.createDirect(
+      ORG_ID,
+      {
+        customerId: CUSTOMER_ID,
+        stops: BASE_STOPS as never,
+        equipmentType: 'DRY_VAN',
+        customerRate: '1800.00',
+      },
+      USER_ID,
+    );
+
+    expect(tx.chargeTypeDefinition.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ code: 'LINEHAUL' }) }),
+    );
+    expect(tx.chargeLineItem.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          loadId: 'load-1',
+          side: 'CUSTOMER',
+          chargeTypeId: 'linehaul-type-1',
+          unitRate: new Prisma.Decimal('1800.00'),
+          amount: new Prisma.Decimal('1800.00'),
+          source: 'ORIGINAL',
+          createdByUserId: USER_ID,
+        }),
+      }),
     );
   });
 
@@ -255,6 +301,209 @@ describe('LoadService.updateReferenceNumbers — Workflow 4 §4.10', () => {
         USER_ID,
       ),
     ).rejects.toThrow(NotFoundError);
+  });
+});
+
+describe('LoadService.addCharge — Decision Log D9', () => {
+  it('adds a source=ADJUSTMENT charge, computing amount = quantity * unitRate', async () => {
+    const { service, tx, audit } = buildService({});
+    tx.load.findFirst.mockResolvedValue({ id: 'load-1', status: 'DELIVERED' });
+
+    const charge = await service.addCharge(
+      ORG_ID,
+      'load-1',
+      { side: 'CUSTOMER', chargeTypeId: 'detention-type-1', quantity: '2', unitRate: '75.00' },
+      USER_ID,
+    );
+
+    expect(tx.chargeLineItem.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          loadId: 'load-1',
+          side: 'CUSTOMER',
+          chargeTypeId: 'detention-type-1',
+          quantity: '2',
+          unitRate: '75.00',
+          amount: '150.00',
+          source: 'ADJUSTMENT',
+          createdByUserId: USER_ID,
+        }),
+      }),
+    );
+    expect(charge).toBeDefined();
+    expect(audit.record).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ action: 'Charge Line Item Added' }),
+    );
+  });
+
+  it('defaults quantity to 1 when omitted', async () => {
+    const { service, tx } = buildService({});
+    tx.load.findFirst.mockResolvedValue({ id: 'load-1', status: 'DELIVERED' });
+
+    await service.addCharge(
+      ORG_ID,
+      'load-1',
+      { side: 'CARRIER', chargeTypeId: 'lumper-type-1', unitRate: '50.00' },
+      USER_ID,
+    );
+
+    expect(tx.chargeLineItem.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ quantity: '1', amount: '50.00' }),
+      }),
+    );
+  });
+
+  it('throws NotFoundError for a nonexistent Load', async () => {
+    const { service, tx } = buildService({});
+    tx.load.findFirst.mockResolvedValue(null);
+
+    await expect(
+      service.addCharge(
+        ORG_ID,
+        'nonexistent',
+        { side: 'CUSTOMER', chargeTypeId: 'detention-type-1', unitRate: '75.00' },
+        USER_ID,
+      ),
+    ).rejects.toThrow(NotFoundError);
+  });
+
+  it('throws NotFoundError for a nonexistent charge type', async () => {
+    const { service, tx } = buildService({});
+    tx.load.findFirst.mockResolvedValue({ id: 'load-1', status: 'DELIVERED' });
+    tx.chargeTypeDefinition.findFirst.mockResolvedValue(null);
+
+    await expect(
+      service.addCharge(
+        ORG_ID,
+        'load-1',
+        { side: 'CUSTOMER', chargeTypeId: 'nonexistent-type', unitRate: '75.00' },
+        USER_ID,
+      ),
+    ).rejects.toThrow(NotFoundError);
+  });
+});
+
+describe('LoadService.closeLoad — Workflow 10', () => {
+  it('closes unconditionally even with every checklist item at Warning, and snapshots it', async () => {
+    const { service, tx, audit } = buildService({});
+    tx.load.findFirst.mockResolvedValue({
+      id: 'load-1',
+      status: 'DELIVERED',
+      podStatus: 'NOT_RECEIVED',
+      carrierRate: null,
+    });
+
+    const result = await service.closeLoad(ORG_ID, 'load-1', USER_ID);
+
+    expect(result.load.status).toBe('CLOSED');
+    expect(result.checklistSnapshot).toEqual([
+      { item: 'Rate Confirmation', status: 'WARNING', detail: 'Missing' },
+      { item: 'POD', status: 'WARNING', detail: 'Not Received' },
+      { item: 'Customer Invoice', status: 'WARNING', detail: 'Missing' },
+      { item: 'Carrier Pay', status: 'WARNING', detail: 'No payment recorded' },
+    ]);
+    expect(audit.record).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: 'Load Closed',
+        newValue: { checklistSnapshot: result.checklistSnapshot },
+      }),
+    );
+  });
+
+  it('reports every item Clean when Rate Confirmation/POD/Invoice/Carrier Pay are all present', async () => {
+    const { service, tx } = buildService({});
+    tx.load.findFirst.mockResolvedValue({
+      id: 'load-1',
+      status: 'DELIVERED',
+      podStatus: 'COMPLETE',
+      carrierRate: new Prisma.Decimal('1500.00'),
+    });
+    tx.document.findFirst.mockResolvedValue({ id: 'doc-1' });
+    tx.invoiceLoad.findFirst.mockResolvedValue({ id: 'invoice-load-1' });
+    tx.carrierPayment.findMany.mockResolvedValue([
+      { status: 'PAID', amount: new Prisma.Decimal('1500.00') },
+    ]);
+
+    const { checklistSnapshot } = await service.closeLoad(ORG_ID, 'load-1', USER_ID);
+
+    expect(checklistSnapshot.every((c) => c.status === 'CLEAN')).toBe(true);
+  });
+
+  it('surfaces remainingCarrierBalance on an otherwise-Clean Carrier Pay item when a balance remains', async () => {
+    const { service, tx } = buildService({});
+    tx.load.findFirst.mockResolvedValue({
+      id: 'load-1',
+      status: 'DELIVERED',
+      podStatus: 'COMPLETE',
+      carrierRate: new Prisma.Decimal('1500.00'),
+    });
+    tx.carrierPayment.findMany.mockResolvedValue([
+      { status: 'PAID', amount: new Prisma.Decimal('500.00') },
+    ]);
+
+    const { checklistSnapshot } = await service.closeLoad(ORG_ID, 'load-1', USER_ID);
+
+    const carrierPayItem = checklistSnapshot.find((c) => c.item === 'Carrier Pay');
+    expect(carrierPayItem?.status).toBe('CLEAN');
+    expect(carrierPayItem?.remainingCarrierBalance).toBe('1000.00');
+  });
+
+  it('rejects closing an already-Closed Load — the only precondition (Workflow 10 §10.9)', async () => {
+    const { service, tx } = buildService({});
+    tx.load.findFirst.mockResolvedValue({ id: 'load-1', status: 'CLOSED' });
+
+    await expect(service.closeLoad(ORG_ID, 'load-1', USER_ID)).rejects.toThrow(/already Closed/);
+  });
+
+  it('throws NotFoundError for a nonexistent Load', async () => {
+    const { service, tx } = buildService({});
+    tx.load.findFirst.mockResolvedValue(null);
+
+    await expect(service.closeLoad(ORG_ID, 'nonexistent', USER_ID)).rejects.toThrow(NotFoundError);
+  });
+});
+
+describe('LoadService.getReadyToInvoice — Workflow 8 §8.1', () => {
+  it('queries Loads at DELIVERED/CLOSED with invoiced=false, optionally scoped to one customer', async () => {
+    const { service, tx } = buildService({});
+
+    await service.getReadyToInvoice(ORG_ID, CUSTOMER_ID, USER_ID, ['ACCOUNTING']);
+
+    expect(tx.load.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          organizationId: ORG_ID,
+          status: { in: ['DELIVERED', 'CLOSED'] },
+          invoiced: false,
+          customerId: CUSTOMER_ID,
+        }),
+      }),
+    );
+  });
+
+  it('computes customerChargesTotal from CUSTOMER-side charge line items only', async () => {
+    const { service, tx } = buildService({});
+    tx.load.findMany.mockResolvedValue([
+      {
+        id: 'load-1',
+        createdByUserId: USER_ID,
+        customerRate: new Prisma.Decimal('1800.00'),
+        rateSource: 'MANUAL',
+        rateAgreementId: null,
+        chargeLineItems: [
+          { side: 'CUSTOMER', amount: new Prisma.Decimal('1800.00') },
+          { side: 'CUSTOMER', amount: new Prisma.Decimal('200.00') },
+          { side: 'CARRIER', amount: new Prisma.Decimal('1500.00') },
+        ],
+      },
+    ]);
+
+    const [load] = await service.getReadyToInvoice(ORG_ID, undefined, USER_ID, ['ACCOUNTING']);
+
+    expect(load.customerChargesTotal).toBe('2000.00');
   });
 });
 

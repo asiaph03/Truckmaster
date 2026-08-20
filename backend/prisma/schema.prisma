@@ -123,7 +123,16 @@ model User {
   // Phase 4 reverse relations
   sourcingAttemptsLogged CarrierSourcingAttempt[] @relation("SourcingAttemptLoggedBy")
   dispatchesPerformed    DispatchRecord[]         @relation("DispatchedBy")
-  checkCallsLogged       CheckCall[]               @relation("CheckCallLoggedBy")
+  checkCallsLogged       CheckCall[]              @relation("CheckCallLoggedBy")
+
+  // Phase 6 reverse relations
+  chargeLineItemsCreated  ChargeLineItem[] @relation("ChargeLineItemCreatedBy")
+  invoicesCreated         Invoice[]        @relation("InvoiceCreatedBy")
+  paymentsRecorded        Payment[]        @relation("PaymentRecordedBy")
+  adjustmentsCreated      Adjustment[]     @relation("AdjustmentCreatedBy")
+  carrierPaymentsPrepared CarrierPayment[] @relation("CarrierPaymentPreparedBy")
+  carrierPaymentsApproved CarrierPayment[] @relation("CarrierPaymentApprovedBy")
+  carrierPaymentsRejected CarrierPayment[] @relation("CarrierPaymentLastRejectedBy")
 
   @@map("user")
 }
@@ -160,6 +169,12 @@ model Organization {
   customers               Customer[]
   carriers                Carrier[]
   documentTypeDefinitions DocumentTypeDefinition[]
+
+  // Phase 6 — mirrors documentTypeDefinitions exactly (nullable
+  // organizationId = system default). Invoice is a direct child of
+  // Organization, same tier as Customer/Carrier/Quote/Load.
+  chargeTypeDefinitions ChargeTypeDefinition[]
+  invoices              Invoice[]
 
   // Phase 3 — Quote/Load are direct children of Organization (same tier
   // as Customer/Carrier), so they get a full Prisma relation here too.
@@ -458,6 +473,9 @@ model Customer {
   quotes Quote[]
   loads  Load[]
 
+  // Phase 6 reverse relation
+  invoices Invoice[]
+
   @@index([organizationId, status])
   @@index([organizationId, legalName])
   @@map("customer")
@@ -597,6 +615,9 @@ model Carrier {
 
   // Phase 4 reverse relation
   sourcingAttempts CarrierSourcingAttempt[]
+
+  // Phase 6 reverse relation
+  carrierPayments CarrierPayment[]
 
   @@unique([organizationId, mcNumber])
   @@unique([organizationId, dotNumber])
@@ -1136,6 +1157,12 @@ model Load {
   dispatchRecord   DispatchRecord?
   checkCalls       CheckCall[]
 
+  // Phase 6 reverse relations
+  chargeLineItems         ChargeLineItem[]
+  invoiceLoads            InvoiceLoad[]
+  invoiceLineItemsSourced InvoiceLineItem[] @relation("InvoiceLineItemSourceLoad")
+  carrierPayments         CarrierPayment[]
+
   @@unique([organizationId, loadNumber])
   @@index([organizationId, status])
   @@index([organizationId, customerId])
@@ -1281,9 +1308,9 @@ model DispatchRecord {
   sourceTrailerId String?  @map("source_trailer_id") @db.Uuid
   sourceTrailer   Trailer? @relation("DispatchSourceTrailer", fields: [sourceTrailerId], references: [id])
 
-  dispatchedByUserId String @map("dispatched_by_user_id") @db.Uuid
-  dispatchedBy       User   @relation("DispatchedBy", fields: [dispatchedByUserId], references: [id])
-  dispatchedAt        DateTime @default(now()) @map("dispatched_at")
+  dispatchedByUserId String   @map("dispatched_by_user_id") @db.Uuid
+  dispatchedBy       User     @relation("DispatchedBy", fields: [dispatchedByUserId], references: [id])
+  dispatchedAt       DateTime @default(now()) @map("dispatched_at")
 
   updatedAt DateTime @updatedAt @map("updated_at")
 
@@ -1323,4 +1350,332 @@ model CheckCall {
 
   @@index([organizationId, loadId])
   @@map("check_call")
+}
+
+// ---------------------------------------------------------------------
+// Phase 6 — Financials (DATABASE_DESIGN.md §14-18)
+//
+// ChargeTypeDefinition mirrors DocumentTypeDefinition's exact lookup-table
+// pattern (Decision Log D13). Invoice is a direct child of Organization
+// (same tier as Customer/Carrier/Quote/Load, per DATABASE_DESIGN.md §29's
+// relationship map) and gets a full Prisma relation to both Organization
+// and Customer. ChargeLineItem, InvoiceLoad, InvoiceLineItem, Payment,
+// and Adjustment are child/detail tables (plain organizationId column, no
+// direct Organization relation), following the same Phase 2/3 convention
+// documented above the Customer model. CarrierPayment is also a
+// child/detail table (of Load + Carrier), mirroring the
+// CarrierSourcingAttempt precedent from Phase 4 exactly.
+// ---------------------------------------------------------------------
+
+/// DATABASE_DESIGN.md §14. Independent revenue/cost line items (PRD §8).
+enum ChargeLineItemSide {
+  CUSTOMER
+  CARRIER
+}
+
+/// Original booking/assignment-time linehaul vs. a later accessorial
+/// addition (Decision Log D9).
+enum ChargeLineItemSource {
+  ORIGINAL
+  ADJUSTMENT
+}
+
+/// TECHNICAL_ARCHITECTURE.md §6.9. OVERDUE is deliberately absent — never
+/// stored, always computed at read time (Workflow 8 §8.10, Decision 5).
+enum InvoiceStatus {
+  DRAFT
+  SENT
+  PARTIALLY_PAID
+  PAID
+  VOID
+  CREDITED
+}
+
+/// Workflow 8 §8.11.
+enum AdjustmentType {
+  CREDIT
+  DEBIT
+}
+
+/// PRD §8 / Workflow 9 §9.2.
+enum CarrierPaymentType {
+  DEPOSIT
+  PARTIAL
+  BALANCE
+  ADJUSTMENT
+}
+
+/// TECHNICAL_ARCHITECTURE.md §6.8. No REJECTED terminal state — rejection
+/// loops PENDING_APPROVAL back to DRAFT (Workflow 9 §9.4-§9.5), may cycle
+/// any number of times.
+enum CarrierPaymentStatus {
+  DRAFT
+  PENDING_APPROVAL
+  APPROVED
+  PAID
+}
+
+/// DATABASE_DESIGN.md §14, Decision Log D13. Management (create/edit) is
+/// Admin-only (Decision Log B3); *using* an existing type to add a charge
+/// to a Load is available to a broader role set (Decision Log D9) — two
+/// distinct permissions governing two distinct actions, per
+/// TECHNICAL_ARCHITECTURE.md §4.11's explicit "D9 vs. B3, kept distinct"
+/// note.
+model ChargeTypeDefinition {
+  id String @id @default(uuid()) @db.Uuid
+
+  organizationId String?       @map("organization_id") @db.Uuid
+  organization   Organization? @relation(fields: [organizationId], references: [id])
+
+  code  String
+  label String
+
+  isSystemDefault Boolean @default(false) @map("is_system_default")
+
+  chargeLineItems ChargeLineItem[]
+
+  @@index([organizationId])
+  @@map("charge_type_definition")
+}
+
+/// DATABASE_DESIGN.md §14, Decision Log D9. Add-only — no locked source
+/// document describes an edit or delete operation anywhere; every
+/// addition is a new permanent row, consistent with the PRD's Financial
+/// Integrity Principle ("nothing is silently overwritten"). No `stop_id`
+/// column (Decision Log B2 — charges remain load-level only in V1).
+model ChargeLineItem {
+  id String @id @default(uuid()) @db.Uuid
+
+  organizationId String @map("organization_id") @db.Uuid
+
+  loadId String @map("load_id") @db.Uuid
+  load   Load   @relation(fields: [loadId], references: [id])
+
+  side ChargeLineItemSide
+
+  chargeTypeId String               @map("charge_type_id") @db.Uuid
+  chargeType   ChargeTypeDefinition @relation(fields: [chargeTypeId], references: [id])
+
+  description String?
+
+  quantity Decimal @default(1) @db.Decimal(10, 2)
+  unitRate Decimal @map("unit_rate") @db.Decimal(12, 2)
+  amount   Decimal @db.Decimal(12, 2)
+
+  source ChargeLineItemSource
+
+  notes String?
+
+  createdByUserId String @map("created_by_user_id") @db.Uuid
+  createdBy       User   @relation("ChargeLineItemCreatedBy", fields: [createdByUserId], references: [id])
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  invoiceLineItemsSourcedFrom InvoiceLineItem[] @relation("InvoiceLineItemSourceChargeLineItem")
+
+  @@index([organizationId, loadId])
+  @@map("charge_line_item")
+}
+
+/// DATABASE_DESIGN.md §15. Workflow 8 §8.7 — invoice_number generated at
+/// Draft creation, not deferred to Send. `due_date` stays null until Send
+/// (§8.8 — the payment clock starts at Send, not Draft). `total`/
+/// `remaining_balance` are recalculated and persisted on every
+/// line-item/payment/adjustment change (high-read fields, Decision 5).
+model Invoice {
+  id String @id @default(uuid()) @db.Uuid
+
+  organizationId String       @map("organization_id") @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  invoiceNumber String @map("invoice_number")
+
+  customerId String   @map("customer_id") @db.Uuid
+  customer   Customer @relation(fields: [customerId], references: [id])
+
+  status InvoiceStatus @default(DRAFT)
+
+  sentAt  DateTime? @map("sent_at")
+  dueDate DateTime? @map("due_date") @db.Date
+
+  total            Decimal @db.Decimal(12, 2)
+  remainingBalance Decimal @map("remaining_balance") @db.Decimal(12, 2)
+
+  createdByUserId String @map("created_by_user_id") @db.Uuid
+  createdBy       User   @relation("InvoiceCreatedBy", fields: [createdByUserId], references: [id])
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  invoiceLoads InvoiceLoad[]
+  lineItems    InvoiceLineItem[]
+  payments     Payment[]
+  adjustments  Adjustment[]
+
+  @@unique([organizationId, invoiceNumber])
+  @@index([organizationId, status])
+  @@index([organizationId, customerId])
+  @@map("invoice")
+}
+
+/// DATABASE_DESIGN.md §15 — join table supporting consolidated invoicing
+/// (Workflow 8 §8.4). One-invoice-per-Load (§8.1) is enforced at the
+/// application layer via the transactional `Load.invoiced` flag check —
+/// exactly the mechanism Workflow 8 §8.1 itself describes. A DB-level
+/// partial unique index excluding VOID invoices was considered but is not
+/// expressible here: Postgres partial indexes cannot filter on a joined
+/// table's column (VOID lives on `Invoice.status`, not on this table), and
+/// denormalizing status onto this table was judged out of scope.
+model InvoiceLoad {
+  id String @id @default(uuid()) @db.Uuid
+
+  organizationId String @map("organization_id") @db.Uuid
+
+  invoiceId String  @map("invoice_id") @db.Uuid
+  invoice   Invoice @relation(fields: [invoiceId], references: [id])
+
+  loadId String @map("load_id") @db.Uuid
+  load   Load   @relation(fields: [loadId], references: [id])
+
+  loadTotalAtInvoice Decimal @map("load_total_at_invoice") @db.Decimal(12, 2)
+
+  @@index([organizationId, invoiceId])
+  @@index([organizationId, loadId])
+  @@map("invoice_load")
+}
+
+/// DATABASE_DESIGN.md §15, Decision Log D11. Individual invoices: one row
+/// per underlying ChargeLineItem, snapshotted (never a live reference) so
+/// later charge edits on the source Load never retroactively alter an
+/// already-created invoice. Consolidated invoices: one row per Load
+/// (Workflow 8 §8.5).
+model InvoiceLineItem {
+  id String @id @default(uuid()) @db.Uuid
+
+  organizationId String @map("organization_id") @db.Uuid
+
+  invoiceId String  @map("invoice_id") @db.Uuid
+  invoice   Invoice @relation(fields: [invoiceId], references: [id])
+
+  description String
+  amount      Decimal @db.Decimal(12, 2)
+
+  sourceLoadId String? @map("source_load_id") @db.Uuid
+  sourceLoad   Load?   @relation("InvoiceLineItemSourceLoad", fields: [sourceLoadId], references: [id])
+
+  sourceChargeLineItemId String?         @map("source_charge_line_item_id") @db.Uuid
+  sourceChargeLineItem   ChargeLineItem? @relation("InvoiceLineItemSourceChargeLineItem", fields: [sourceChargeLineItemId], references: [id])
+
+  @@index([organizationId, invoiceId])
+  @@map("invoice_line_item")
+}
+
+/// DATABASE_DESIGN.md §16. Workflow 8 §8.9 — multiple rows per invoice
+/// supported natively. Cannot be recorded against a DRAFT invoice
+/// (application-layer status check, not a DB constraint, since it depends
+/// on a related row's current state).
+model Payment {
+  id String @id @default(uuid()) @db.Uuid
+
+  organizationId String @map("organization_id") @db.Uuid
+
+  invoiceId String  @map("invoice_id") @db.Uuid
+  invoice   Invoice @relation(fields: [invoiceId], references: [id])
+
+  amount Decimal @db.Decimal(12, 2)
+
+  paymentDate DateTime @map("payment_date") @db.Date
+
+  method          String
+  referenceNumber String? @map("reference_number")
+  notes           String?
+
+  recordedByUserId String @map("recorded_by_user_id") @db.Uuid
+  recordedBy       User   @relation("PaymentRecordedBy", fields: [recordedByUserId], references: [id])
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([organizationId, invoiceId])
+  @@map("payment")
+}
+
+/// DATABASE_DESIGN.md §17. Workflow 8 §8.11 — never mutates InvoiceLineItem
+/// or Invoice.total; only affects remaining_balance and derived status
+/// (Financial Integrity Principle, PRD §8). No additional approval
+/// workflow — same permission as invoicing generally.
+model Adjustment {
+  id String @id @default(uuid()) @db.Uuid
+
+  organizationId String @map("organization_id") @db.Uuid
+
+  invoiceId String  @map("invoice_id") @db.Uuid
+  invoice   Invoice @relation(fields: [invoiceId], references: [id])
+
+  type AdjustmentType
+
+  amount Decimal @db.Decimal(12, 2)
+  reason String
+
+  adjustmentDate DateTime @map("adjustment_date") @db.Date
+
+  createdByUserId String @map("created_by_user_id") @db.Uuid
+  createdBy       User   @relation("AdjustmentCreatedBy", fields: [createdByUserId], references: [id])
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([organizationId, invoiceId])
+  @@map("adjustment")
+}
+
+/// DATABASE_DESIGN.md §18. Workflow 9 — amount locked at submission (not
+/// editable during approval, §9.3-§9.4). Rejection returns to DRAFT, not
+/// a separate REJECTED terminal state (§9.5) — only the most recent
+/// rejection is stored here; full history lives in AuditLog.
+/// Self-approval prevention: approvedByUserId != preparedByUserId,
+/// enforced at the application layer (mirrors Document review's
+/// SelfReviewForbiddenError pattern from Phase 2). No line-item
+/// allocation (Decision Log D10) — always against the Load's total
+/// carrier balance. total_paid/remaining_carrier_balance are computed at
+/// read time from SUM(PAID CarrierPayment.amount), never a stored field.
+model CarrierPayment {
+  id String @id @default(uuid()) @db.Uuid
+
+  organizationId String @map("organization_id") @db.Uuid
+
+  loadId String @map("load_id") @db.Uuid
+  load   Load   @relation(fields: [loadId], references: [id])
+
+  carrierId String  @map("carrier_id") @db.Uuid
+  carrier   Carrier @relation(fields: [carrierId], references: [id])
+
+  amount      Decimal            @db.Decimal(12, 2)
+  paymentType CarrierPaymentType @map("payment_type")
+
+  method          String?
+  referenceNumber String? @map("reference_number")
+  notes           String?
+
+  status CarrierPaymentStatus @default(DRAFT)
+
+  preparedByUserId String @map("prepared_by_user_id") @db.Uuid
+  preparedBy       User   @relation("CarrierPaymentPreparedBy", fields: [preparedByUserId], references: [id])
+
+  submittedAt DateTime? @map("submitted_at")
+
+  approvedByUserId String?   @map("approved_by_user_id") @db.Uuid
+  approvedBy       User?     @relation("CarrierPaymentApprovedBy", fields: [approvedByUserId], references: [id])
+  approvedAt       DateTime? @map("approved_at")
+
+  lastRejectedByUserId String?   @map("last_rejected_by_user_id") @db.Uuid
+  lastRejectedBy       User?     @relation("CarrierPaymentLastRejectedBy", fields: [lastRejectedByUserId], references: [id])
+  lastRejectedAt       DateTime? @map("last_rejected_at")
+  lastRejectionReason  String?   @map("last_rejection_reason")
+
+  paidAt DateTime? @map("paid_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([organizationId, loadId])
+  @@index([organizationId, carrierId])
+  @@index([organizationId, status])
+  @@map("carrier_payment")
 }

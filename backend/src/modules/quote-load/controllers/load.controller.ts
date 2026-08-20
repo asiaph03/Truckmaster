@@ -27,18 +27,19 @@ import { StopTimestampDto } from '../dto/stop-timestamp.dto';
 import { LogCheckCallDto } from '../dto/log-check-call.dto';
 import { SetRiskStatusDto } from '../dto/set-risk-status.dto';
 import { AssignDispatcherDto } from '../dto/assign-dispatcher.dto';
+import { AddChargeDto } from '../dto/add-charge.dto';
 import { RolesGuard } from '../../identity/guards/roles.guard';
 import { Roles } from '../../identity/decorators/roles.decorator';
 import { RequestContextStore } from '../../../common/tenant-context/request-context';
 
 /**
- * TECHNICAL_ARCHITECTURE.md §5.1 Loads resource row. Phase 3 scope:
- * `POST /loads`, `GET /loads`, `GET /loads/:id`, `PATCH /loads/:id`. Phase
- * 4 (this update) adds every Sourcing/Dispatch route anticipated by the
- * comment that used to sit here (begin-sourcing, assign-carrier, dispatch,
- * stops/:seq/arrival, check-calls, risk-status, dispatcher) — the
- * remaining §5.1 routes not yet defined (charges, close, etc.) belong to
- * later phases still.
+ * TECHNICAL_ARCHITECTURE.md §5.1 Loads resource row. Phase 3: `POST
+ * /loads`, `GET /loads`, `GET /loads/:id`, `PATCH /loads/:id`. Phase 4
+ * added every Sourcing/Dispatch route (begin-sourcing, assign-carrier,
+ * dispatch, stops/:seq/arrival, check-calls, risk-status, dispatcher).
+ * Phase 6 (this update) adds the remaining §5.1 Loads routes: `charges`,
+ * `close`, and `ready-to-invoice` — every route this resource anticipates
+ * is now defined.
  */
 const QUOTE_LOAD_CREATE_ROLES: MembershipRoleName[] = [
   'ADMIN',
@@ -55,6 +56,17 @@ const QUOTE_LOAD_CREATE_ROLES: MembershipRoleName[] = [
  */
 const SOURCING_DISPATCH_ROLES: MembershipRoleName[] = ['ADMIN', 'OPERATIONS_MANAGER', 'DISPATCHER'];
 
+/** Decision Log D9 — Add Charge: Admin, Operations Manager, Dispatcher, Accounting. */
+const ADD_CHARGE_ROLES: MembershipRoleName[] = [
+  'ADMIN',
+  'OPERATIONS_MANAGER',
+  'DISPATCHER',
+  'ACCOUNTING',
+];
+
+/** Workflow 10 Cross-Cutting Permissions — view checklist / Close: Admin, Ops Manager, Accounting. Not Dispatcher. */
+const LOAD_CLOSING_ROLES: MembershipRoleName[] = ['ADMIN', 'OPERATIONS_MANAGER', 'ACCOUNTING'];
+
 @Controller('loads')
 @UseGuards(RolesGuard)
 export class LoadController {
@@ -70,6 +82,22 @@ export class LoadController {
     const actingUserId = RequestContextStore.requireUserId();
     const actingRoles = (RequestContextStore.current().roles ?? []) as MembershipRoleName[];
     return this.loadService.list(organizationId, actingUserId, actingRoles, { status, customerId });
+  }
+
+  // Must be registered before @Get(':id') — a static path segment has to
+  // precede a dynamic :id route, or NestJS's :id param would greedily
+  // match "ready-to-invoice" as an id.
+  @Get('ready-to-invoice')
+  getReadyToInvoice(@Query('customerId') customerId?: string) {
+    const organizationId = RequestContextStore.requireOrganizationId();
+    const actingUserId = RequestContextStore.requireUserId();
+    const actingRoles = (RequestContextStore.current().roles ?? []) as MembershipRoleName[];
+    return this.loadService.getReadyToInvoice(
+      organizationId,
+      customerId,
+      actingUserId,
+      actingRoles,
+    );
   }
 
   @Get(':id')
@@ -215,5 +243,24 @@ export class LoadController {
     const organizationId = RequestContextStore.requireOrganizationId();
     const actingUserId = RequestContextStore.requireUserId();
     return this.dispatchTracking.assignDispatcher(organizationId, id, dto, actingUserId);
+  }
+
+  // --- Phase 6: Financials (Charges D9, Load Closing Workflow 10) ------
+
+  @Post(':id/charges')
+  @Roles(...ADD_CHARGE_ROLES)
+  addCharge(@Param('id', ParseUUIDPipe) id: string, @Body() dto: AddChargeDto) {
+    const organizationId = RequestContextStore.requireOrganizationId();
+    const actingUserId = RequestContextStore.requireUserId();
+    return this.loadService.addCharge(organizationId, id, dto, actingUserId);
+  }
+
+  @Post(':id/close')
+  @Roles(...LOAD_CLOSING_ROLES)
+  @HttpCode(200)
+  closeLoad(@Param('id', ParseUUIDPipe) id: string) {
+    const organizationId = RequestContextStore.requireOrganizationId();
+    const actingUserId = RequestContextStore.requireUserId();
+    return this.loadService.closeLoad(organizationId, id, actingUserId);
   }
 }

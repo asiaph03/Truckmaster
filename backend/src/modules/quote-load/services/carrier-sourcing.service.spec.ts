@@ -47,6 +47,12 @@ function buildService(opts: {
       create: jest.fn().mockImplementation(({ data }) => ({ id: 'doc-1', ...data })),
       update: jest.fn().mockImplementation(({ data }) => ({ id: 'doc-1', ...data })),
     },
+    chargeTypeDefinition: {
+      findFirst: jest.fn().mockResolvedValue({ id: 'linehaul-type-1', code: 'LINEHAUL' }),
+    },
+    chargeLineItem: {
+      create: jest.fn().mockImplementation(({ data }) => ({ id: 'charge-1', ...data })),
+    },
   };
 
   const prisma = {
@@ -156,6 +162,51 @@ describe('CarrierSourcingService.assignCarrier — Workflow 5 §5.3/§5.4', () =
       expect.anything(),
       expect.objectContaining({ action: 'Carrier Assigned' }),
     );
+  });
+
+  it('Phase 6: creates an ORIGINAL carrier-side LINEHAUL ChargeLineItem at assignment time (DATABASE_DESIGN.md §14)', async () => {
+    const { service, tx } = buildService({});
+
+    await service.assignCarrier(
+      ORG_ID,
+      LOAD_ID,
+      { carrierId: CARRIER_ID, carrierRate: '2000.00' },
+      USER_ID,
+    );
+
+    expect(tx.chargeTypeDefinition.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ code: 'LINEHAUL' }) }),
+    );
+    expect(tx.chargeLineItem.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          loadId: LOAD_ID,
+          side: 'CARRIER',
+          chargeTypeId: 'linehaul-type-1',
+          unitRate: '2000.00',
+          amount: '2000.00',
+          source: 'ORIGINAL',
+          createdByUserId: USER_ID,
+        }),
+      }),
+    );
+  });
+
+  it('does not create the carrier LINEHAUL charge when the eligibility gate blocks assignment', async () => {
+    const { service, tx } = buildService({
+      eligibility: { eligible: false, reasons: ['COI expired'] },
+    });
+
+    await expect(
+      service.assignCarrier(
+        ORG_ID,
+        LOAD_ID,
+        { carrierId: CARRIER_ID, carrierRate: '2000.00' },
+        USER_ID,
+      ),
+    ).rejects.toThrow(EligibilityError);
+
+    expect(tx.chargeLineItem.create).not.toHaveBeenCalled();
   });
 
   it('hard-blocks an ineligible carrier — no override, reasons included, and audits the block', async () => {

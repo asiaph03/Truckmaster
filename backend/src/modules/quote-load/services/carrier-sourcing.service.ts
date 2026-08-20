@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { Load } from '@prisma/client';
+import { Load, Prisma } from '@prisma/client';
 import { Queue } from 'bullmq';
 import { PrismaService } from '../../../common/prisma/prisma.service';
 import { AuditService } from '../../../common/audit/audit.service';
@@ -105,6 +105,41 @@ export class CarrierSourcingService {
   }
 
   /**
+   * Phase 6 addition — DATABASE_DESIGN.md §14: "A LINEHAUL line item
+   * (side=CARRIER, amount=Load.carrier_rate)... created automatically at
+   * ...assignment time," matching TECHNICAL_ARCHITECTURE.md §5.2's
+   * `assign-carrier` side-effects list exactly. Explicitly deferred when
+   * Phase 4 was built (disclosed at the time — `ChargeLineItem` didn't
+   * exist as a table yet), closed now that Phase 6 exists. Purely
+   * additive — does not alter any other assignment behavior.
+   */
+  private async createOriginalCarrierLinehaulCharge(
+    tx: Prisma.TransactionClient,
+    organizationId: string,
+    loadId: string,
+    carrierRate: string,
+    actingUserId: string,
+  ): Promise<void> {
+    const linehaulType = await tx.chargeTypeDefinition.findFirst({
+      where: { code: 'LINEHAUL', OR: [{ organizationId }, { organizationId: null }] },
+    });
+    if (!linehaulType) return; // seed not applied — defensive, never expected in a real deploy
+
+    await tx.chargeLineItem.create({
+      data: {
+        organizationId,
+        loadId,
+        side: 'CARRIER',
+        chargeTypeId: linehaulType.id,
+        unitRate: carrierRate,
+        amount: carrierRate,
+        source: 'ORIGINAL',
+        createdByUserId: actingUserId,
+      },
+    });
+  }
+
+  /**
    * Workflow 5 §5.3/§5.4 — the hard, non-overridable eligibility gate,
    * re-validated live inside this transaction (never trusted from an
    * earlier read), then assignment itself.
@@ -165,6 +200,14 @@ export class CarrierSourcingService {
           carrierRate: dto.carrierRate,
         },
       });
+
+      await this.createOriginalCarrierLinehaulCharge(
+        tx,
+        organizationId,
+        loadId,
+        dto.carrierRate,
+        actingUserId,
+      );
 
       await this.audit.record(tx, {
         organizationId,

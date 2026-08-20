@@ -16,7 +16,19 @@ import { RateAgreementMatchingService } from './rate-agreement-matching.service'
 import { shapeFinancialFields, shapeFinancialFieldsList } from './financial-field-shaping';
 import { CreateLoadDto } from '../dto/create-load.dto';
 import { UpdateLoadReferenceNumbersDto } from '../dto/update-load-reference-numbers.dto';
-import { BusinessRuleError, NotFoundError } from '../../../common/errors/app-error';
+import { AddChargeDto } from '../dto/add-charge.dto';
+import {
+  BusinessRuleError,
+  InvalidTransitionError,
+  NotFoundError,
+} from '../../../common/errors/app-error';
+
+export interface ChecklistItem {
+  item: string;
+  status: 'CLEAN' | 'WARNING';
+  detail: string;
+  remainingCarrierBalance?: string;
+}
 
 /**
  * Deliberately looser than LoadStopInputDto (which requires addressLine1
@@ -167,6 +179,39 @@ export class LoadService {
   }
 
   /**
+   * Phase 6 addition — DATABASE_DESIGN.md §14: "A LINEHAUL line item
+   * (side=CUSTOMER, amount=Load.customer_rate)... created automatically
+   * at booking... time." This side effect was explicitly deferred when
+   * Phase 3 was built, since `ChargeLineItem` didn't exist as a table yet
+   * (disclosed at the time, closed now that Phase 6 exists) — purely
+   * additive, does not alter any other booking behavior.
+   */
+  private async createOriginalCustomerLinehaulCharge(
+    tx: Prisma.TransactionClient,
+    organizationId: string,
+    load: Load,
+    actingUserId: string,
+  ): Promise<void> {
+    const linehaulType = await tx.chargeTypeDefinition.findFirst({
+      where: { code: 'LINEHAUL', OR: [{ organizationId }, { organizationId: null }] },
+    });
+    if (!linehaulType) return; // seed not applied — defensive, never expected in a real deploy
+
+    await tx.chargeLineItem.create({
+      data: {
+        organizationId,
+        loadId: load.id,
+        side: 'CUSTOMER',
+        chargeTypeId: linehaulType.id,
+        unitRate: load.customerRate,
+        amount: load.customerRate,
+        source: 'ORIGINAL',
+        createdByUserId: actingUserId,
+      },
+    });
+  }
+
+  /**
    * Shared Load-row creation for both booking paths (§4.7 Quote
    * conversion, §4.8 Direct-to-Booked) — numbering (§4.9,
    * "only at the moment a transaction becomes BOOKED"), the Load row +
@@ -223,6 +268,8 @@ export class LoadService {
       },
       include: { stops: true },
     });
+
+    await this.createOriginalCustomerLinehaulCharge(tx, organizationId, load, params.actingUserId);
 
     await this.audit.record(tx, {
       organizationId,
@@ -337,5 +384,202 @@ export class LoadService {
 
       return updated;
     });
+  }
+
+  /**
+   * Workflow 8 §8.1 — Ready-to-Invoice queue: Loads at DELIVERED or later
+   * (the only two later Load.status values are DELIVERED/CLOSED),
+   * `invoiced = false`, optionally filtered to one customer (required
+   * before a consolidated selection can begin, per the locked UI spec).
+   * "Key details" per §8.1 step 2: load number, customer, charges total,
+   * pod_status.
+   */
+  async getReadyToInvoice(
+    organizationId: string,
+    customerId: string | undefined,
+    actingUserId: string,
+    actingRoles: MembershipRoleName[],
+  ) {
+    const loads = await this.prisma.withTenantTransaction(organizationId, async (tx) => {
+      const found = await tx.load.findMany({
+        where: {
+          organizationId,
+          status: { in: ['DELIVERED', 'CLOSED'] },
+          invoiced: false,
+          ...(customerId ? { customerId } : {}),
+        },
+        include: { customer: true, chargeLineItems: true },
+        orderBy: { createdAt: 'desc' },
+      });
+
+      return found.map((load) => ({
+        ...load,
+        customerChargesTotal: load.chargeLineItems
+          .filter((c) => c.side === 'CUSTOMER')
+          .reduce((sum, c) => sum + Number(c.amount), 0)
+          .toFixed(2),
+      }));
+    });
+    return shapeFinancialFieldsList(loads, actingRoles, actingUserId);
+  }
+
+  /**
+   * Decision Log D9, DATABASE_DESIGN.md §14 — *using* an existing charge
+   * type to add a charge to a Load "at any time after booking," no
+   * approval step, fully audited. Always `source = ADJUSTMENT` — the two
+   * `source = ORIGINAL` linehaul rows are system-created only (booking
+   * and carrier-assignment side effects, above). No Load.status gate:
+   * D9's own text places no restriction beyond the Load already existing.
+   */
+  async addCharge(organizationId: string, loadId: string, dto: AddChargeDto, actingUserId: string) {
+    return this.prisma.withTenantTransaction(organizationId, async (tx) => {
+      const load = await tx.load.findFirst({ where: { id: loadId, organizationId } });
+      if (!load) throw new NotFoundError('Load not found.');
+
+      const chargeType = await tx.chargeTypeDefinition.findFirst({
+        where: { id: dto.chargeTypeId, OR: [{ organizationId }, { organizationId: null }] },
+      });
+      if (!chargeType) throw new NotFoundError('Charge type not found.');
+
+      const quantity = dto.quantity ?? '1';
+      const amount = (Number(quantity) * Number(dto.unitRate)).toFixed(2);
+
+      const chargeLineItem = await tx.chargeLineItem.create({
+        data: {
+          organizationId,
+          loadId,
+          side: dto.side,
+          chargeTypeId: dto.chargeTypeId,
+          description: dto.description,
+          quantity,
+          unitRate: dto.unitRate,
+          amount,
+          source: 'ADJUSTMENT',
+          notes: dto.notes,
+          createdByUserId: actingUserId,
+        },
+      });
+
+      await this.audit.record(tx, {
+        organizationId,
+        action: 'Charge Line Item Added',
+        entityType: 'Load',
+        entityId: loadId,
+        newValue: {
+          chargeTypeCode: chargeType.code,
+          side: dto.side,
+          amount,
+        },
+        actorUserId: actingUserId,
+      });
+
+      return chargeLineItem;
+    });
+  }
+
+  /**
+   * Workflow 10 — the non-blocking 4-item Closing Readiness Checklist
+   * (§10.1-§10.5) plus the Close action itself (§10.7). `Load.status !==
+   * CLOSED` is the only precondition (§10.9's exact resolution, confirmed
+   * again in TECHNICAL_ARCHITECTURE.md §5.2 — no DELIVERED requirement).
+   * Never blocks on an incomplete checklist — the checklist is purely
+   * informational, computed and returned alongside the result.
+   */
+  async closeLoad(
+    organizationId: string,
+    loadId: string,
+    actingUserId: string,
+  ): Promise<{ load: Load; checklistSnapshot: ChecklistItem[] }> {
+    return this.prisma.withTenantTransaction(organizationId, async (tx) => {
+      const load = await tx.load.findFirst({ where: { id: loadId, organizationId } });
+      if (!load) throw new NotFoundError('Load not found.');
+      if (load.status === 'CLOSED') {
+        throw new InvalidTransitionError('This Load is already Closed.');
+      }
+
+      const checklistSnapshot = await this.evaluateClosingChecklist(tx, organizationId, load);
+
+      const updated = await tx.load.update({
+        where: { id: loadId },
+        data: { status: 'CLOSED', closedAt: new Date(), closedByUserId: actingUserId },
+      });
+
+      await this.audit.record(tx, {
+        organizationId,
+        action: 'Load Closed',
+        entityType: 'Load',
+        entityId: loadId,
+        newValue: { checklistSnapshot },
+        actorUserId: actingUserId,
+      });
+
+      return { load: updated, checklistSnapshot };
+    });
+  }
+
+  /** Workflow 10 §10.1-§10.5 — read-only evaluation, folded into closeLoad's response. */
+  private async evaluateClosingChecklist(
+    tx: Prisma.TransactionClient,
+    organizationId: string,
+    load: Load,
+  ): Promise<ChecklistItem[]> {
+    const rateConfirmation = await tx.document.findFirst({
+      where: {
+        organizationId,
+        entityType: 'LOAD',
+        entityId: load.id,
+        isCurrentVersion: true,
+        documentType: { code: 'RATE_CONFIRMATION' },
+      },
+    });
+
+    const podClean = load.podStatus === 'COMPLETE';
+
+    const invoiceLoad = await tx.invoiceLoad.findFirst({
+      where: { organizationId, loadId: load.id },
+    });
+
+    const carrierPayments = await tx.carrierPayment.findMany({
+      where: { organizationId, loadId: load.id },
+    });
+    const totalPaid = carrierPayments
+      .filter((p) => p.status === 'PAID')
+      .reduce((sum, p) => sum + Number(p.amount), 0);
+    const remainingCarrierBalance = load.carrierRate
+      ? (Number(load.carrierRate) - totalPaid).toFixed(2)
+      : undefined;
+
+    return [
+      {
+        item: 'Rate Confirmation',
+        status: rateConfirmation ? 'CLEAN' : 'WARNING',
+        detail: rateConfirmation ? 'On file' : 'Missing',
+      },
+      {
+        item: 'POD',
+        status: podClean ? 'CLEAN' : 'WARNING',
+        detail:
+          load.podStatus === 'COMPLETE'
+            ? 'Complete'
+            : load.podStatus === 'PARTIAL'
+              ? 'Partial'
+              : 'Not Received',
+      },
+      {
+        item: 'Customer Invoice',
+        status: invoiceLoad ? 'CLEAN' : 'WARNING',
+        detail: invoiceLoad ? 'Exists' : 'Missing',
+      },
+      {
+        item: 'Carrier Pay',
+        status: carrierPayments.length > 0 ? 'CLEAN' : 'WARNING',
+        detail: carrierPayments.length > 0 ? 'Payment recorded' : 'No payment recorded',
+        ...(carrierPayments.length > 0 &&
+        remainingCarrierBalance &&
+        Number(remainingCarrierBalance) > 0
+          ? { remainingCarrierBalance }
+          : {}),
+      },
+    ];
   }
 }

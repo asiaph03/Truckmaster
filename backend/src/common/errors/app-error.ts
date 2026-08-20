@@ -73,6 +73,17 @@ export class ConflictError extends AppError {
   readonly code = 'CONFLICT';
 }
 
+/**
+ * 409 — Workflow 8 §8.2's non-blocking POD warning, re-submittable with
+ * `podWarningAcknowledged: true` (TECHNICAL_ARCHITECTURE.md §5.2's
+ * `POST /invoices` spec). Distinct code so the client can render the
+ * specific "Proceed Anyway" dialog rather than a generic conflict.
+ */
+export class PodIncompleteWarningError extends AppError {
+  readonly httpStatus = 409;
+  readonly code = 'POD_INCOMPLETE_WARNING';
+}
+
 /** 422 — well-formed and currently-legal, but violates a business rule (missing required reason, etc.). */
 export class BusinessRuleError extends AppError {
   readonly httpStatus = 422;
