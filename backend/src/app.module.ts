@@ -19,6 +19,7 @@ import { BillingModule } from './modules/billing/billing.module';
 import { CarrierPayModule } from './modules/carrier-pay/carrier-pay.module';
 import { NotificationModule } from './modules/notification/notification.module';
 import { BackgroundJobsModule } from './modules/background-jobs/background-jobs.module';
+import { ReportingModule } from './modules/reporting/reporting.module';
 
 /**
  * Root module.
@@ -53,7 +54,11 @@ import { BackgroundJobsModule } from './modules/background-jobs/background-jobs.
  * sweeps from TECHNICAL_ARCHITECTURE.md §10, each calling directly into
  * NotificationService/CarrierEligibilityService — Decision 6, no event bus).
  *
- * Remaining feature modules (Reporting — §1.2) are deferred beyond Phase 7.
+ * Phase 8 (Reporting Foundation) adds: ReportingModule — Global Search
+ * (§5.4), AR/AP Aging (§21, Decision D14), and a role-aware Dashboard
+ * (PRD §9's approved minimal KPI set). The Standard Report Library, Load
+ * Search/export, and Saved Report Views remain deferred to a separately
+ * planned future phase.
  */
 @Module({
   imports: [
@@ -75,6 +80,7 @@ import { BackgroundJobsModule } from './modules/background-jobs/background-jobs.
     CarrierPayModule,
     NotificationModule,
     BackgroundJobsModule,
+    ReportingModule,
   ],
   providers: [
     {

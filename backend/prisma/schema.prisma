@@ -1174,6 +1174,10 @@ model Load {
   @@index([organizationId, status])
   @@index([organizationId, customerId])
   @@index([organizationId, assignedDispatcherId])
+  /// Phase 8 (Reporting Foundation) — DATABASE_DESIGN.md §27 names this for
+  /// the Ready-to-Invoice queue; never added when that query was built in
+  /// Phase 6. Reused now by AP Aging's own Load scan.
+  @@index([organizationId, invoiced])
   @@map("load")
 }
 
@@ -1521,6 +1525,11 @@ model Invoice {
   @@unique([organizationId, invoiceNumber])
   @@index([organizationId, status])
   @@index([organizationId, customerId])
+  /// Phase 8 (Reporting Foundation) — DATABASE_DESIGN.md §27 names this
+  /// composite for "AR aging / Overdue computation" but it was never added
+  /// when Invoice was built in Phase 6 (Overdue is computed at read time,
+  /// so no code path needed it until now).
+  @@index([organizationId, status, dueDate])
   @@map("invoice")
 }
 
@@ -1684,6 +1693,10 @@ model CarrierPayment {
   @@index([organizationId, loadId])
   @@index([organizationId, carrierId])
   @@index([organizationId, status])
+  /// Phase 8 (Reporting Foundation) — a gap in DATABASE_DESIGN.md §27's own
+  /// index table: AP Aging (Decision Log D14) buckets by `submitted_at`,
+  /// but no index anticipated that column until now.
+  @@index([organizationId, status, submittedAt])
   @@map("carrier_payment")
 }
 
