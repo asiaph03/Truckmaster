@@ -17,6 +17,8 @@ import { DocumentModule } from './modules/document/document.module';
 import { QuoteLoadModule } from './modules/quote-load/quote-load.module';
 import { BillingModule } from './modules/billing/billing.module';
 import { CarrierPayModule } from './modules/carrier-pay/carrier-pay.module';
+import { NotificationModule } from './modules/notification/notification.module';
+import { BackgroundJobsModule } from './modules/background-jobs/background-jobs.module';
 
 /**
  * Root module.
@@ -46,8 +48,12 @@ import { CarrierPayModule } from './modules/carrier-pay/carrier-pay.module';
  * the locked Phase 6 module-boundary decision (TECHNICAL_ARCHITECTURE.md
  * §1.2's module-ownership table).
  *
- * Remaining feature modules (Notification, Reporting — §1.2) are deferred
- * beyond Phase 6.
+ * Phase 7 (Notifications & Background Jobs) adds: NotificationModule
+ * (in-app Notification bell) and BackgroundJobsModule (the five scheduled
+ * sweeps from TECHNICAL_ARCHITECTURE.md §10, each calling directly into
+ * NotificationService/CarrierEligibilityService — Decision 6, no event bus).
+ *
+ * Remaining feature modules (Reporting — §1.2) are deferred beyond Phase 7.
  */
 @Module({
   imports: [
@@ -67,6 +73,8 @@ import { CarrierPayModule } from './modules/carrier-pay/carrier-pay.module';
     QuoteLoadModule,
     BillingModule,
     CarrierPayModule,
+    NotificationModule,
+    BackgroundJobsModule,
   ],
   providers: [
     {

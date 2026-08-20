@@ -200,6 +200,7 @@ export class DocumentService {
           isCurrentVersion: true,
           scanStatus: 'PENDING',
           reviewStatus: documentType.requiresReview ? 'PENDING_REVIEW' : 'NOT_APPLICABLE',
+          expirationDate: dto.expirationDate ? new Date(dto.expirationDate) : undefined,
           uploadedByUserId: actingUserId,
         },
       });

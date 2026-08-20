@@ -134,6 +134,9 @@ model User {
   carrierPaymentsApproved CarrierPayment[] @relation("CarrierPaymentApprovedBy")
   carrierPaymentsRejected CarrierPayment[] @relation("CarrierPaymentLastRejectedBy")
 
+  // Phase 7 reverse relation
+  notificationsReceived Notification[] @relation("NotificationRecipient")
+
   @@map("user")
 }
 
@@ -180,6 +183,10 @@ model Organization {
   // as Customer/Carrier), so they get a full Prisma relation here too.
   quotes Quote[]
   loads  Load[]
+
+  // Phase 7 — Notification is a direct child of Organization, same tier as
+  // Customer/Carrier/Quote/Load/Invoice.
+  notifications Notification[]
 
   @@map("organization")
 }
@@ -1678,4 +1685,50 @@ model CarrierPayment {
   @@index([organizationId, carrierId])
   @@index([organizationId, status])
   @@map("carrier_payment")
+}
+
+// ---------------------------------------------------------------------
+// Phase 7 (Notifications & Background Jobs) — DATABASE_DESIGN.md §25.
+// The `DomainEvent` table above (Phase 1) was built specifically so this
+// phase only needs to add a subscriber, per its own comment. `Notification`
+// is in-app only in V1 (PRD §12) — no delivery-channel table needed yet.
+// ---------------------------------------------------------------------
+
+/// TECHNICAL_ARCHITECTURE.md §9.6 — the small, explicit allow-list of
+/// concrete V1 notification types. Native enum (not a lookup table) per
+/// §4.4's "closed, locked vocabulary" pattern — exactly 4 types exist,
+/// none org-extensible.
+enum NotificationType {
+  COMPLIANCE_EXPIRING_30_DAY
+  COMPLIANCE_EXPIRING_15_DAY
+  COMPLIANCE_EXPIRING_7_DAY
+  CHECK_CALL_OVERDUE
+}
+
+/// DATABASE_DESIGN.md §25. `relatedEntityId` has no native FK (mirrors
+/// Document.entityId's polymorphic pattern, §7) since it points at
+/// different tables (Carrier for compliance notifications, Load for
+/// check-call ones) depending on `type`.
+model Notification {
+  id String @id @default(uuid()) @db.Uuid
+
+  organizationId String       @map("organization_id") @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  recipientUserId String @map("recipient_user_id") @db.Uuid
+  recipient       User   @relation("NotificationRecipient", fields: [recipientUserId], references: [id])
+
+  type NotificationType
+
+  relatedEntityType String? @map("related_entity_type")
+  relatedEntityId   String? @map("related_entity_id") @db.Uuid
+
+  message String
+
+  read Boolean @default(false)
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([organizationId, recipientUserId, read])
+  @@map("notification")
 }

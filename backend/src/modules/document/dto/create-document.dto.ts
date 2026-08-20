@@ -1,4 +1,13 @@
-import { IsIn, IsInt, IsOptional, IsString, IsUUID, Min, MinLength } from 'class-validator';
+import {
+  IsDateString,
+  IsIn,
+  IsInt,
+  IsOptional,
+  IsString,
+  IsUUID,
+  Min,
+  MinLength,
+} from 'class-validator';
 import { DocumentEntityType } from '@prisma/client';
 
 /** Restricted to PDF/JPG/JPEG/PNG in V1 (DATABASE_DESIGN.md §7). */
@@ -47,4 +56,16 @@ export class CreateDocumentDto {
   @IsOptional()
   @IsUUID()
   existingDocumentFamilyId?: string;
+
+  /**
+   * Phase 7 addition — Workflow 3 §3.9's compliance expiration sweep needs
+   * this on document types that carry one (e.g. MC Authority, Carrier
+   * Agreement). Optional and meaningless for document types with no
+   * applicable expiration date — the sweep only acts on document types it
+   * already knows carry one, per the same hardcoded compliance-code list
+   * `CarrierEligibilityService` already uses.
+   */
+  @IsOptional()
+  @IsDateString()
+  expirationDate?: string;
 }

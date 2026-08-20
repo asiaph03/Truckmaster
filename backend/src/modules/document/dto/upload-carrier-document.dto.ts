@@ -1,4 +1,13 @@
-import { IsIn, IsInt, IsOptional, IsString, IsUUID, Min, MinLength } from 'class-validator';
+import {
+  IsDateString,
+  IsIn,
+  IsInt,
+  IsOptional,
+  IsString,
+  IsUUID,
+  Min,
+  MinLength,
+} from 'class-validator';
 import { ALLOWED_MIME_TYPES } from './create-document.dto';
 
 /**
@@ -31,4 +40,9 @@ export class UploadCarrierDocumentDto {
   @IsOptional()
   @IsUUID()
   existingDocumentFamilyId?: string;
+
+  /** Phase 7 addition — see CreateDocumentDto's field comment. */
+  @IsOptional()
+  @IsDateString()
+  expirationDate?: string;
 }
