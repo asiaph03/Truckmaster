@@ -11,6 +11,8 @@ export interface AppliedSession {
   userId: string;
   organizationId?: string;
   roles?: MembershipRoleName[];
+  name?: string;
+  email?: string;
 }
 
 interface SessionState {
@@ -18,8 +20,24 @@ interface SessionState {
   userId?: string;
   organizationId?: string;
   roles: MembershipRoleName[];
+  name?: string;
+  email?: string;
   /** Populated only while status === 'organization-selection-required'. */
   pendingOrganizations: OrganizationSummary[];
+  /**
+   * The org switcher's dropdown list. There is no `GET` endpoint to
+   * re-fetch "my organizations" once already authenticated — the only
+   * place the backend ever returns this list is `POST /auth/login`'s
+   * multi-membership branch. Carried forward from there into the
+   * authenticated session so the switcher can use it; a genuinely
+   * single-org user never gets a non-empty list (correct — §5.3.3 says
+   * the switcher renders only for >1 active membership). A hard page
+   * reload loses this list (`GET /auth/me` doesn't return it either) —
+   * the switcher degrades to hidden in that case rather than erroring.
+   * Documented as a known gap, not silently worked around with a new
+   * backend endpoint (out of the approved Phase 2 scope).
+   */
+  availableOrganizations: OrganizationSummary[];
 
   /**
    * The single code path from "no session" / "wrong org" to
@@ -33,18 +51,24 @@ interface SessionState {
   bootstrap: () => Promise<void>;
 }
 
-export const useSessionStore = create<SessionState>((set) => ({
+export const useSessionStore = create<SessionState>((set, get) => ({
   status: 'loading',
   roles: [],
   pendingOrganizations: [],
+  availableOrganizations: [],
 
   applySession: (session) => {
+    const carriedForward = get().pendingOrganizations;
     set({
       status: 'authenticated',
       userId: session.userId,
       organizationId: session.organizationId,
       roles: session.roles ?? [],
+      name: session.name ?? get().name,
+      email: session.email ?? get().email,
       pendingOrganizations: [],
+      availableOrganizations:
+        carriedForward.length > 0 ? carriedForward : get().availableOrganizations,
     });
   },
 
@@ -58,7 +82,10 @@ export const useSessionStore = create<SessionState>((set) => ({
       userId: undefined,
       organizationId: undefined,
       roles: [],
+      name: undefined,
+      email: undefined,
       pendingOrganizations: [],
+      availableOrganizations: [],
     });
   },
 
@@ -78,6 +105,8 @@ export const useSessionStore = create<SessionState>((set) => ({
         userId: me.id,
         organizationId: me.organizationId,
         roles: me.roles ?? [],
+        name: me.name,
+        email: me.email,
       });
     } catch (error) {
       if (isAuthenticationError(error)) {

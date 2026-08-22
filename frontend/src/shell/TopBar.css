@@ -1,0 +1,28 @@
+.top-bar {
+  height: var(--shell-topbar-height);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 var(--space-4);
+  background: var(--neutral-0);
+  border-bottom: 1px solid var(--neutral-200);
+  flex-shrink: 0;
+}
+
+.top-bar-left {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.top-bar-logo {
+  font-weight: 600;
+  color: var(--brand-600);
+  white-space: nowrap;
+}
+
+.top-bar-right {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}

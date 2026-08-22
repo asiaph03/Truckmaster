@@ -1,0 +1,19 @@
+.app-shell {
+  display: flex;
+  min-height: 100vh;
+  min-width: var(--shell-min-viewport-width);
+  background: var(--neutral-50);
+}
+
+.app-shell-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.app-shell-content {
+  flex: 1;
+  padding: var(--space-6);
+  overflow-x: auto;
+}

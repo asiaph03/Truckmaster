@@ -16,11 +16,18 @@ export function SelectOrganizationPage() {
     setPendingId(organizationId);
     setError(null);
     try {
-      const session = await authApi.selectOrganization({ organizationId });
+      await authApi.selectOrganization({ organizationId });
+      // Same reasoning as LoginPage's auto-select branch: GET /auth/me is
+      // the one source of truth for the resulting session, since neither
+      // this endpoint's response nor the store (nothing has populated
+      // userId yet on this multi-org path) carries the full profile.
+      const me = await authApi.me();
       applySession({
-        userId: useSessionStore.getState().userId ?? '',
-        organizationId: session.organizationId,
-        roles: session.roles,
+        userId: me.id,
+        organizationId: me.organizationId,
+        roles: me.roles,
+        name: me.name,
+        email: me.email,
       });
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Something went wrong.');

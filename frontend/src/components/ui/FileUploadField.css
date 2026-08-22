@@ -1,0 +1,24 @@
+.file-upload-field {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.file-upload-input-hidden {
+  display: none;
+}
+
+.file-upload-spin {
+  animation: file-upload-spin 0.8s linear infinite;
+}
+
+@keyframes file-upload-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.file-upload-error {
+  color: var(--danger-600);
+  font-size: var(--text-small-size);
+}

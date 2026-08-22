@@ -1,15 +1,25 @@
 import { useEffect } from 'react';
+import { Navigate, Route, Routes } from 'react-router-dom';
 import { useSessionStore } from './auth/session-store';
 import { LoginPage } from './routes/LoginPage';
 import { SelectOrganizationPage } from './routes/SelectOrganizationPage';
-import { AppShellPlaceholder } from './routes/AppShellPlaceholder';
+import { ComingSoonPage } from './routes/ComingSoonPage';
+import { CustomerListPage } from './routes/customers/CustomerListPage';
+import { CustomerCreatePage } from './routes/customers/CustomerCreatePage';
+import { CustomerDetailPage } from './routes/customers/CustomerDetailPage';
+import { CarrierListPage } from './routes/carriers/CarrierListPage';
+import { CarrierCreatePage } from './routes/carriers/CarrierCreatePage';
+import { CarrierDetailPage } from './routes/carriers/CarrierDetailPage';
+import { AppShell } from './shell/AppShell';
 import { ToastViewport } from './components/ui';
 
 /**
  * §8/§9 of the approved Phase 1 plan: GET /auth/me on boot is the sole
  * point session state is "trusted"; every screen after that reads the
- * store. No router is wired to real screens yet (Phase 2+) — the four
- * states below are the entire Phase 1 "routing."
+ * store. Phase 2 adds the real router, mapped 1:1 to the routes it
+ * covers (Customers, Carriers) — everything else is a ComingSoonPage
+ * placeholder per the approved scope (no Loads/Billing/Dashboard/
+ * Reports/Settings screens yet).
  */
 function App() {
   const status = useSessionStore((s) => s.status);
@@ -19,14 +29,42 @@ function App() {
     bootstrap();
   }, [bootstrap]);
 
+  if (status === 'loading') return <BootLoading />;
+  if (status === 'unauthenticated') {
+    return (
+      <>
+        <LoginPage />
+        <ToastViewport />
+      </>
+    );
+  }
+  if (status === 'organization-selection-required') {
+    return (
+      <>
+        <SelectOrganizationPage />
+        <ToastViewport />
+      </>
+    );
+  }
+
   return (
-    <>
-      {status === 'loading' ? <BootLoading /> : null}
-      {status === 'unauthenticated' ? <LoginPage /> : null}
-      {status === 'organization-selection-required' ? <SelectOrganizationPage /> : null}
-      {status === 'authenticated' ? <AppShellPlaceholder /> : null}
-      <ToastViewport />
-    </>
+    <Routes>
+      <Route element={<AppShell />}>
+        <Route path="/" element={<ComingSoonPage title="Dashboard" />} />
+        <Route path="/loads" element={<ComingSoonPage title="Loads" />} />
+        <Route path="/customers" element={<CustomerListPage />} />
+        <Route path="/customers/new" element={<CustomerCreatePage />} />
+        <Route path="/customers/:id" element={<CustomerDetailPage />} />
+        <Route path="/carriers" element={<CarrierListPage />} />
+        <Route path="/carriers/new" element={<CarrierCreatePage />} />
+        <Route path="/carriers/:id" element={<CarrierDetailPage />} />
+        <Route path="/billing" element={<ComingSoonPage title="Billing" />} />
+        <Route path="/documents" element={<ComingSoonPage title="Document Center" />} />
+        <Route path="/reports" element={<ComingSoonPage title="Reports" />} />
+        <Route path="/settings" element={<ComingSoonPage title="Settings" />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Route>
+    </Routes>
   );
 }
 

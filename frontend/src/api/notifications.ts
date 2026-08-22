@@ -1,4 +1,20 @@
-import { notImplemented } from './notImplemented';
+import { apiRequest } from './client';
+
+export type NotificationType =
+  | 'COMPLIANCE_EXPIRING_30_DAY'
+  | 'COMPLIANCE_EXPIRING_15_DAY'
+  | 'COMPLIANCE_EXPIRING_7_DAY'
+  | 'CHECK_CALL_OVERDUE';
+
+export interface AppNotification {
+  id: string;
+  type: NotificationType;
+  message: string;
+  isRead: boolean;
+  relatedEntityType?: string;
+  relatedEntityId?: string;
+  createdAt: string;
+}
 
 export interface NotificationListFilters {
   unreadOnly?: boolean;
@@ -6,10 +22,13 @@ export interface NotificationListFilters {
   pageSize?: number;
 }
 
-/** Typed surface only — real implementations land alongside the app shell (Phase 2). */
 export const notificationsApi = {
-  list: (_filters?: NotificationListFilters): Promise<unknown[]> =>
-    notImplemented('notificationsApi.list'),
-  markRead: (_id: string): Promise<unknown> => notImplemented('notificationsApi.markRead'),
-  markAllRead: (): Promise<unknown> => notImplemented('notificationsApi.markAllRead'),
+  list: (filters?: NotificationListFilters) =>
+    apiRequest<AppNotification[]>('/notifications', { query: filters }),
+
+  markRead: (id: string) =>
+    apiRequest<{ success: boolean }>(`/notifications/${id}/read`, { method: 'POST' }),
+
+  markAllRead: () =>
+    apiRequest<{ success: boolean }>('/notifications/mark-all-read', { method: 'POST' }),
 };

@@ -1,0 +1,37 @@
+.eligibility-badge-wrapper {
+  position: relative;
+  display: inline-flex;
+}
+
+.eligibility-badge-trigger {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+
+.eligibility-badge-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 30;
+  background: var(--neutral-0);
+  border: 1px solid var(--neutral-200);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  padding: var(--space-3);
+  min-width: 240px;
+  font-size: var(--text-small-size);
+}
+
+.eligibility-badge-popover-title {
+  margin: 0 0 var(--space-1);
+  font-weight: 600;
+  color: var(--neutral-900);
+}
+
+.eligibility-badge-popover ul {
+  margin: 0;
+  padding-left: var(--space-4);
+  color: var(--neutral-700);
+}

@@ -62,3 +62,64 @@ export type PodStatus = (typeof POD_STATUSES)[number];
 
 export const RISK_STATUSES = ['NORMAL', 'AT_RISK', 'DELAYED'] as const;
 export type RiskStatus = (typeof RISK_STATUSES)[number];
+
+/**
+ * Frontend Phase 2 additions — form/picker enums, mirrored verbatim from
+ * backend/prisma/schema.prisma the same way the status enums above are.
+ * Not status/badge values, but the same "single re-declared source of
+ * truth" reasoning applies: these back Select options on the Customer/
+ * Carrier creation and detail forms.
+ */
+
+export const PAYMENT_TERMS = ['DUE_ON_RECEIPT', 'NET_15', 'NET_30', 'NET_45', 'NET_60'] as const;
+export type PaymentTerms = (typeof PAYMENT_TERMS)[number];
+
+export const CUSTOMER_CONTACT_ROLES = [
+  'BOOKING',
+  'OPERATIONS',
+  'BILLING',
+  'MANAGEMENT',
+  'OTHER',
+] as const;
+export type CustomerContactRole = (typeof CUSTOMER_CONTACT_ROLES)[number];
+
+export const CUSTOMER_LOCATION_TYPES = ['PICKUP', 'DELIVERY', 'OTHER'] as const;
+export type CustomerLocationType = (typeof CUSTOMER_LOCATION_TYPES)[number];
+
+export const CARRIER_CONTACT_ROLES = [
+  'DISPATCH',
+  'SAFETY_COMPLIANCE',
+  'BILLING',
+  'FACTORING',
+  'MANAGEMENT',
+  'OTHER',
+] as const;
+export type CarrierContactRole = (typeof CARRIER_CONTACT_ROLES)[number];
+
+export const EQUIPMENT_TYPES = ['DRY_VAN', 'REEFER', 'FLATBED'] as const;
+export type EquipmentType = (typeof EQUIPMENT_TYPES)[number];
+
+export const INSURANCE_COVERAGE_TYPES = ['AUTO_LIABILITY', 'CARGO'] as const;
+export type InsuranceCoverageType = (typeof INSURANCE_COVERAGE_TYPES)[number];
+
+export const CARRIER_SERVICE_AREA_TYPES = ['LANE', 'REGION'] as const;
+export type CarrierServiceAreaType = (typeof CARRIER_SERVICE_AREA_TYPES)[number];
+
+export const DOCUMENT_TYPE_CATEGORIES = ['LOAD', 'CARRIER_COMPLIANCE'] as const;
+export type DocumentTypeCategory = (typeof DOCUMENT_TYPE_CATEGORIES)[number];
+
+/**
+ * FMCSA verification `resultStatus` — the backend field is free text
+ * (only `"authorized"`, case-insensitive, is treated as eligibility-
+ * passing), but the frontend renders a fixed picker for data quality
+ * per the approved Phase 2 plan §7 decision 5. `OTHER` pairs with a
+ * free-text field in the form; its value is sent as-is, not the literal
+ * string `"OTHER"`.
+ */
+export const FMCSA_RESULT_STATUS_OPTIONS = [
+  'Authorized',
+  'Conditional',
+  'Not Authorized',
+  'OTHER',
+] as const;
+export type FmcsaResultStatusOption = (typeof FMCSA_RESULT_STATUS_OPTIONS)[number];

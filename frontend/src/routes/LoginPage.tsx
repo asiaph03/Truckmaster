@@ -37,7 +37,13 @@ export function LoginPage() {
       // is the source of truth for the resulting session (§8/§9 of the
       // approved plan: one bootstrap path, not a second ad hoc one).
       const me = await authApi.me();
-      applySession({ userId: me.id, organizationId: me.organizationId, roles: me.roles });
+      applySession({
+        userId: me.id,
+        organizationId: me.organizationId,
+        roles: me.roles,
+        name: me.name,
+        email: me.email,
+      });
     } catch (error) {
       if (error instanceof ApiError) {
         setServerError(error.message);

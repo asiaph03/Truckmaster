@@ -18,13 +18,18 @@ export function setUnauthorizedHandler(handler: UnauthorizedHandler): void {
 export interface RequestOptions {
   method?: 'GET' | 'POST' | 'PATCH' | 'DELETE';
   body?: unknown;
-  query?: Record<string, string | number | boolean | undefined>;
+  // Deliberately `object`, not `Record<string, ...>` — a named filter
+  // interface (e.g. `CustomerListFilters`) has no index signature, and
+  // TS won't structurally match it against a `Record<string, T>`
+  // parameter type. Values are stringified defensively below regardless
+  // of what the caller's interface declares.
+  query?: object;
 }
 
 function buildUrl(path: string, query?: RequestOptions['query']): string {
   const url = new URL(`${API_BASE}${path}`, window.location.origin);
   if (query) {
-    for (const [key, value] of Object.entries(query)) {
+    for (const [key, value] of Object.entries(query as Record<string, unknown>)) {
       if (value !== undefined) url.searchParams.set(key, String(value));
     }
   }

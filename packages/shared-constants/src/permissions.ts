@@ -21,13 +21,34 @@ export type PermissionKey =
   | 'manageCarriers'
   | 'sourceAndDispatchLoads'
   | 'createQuoteOrLoad'
-  | 'viewArApAging';
+  | 'viewArApAging'
+  // Frontend Phase 2 additions — `manageCarriers`'s role set (Admin/Ops
+  // Manager/Dispatcher) does NOT cover carrier insurance, FMCSA
+  // verification, or activation; those three are their own distinct
+  // @Roles() gates on the backend (carrier.controller.ts), so they need
+  // their own keys rather than being folded into manageCarriers.
+  | 'addCarrierInsurance'
+  | 'recordFmcsaVerification'
+  | 'activateCarrier'
+  // Customer Detail's Rate Agreements/Invoices tabs are hidden entirely
+  // for Dispatcher (UI_UX_DESIGN.md §5.4.5) — a viewing distinction
+  // independent of `manageCustomers` (create/edit), since even a
+  // Dispatcher-only membership can view the other 4 tabs.
+  | 'viewCustomerFinancialTabs';
 
 export const ROLE_PERMISSIONS: Record<MembershipRoleName, PermissionKey[]> = {
   ADMIN: [
     'viewLoadFinancials',
     'manageMemberships',
-    'reviewComplianceDocuments',
+    // Deliberately NOT 'reviewComplianceDocuments' — the backend gates
+    // POST /documents/:id/review to @Roles('COMPLIANCE_REVIEWER')
+    // exclusively (a segregation-of-duties control, Workflow 3 §3.4),
+    // with no Admin override. Same reasoning for 'activateCarrier' and
+    // 'recordFmcsaVerification' below, neither of which Admin has
+    // either. This was a pre-existing gap in the matrix (present since
+    // Phase 1, when nothing yet exercised these 3 keys) — caught during
+    // Phase 2 manual verification against the real backend, not
+    // something newly introduced.
     'approveOrRejectCarrierPayment',
     'createOrSubmitCarrierPayment',
     'sendOrVoidInvoice',
@@ -37,6 +58,8 @@ export const ROLE_PERMISSIONS: Record<MembershipRoleName, PermissionKey[]> = {
     'sourceAndDispatchLoads',
     'createQuoteOrLoad',
     'viewArApAging',
+    'addCarrierInsurance',
+    'viewCustomerFinancialTabs',
   ],
   OPERATIONS_MANAGER: [
     'viewLoadFinancials',
@@ -46,6 +69,8 @@ export const ROLE_PERMISSIONS: Record<MembershipRoleName, PermissionKey[]> = {
     'sourceAndDispatchLoads',
     'createQuoteOrLoad',
     'viewArApAging',
+    'addCarrierInsurance',
+    'viewCustomerFinancialTabs',
     // No manageMemberships, approveOrRejectCarrierPayment, or
     // sendOrVoidInvoice/recordPaymentOrAdjustment — Ops Manager has full
     // *view* parity with Admin (UI_UX_DESIGN.md §5.1.7 item 1) but not
@@ -55,12 +80,14 @@ export const ROLE_PERMISSIONS: Record<MembershipRoleName, PermissionKey[]> = {
     'manageCarriers',
     'sourceAndDispatchLoads',
     'createQuoteOrLoad',
+    'addCarrierInsurance',
     // No viewLoadFinancials, no billing actions, no viewArApAging —
     // financials/Billing nav are hidden entirely for Dispatcher.
   ],
   SALES_BOOKING: [
     'manageCustomers',
     'createQuoteOrLoad',
+    'viewCustomerFinancialTabs',
     // viewLoadFinancials deliberately absent as a blanket grant — Sales
     // sees revenue only on "own deal" records (Account Owner, falling
     // back to creator), never margin/carrier cost regardless of
@@ -75,12 +102,17 @@ export const ROLE_PERMISSIONS: Record<MembershipRoleName, PermissionKey[]> = {
     'recordPaymentOrAdjustment',
     'manageCustomers',
     'viewArApAging',
+    'viewCustomerFinancialTabs',
     // No manageMemberships, no approveOrRejectCarrierPayment (Admin-only,
     // self-review-forbidden also applies), no sourceAndDispatchLoads
-    // (view-only on Loads ops actions), no manageCarriers (view-only).
+    // (view-only on Loads ops actions), no manageCarriers/
+    // addCarrierInsurance (view-only on Carriers entirely).
   ],
   COMPLIANCE_REVIEWER: [
     'reviewComplianceDocuments',
+    'addCarrierInsurance',
+    'recordFmcsaVerification',
+    'activateCarrier',
     // Additive role — layered on top of one of the 5 base roles above,
     // never granted alone.
   ],

@@ -555,6 +555,33 @@ describe('Core Master Data (e2e)', () => {
     });
   });
 
+  describe('Document Types — Frontend Phase 2 gap-fix (GET /document-types)', () => {
+    it('lists the system-default document types, unfiltered', async () => {
+      const res = await adminAgent.get(`${API}/document-types`).expect(200);
+
+      const ids = res.body.map((t: { id: string }) => t.id);
+      expect(ids).toEqual(
+        expect.arrayContaining([w9TypeId, coiTypeId, carrierAgreementTypeId, mcAuthorityTypeId]),
+      );
+    });
+
+    it('filters by category', async () => {
+      const res = await adminAgent
+        .get(`${API}/document-types`)
+        .query({ category: 'CARRIER_COMPLIANCE' })
+        .expect(200);
+
+      expect(res.body.length).toBeGreaterThan(0);
+      for (const type of res.body) {
+        expect(type.category).toBe('CARRIER_COMPLIANCE');
+      }
+    });
+
+    it('is readable by a Compliance Reviewer too — no @Roles() restriction, matching GET /documents', async () => {
+      await reviewerAgent.get(`${API}/document-types`).expect(200);
+    });
+  });
+
   describe('Cross-tenant isolation for Phase 2 tables', () => {
     it("one organization's Customers/Carriers are never visible to another, at the app layer and at the RLS layer", async () => {
       const orgB = await setUpOrganization('rls-cross-tenant');

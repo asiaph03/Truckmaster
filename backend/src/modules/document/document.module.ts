@@ -9,7 +9,9 @@ import { QuoteLoadModule } from '../quote-load/quote-load.module';
 import { DocumentController } from './controllers/document.controller';
 import { CarrierDocumentsController } from './controllers/carrier-documents.controller';
 import { PodDocumentsController } from './controllers/pod-documents.controller';
+import { DocumentTypeController } from './controllers/document-type.controller';
 import { DocumentService } from './services/document.service';
+import { DocumentTypeService } from './services/document-type.service';
 import { MalwareScanWorker } from './services/malware-scan.worker';
 import { MALWARE_SCAN_QUEUE, MALWARE_SCAN_QUEUE_NAME } from './services/malware-scan.constants';
 
@@ -24,9 +26,15 @@ const MALWARE_SCAN_QUEUE_CONNECTION = 'MALWARE_SCAN_QUEUE_CONNECTION';
 
 @Module({
   imports: [CarrierModule, QuoteLoadModule],
-  controllers: [DocumentController, CarrierDocumentsController, PodDocumentsController],
+  controllers: [
+    DocumentController,
+    CarrierDocumentsController,
+    PodDocumentsController,
+    DocumentTypeController,
+  ],
   providers: [
     DocumentService,
+    DocumentTypeService,
     MalwareScanWorker,
     { provide: MALWARE_SCANNER, useClass: StubMalwareScanner },
     {

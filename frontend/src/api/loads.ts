@@ -1,13 +1,46 @@
+import type { EquipmentType } from '@tms/shared-constants';
+import { apiRequest } from './client';
 import { notImplemented } from './notImplemented';
+
+export type LoadStatus =
+  | 'BOOKED'
+  | 'CARRIER_SOURCING'
+  | 'CARRIER_ASSIGNED'
+  | 'RATE_CONFIRMATION'
+  | 'DISPATCHED'
+  | 'PICKUP'
+  | 'IN_TRANSIT'
+  | 'DELIVERED'
+  | 'CLOSED';
+
+/**
+ * Scoped-down summary — only the fields the read-only Loads tabs on
+ * Customer/Carrier Detail need (approved plan §7 decision 4). Financial
+ * fields are `null` when the backend has redacted them for the acting
+ * role (`shapeFinancialFields`) — never render as $0.00, per the
+ * approved plan's financial-visibility rule.
+ */
+export interface LoadSummary {
+  id: string;
+  loadNumber: string;
+  status: LoadStatus;
+  equipmentType: EquipmentType;
+  customerRate: string | null;
+  carrierRate?: string | null;
+  createdAt: string;
+}
 
 export interface LoadListFilters {
   status?: string;
   customerId?: string;
+  carrierId?: string;
 }
 
-/** Typed surface only — real implementations land in Phase 3 (Load lifecycle screens). */
 export const loadsApi = {
-  list: (_filters?: LoadListFilters): Promise<unknown[]> => notImplemented('loadsApi.list'),
+  list: (filters?: LoadListFilters) => apiRequest<LoadSummary[]>('/loads', { query: filters }),
+
+  // Typed surface only — full Load detail + every mutating action lands
+  // in Phase 3 (Load lifecycle screens / Dispatch Board), not Phase 2.
   getById: (_id: string): Promise<unknown> => notImplemented('loadsApi.getById'),
   readyToInvoice: (_customerId?: string): Promise<unknown[]> =>
     notImplemented('loadsApi.readyToInvoice'),
@@ -40,5 +73,5 @@ export const loadsApi = {
   close: (_id: string): Promise<unknown> => notImplemented('loadsApi.close'),
   // NOTE: PATCH /loads/:id/stops/:seq (appointment reschedule) does not
   // exist on the backend yet — approved as a small Phase 3 addition
-  // alongside the Calendar view, not a Phase 1 concern.
+  // alongside the Calendar view, not a Phase 2 concern.
 };

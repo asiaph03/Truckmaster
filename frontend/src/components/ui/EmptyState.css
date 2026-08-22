@@ -1,0 +1,16 @@
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: var(--space-9) var(--space-4);
+  text-align: center;
+}
+
+.empty-state-message {
+  font-size: var(--text-body-medium-size);
+  font-weight: var(--text-body-medium-weight);
+  color: var(--neutral-500);
+  margin: 0;
+}

@@ -1,0 +1,18 @@
+.currency-input-shell {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.currency-input-prefix {
+  position: absolute;
+  left: var(--space-3);
+  color: var(--neutral-500);
+  font-size: var(--text-body-size);
+  pointer-events: none;
+}
+
+.currency-input {
+  padding-left: calc(var(--space-3) + 12px);
+  text-align: right;
+}

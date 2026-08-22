@@ -1,0 +1,70 @@
+.form-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin-bottom: var(--space-4);
+}
+
+.form-field-label {
+  font-size: var(--text-caption-size);
+  font-weight: var(--text-caption-weight);
+  color: var(--neutral-700);
+}
+
+.form-field-required {
+  color: var(--danger-600);
+  margin-left: 2px;
+}
+
+.form-field-helper {
+  font-size: var(--text-small-size);
+  color: var(--neutral-500);
+}
+
+.form-field-error {
+  font-size: var(--text-small-size);
+  color: var(--danger-600);
+}
+
+.field-input,
+.field-select,
+.field-textarea {
+  height: 36px;
+  border: 1px solid var(--neutral-300);
+  border-radius: var(--radius-sm);
+  padding: 0 var(--space-3);
+  font-size: var(--text-body-size);
+  font-family: var(--font-ui);
+  background: var(--neutral-0);
+  color: var(--neutral-900);
+  width: 100%;
+}
+
+.field-textarea {
+  height: auto;
+  min-height: 80px;
+  padding: var(--space-2) var(--space-3);
+  resize: vertical;
+}
+
+.field-input:focus,
+.field-select:focus,
+.field-textarea:focus {
+  outline: none;
+  border-color: var(--brand-600);
+  box-shadow: 0 0 0 2px var(--brand-100);
+}
+
+.field-input.has-error,
+.field-select.has-error,
+.field-textarea.has-error {
+  border-color: var(--danger-600);
+}
+
+.field-input:disabled,
+.field-select:disabled,
+.field-textarea:disabled {
+  background: var(--neutral-50);
+  color: var(--neutral-400);
+  cursor: not-allowed;
+}

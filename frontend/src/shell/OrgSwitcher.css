@@ -1,0 +1,52 @@
+.org-switcher {
+  position: relative;
+}
+
+.org-switcher-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  background: none;
+  border: none;
+  font-size: var(--text-body-medium-size);
+  color: var(--neutral-700);
+  cursor: pointer;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+}
+
+.org-switcher-trigger:hover {
+  background: var(--neutral-100);
+}
+
+.org-switcher-panel {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  min-width: 220px;
+  background: var(--neutral-0);
+  border: 1px solid var(--neutral-200);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  z-index: 40;
+}
+
+.org-switcher-option {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: var(--space-2) var(--space-3);
+  background: none;
+  border: none;
+  font-size: var(--text-body-size);
+  cursor: pointer;
+}
+
+.org-switcher-option:hover {
+  background: var(--brand-50);
+}
+
+.org-switcher-option-active {
+  color: var(--brand-700);
+  font-weight: 500;
+}
