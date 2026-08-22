@@ -237,6 +237,8 @@ describe('InvoiceService.send — Workflow 8 §8.6/§8.8', () => {
         status: 'DRAFT',
         customerId: CUSTOMER_ID,
         invoiceNumber: 'INV-000001',
+        total: '1800.00',
+        lineItems: [{ id: 'li-1', amount: '1800.00' }],
       },
     });
 
@@ -269,6 +271,48 @@ describe('InvoiceService.send — Workflow 8 §8.6/§8.8', () => {
         USER_ID,
       ),
     ).rejects.toThrow(InvalidTransitionError);
+  });
+
+  it('rejects sending an invoice with no line items (post-Phase-8 remediation, Priority 4)', async () => {
+    const { service } = buildService({
+      invoice: {
+        id: INVOICE_ID,
+        status: 'DRAFT',
+        customerId: CUSTOMER_ID,
+        total: '1800.00',
+        lineItems: [],
+      },
+    });
+
+    await expect(
+      service.send(
+        ORG_ID,
+        INVOICE_ID,
+        { recipientEmail: 'ap@customer.com', subject: 'x', message: 'y' },
+        USER_ID,
+      ),
+    ).rejects.toThrow(BusinessRuleError);
+  });
+
+  it('rejects sending an invoice with a zero total (post-Phase-8 remediation, Priority 4)', async () => {
+    const { service } = buildService({
+      invoice: {
+        id: INVOICE_ID,
+        status: 'DRAFT',
+        customerId: CUSTOMER_ID,
+        total: '0.00',
+        lineItems: [{ id: 'li-1', amount: '0.00' }],
+      },
+    });
+
+    await expect(
+      service.send(
+        ORG_ID,
+        INVOICE_ID,
+        { recipientEmail: 'ap@customer.com', subject: 'x', message: 'y' },
+        USER_ID,
+      ),
+    ).rejects.toThrow(BusinessRuleError);
   });
 });
 

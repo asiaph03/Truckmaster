@@ -612,6 +612,56 @@ describe('Financials (e2e)', () => {
 
       await accountingAgent.post(`${API}/invoices/${invoiceId}/void`).expect(409);
     });
+
+    it('rejects a zero or negative Payment amount (post-Phase-8 remediation, Priority 3)', async () => {
+      const { invoiceId } = await createSentInvoice('payment-zero-amount');
+
+      await accountingAgent
+        .post(`${API}/invoices/${invoiceId}/payments`)
+        .send({ amount: '0.00', paymentDate: '2026-08-01', method: 'ACH' })
+        .expect(400);
+      await accountingAgent
+        .post(`${API}/invoices/${invoiceId}/payments`)
+        .send({ amount: '-10.00', paymentDate: '2026-08-01', method: 'ACH' })
+        .expect(400);
+    });
+
+    it('rejects a zero or negative Adjustment amount (post-Phase-8 remediation, Priority 3)', async () => {
+      const { invoiceId } = await createSentInvoice('adjustment-zero-amount');
+
+      await accountingAgent
+        .post(`${API}/invoices/${invoiceId}/adjustments`)
+        .send({ type: 'CREDIT', amount: '0.00', reason: 'Should be rejected' })
+        .expect(400);
+      await accountingAgent
+        .post(`${API}/invoices/${invoiceId}/adjustments`)
+        .send({ type: 'CREDIT', amount: '-5.00', reason: 'Should be rejected' })
+        .expect(400);
+    });
+
+    it('rejects sending an invoice with no line items or a zero total (post-Phase-8 remediation, Priority 4)', async () => {
+      const { loadId, customerId } = await createBookedLoad('send-zero-total');
+      const carrierId = await createEligibleCarrier('send-zero-total');
+      await progressToDelivered(loadId, carrierId);
+      const invoiceRes = await accountingAgent
+        .post(`${API}/invoices`)
+        .send({ customerId, loadIds: [loadId], podWarningAcknowledged: true })
+        .expect(201);
+      const invoiceId: string = invoiceRes.body.id;
+
+      // Simulate the otherwise-unreachable "no line items / zero total"
+      // state directly, matching this suite's own established pattern for
+      // hard-to-reach states.
+      await prisma.withTenantTransaction(orgId, async (tx) => {
+        await tx.invoiceLineItem.deleteMany({ where: { invoiceId } });
+        await tx.invoice.update({ where: { id: invoiceId }, data: { total: '0.00' } });
+      });
+
+      await accountingAgent
+        .post(`${API}/invoices/${invoiceId}/send`)
+        .send({ recipientEmail: 'ap@customer.test', subject: 'Invoice', message: 'See attached.' })
+        .expect(422);
+    });
   });
 
   describe('Invoice permissions — UI_UX_DESIGN.md §5.4.7', () => {
@@ -787,6 +837,19 @@ describe('Financials (e2e)', () => {
     it('Dispatcher cannot view Carrier Payments (Billing nav hidden entirely from Dispatcher)', async () => {
       await dispatcherAgent.get(`${API}/carrier-payments`).expect(403);
     });
+
+    it('rejects creating a Carrier Payment with a zero or negative amount (post-Phase-8 remediation, Priority 3)', async () => {
+      const { loadId } = await createDeliveredLoadWithCarrier('cp-zero-amount');
+
+      await accountingAgent
+        .post(`${API}/loads/${loadId}/carrier-payments`)
+        .send({ paymentType: 'DEPOSIT', amount: '0.00' })
+        .expect(400);
+      await accountingAgent
+        .post(`${API}/loads/${loadId}/carrier-payments`)
+        .send({ paymentType: 'DEPOSIT', amount: '-100.00' })
+        .expect(400);
+    });
   });
 
   describe('Load Closing — Workflow 10', () => {
@@ -810,6 +873,38 @@ describe('Financials (e2e)', () => {
       await progressToDelivered(loadId, carrierId);
 
       await dispatcherAgent.post(`${API}/loads/${loadId}/close`).expect(403);
+    });
+  });
+
+  describe('Financial data exposure remediation — Priority 1 (post-Phase-8)', () => {
+    it('blocks Dispatcher and Sales/Booking from GET /loads/ready-to-invoice', async () => {
+      await dispatcherAgent.get(`${API}/loads/ready-to-invoice`).expect(403);
+      await salesAgent.get(`${API}/loads/ready-to-invoice`).expect(403);
+    });
+
+    it('allows Admin/Accounting/Operations Manager to view the ready-to-invoice queue with real numbers', async () => {
+      const carrierId = await createEligibleCarrier('p1-ready-to-invoice');
+      const { loadId } = await createBookedLoad('p1-ready-to-invoice', undefined, '2400.00');
+      await progressToDelivered(loadId, carrierId, '2000.00');
+
+      const res = await accountingAgent.get(`${API}/loads/ready-to-invoice`).expect(200);
+      const entry = res.body.find((l: { id: string }) => l.id === loadId);
+      expect(entry.customerChargesTotal).toBe('2400.00');
+      expect(entry.carrierRate).not.toBeNull();
+
+      await opsManagerAgent.get(`${API}/loads/ready-to-invoice`).expect(200);
+    });
+
+    it('redacts carrierRate for Dispatcher on GET /loads/:id, but not for full-visibility roles', async () => {
+      const carrierId = await createEligibleCarrier('p1-load-detail');
+      const { loadId } = await createBookedLoad('p1-load-detail');
+      await progressToDelivered(loadId, carrierId, '1500.00');
+
+      const dispatcherView = await dispatcherAgent.get(`${API}/loads/${loadId}`).expect(200);
+      expect(dispatcherView.body.carrierRate).toBeNull();
+
+      const adminView = await adminAgent.get(`${API}/loads/${loadId}`).expect(200);
+      expect(adminView.body.carrierRate).not.toBeNull();
     });
   });
 

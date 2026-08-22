@@ -1,14 +1,13 @@
 import { CarrierPaymentType } from '@prisma/client';
-import { IsEnum, IsOptional, IsString, Matches } from 'class-validator';
+import { IsEnum, IsOptional, IsString } from 'class-validator';
+import { IsPositiveDecimalString } from '../../../common/validation/positive-decimal.decorator';
 
-const DECIMAL_RE = /^\d+(\.\d{1,2})?$/;
-
-/** Workflow 9 §9.2 — method/reference/notes optional at Draft stage. */
+/** Workflow 9 §9.2 — method/reference/notes optional at Draft stage; amount must be > 0 (post-Phase-8 remediation, Priority 3). */
 export class CreateCarrierPaymentDto {
   @IsEnum(CarrierPaymentType)
   paymentType!: CarrierPaymentType;
 
-  @Matches(DECIMAL_RE, { message: 'amount must be a decimal string, e.g. "500.00"' })
+  @IsPositiveDecimalString()
   amount!: string;
 
   @IsOptional()

@@ -8,6 +8,7 @@ import { MembershipService } from './services/membership.service';
 import { AuthService } from './services/auth.service';
 import { TokenService } from './services/token.service';
 import { PasswordService } from './services/password.service';
+import { SessionRegistryService } from './services/session-registry.service';
 import { AuthController } from './controllers/auth.controller';
 import { OrganizationsController } from './controllers/organizations.controller';
 import { MembershipsController } from './controllers/memberships.controller';
@@ -32,6 +33,7 @@ import { PlatformSuperAdminGuard } from './guards/platform-super-admin.guard';
     AuthService,
     TokenService,
     PasswordService,
+    SessionRegistryService,
     PlatformSuperAdminGuard,
     { provide: EMAIL_SENDER, useClass: ConsoleEmailSender },
   ],

@@ -7,6 +7,7 @@ import helmet from 'helmet';
 import type Redis from 'ioredis';
 import { AppConfig } from './config/configuration';
 import { REDIS_CLIENT } from './common/redis/redis.module';
+import { SESSION_REDIS_KEY_PREFIX } from './modules/identity/services/session-registry.service';
 
 // Prisma returns JS `BigInt` for `BigInt` columns (e.g. Document.fileSizeBytes)
 // regardless of how the value was created — and `JSON.stringify`/Express's
@@ -58,11 +59,14 @@ export function configureApp(app: INestApplication): void {
   // Workflow 1 §1.7 "Deactivated user's active sessions are terminated
   // immediately") by deleting the session key server-side, which a
   // stateless JWT cannot do without an additional revocation-list layer.
+  // The `prefix` here must stay in sync with `SessionRegistryService`
+  // (post-Phase-8 remediation), which is what actually performs that
+  // deletion on deactivation — see session-registry.service.ts.
   const redisClient = app.get<Redis>(REDIS_CLIENT);
   const isProduction = config.get('nodeEnv', { infer: true }) === 'production';
   app.use(
     session({
-      store: new RedisStore({ client: redisClient, prefix: 'tms:sess:' }),
+      store: new RedisStore({ client: redisClient, prefix: SESSION_REDIS_KEY_PREFIX }),
       secret: config.get('session.secret', { infer: true }) as string,
       resave: false,
       saveUninitialized: false,

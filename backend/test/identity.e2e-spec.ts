@@ -263,6 +263,127 @@ describe('Identity & Tenancy (e2e)', () => {
       .expect(200);
   });
 
+  it("immediately revokes a deactivated member's existing session — Workflow 1 §1.7 (post-Phase-8 remediation, Priority 2)", async () => {
+    const superAdminAgent = request.agent(app.getHttpServer());
+    await superAdminAgent
+      .post(`${API}/auth/login`)
+      .send({ email: superAdminEmail, password: superAdminPassword })
+      .expect(200);
+
+    const org = await createAndActivateOrg({
+      legalName: 'Revocation Test Org',
+      adminEmail: 'admin@revocation-test.test',
+      adminPassword: 'AdminPass123',
+      superAdminAgent,
+    });
+
+    await org.agent
+      .post(`${API}/memberships/invite`)
+      .send({ email: 'target@revocation-test.test', roles: ['DISPATCHER'] })
+      .expect(201);
+    const targetToken = extractToken(lastEmailTo('target@revocation-test.test').body);
+    await request(app.getHttpServer())
+      .post(`${API}/auth/activate`)
+      .send({ token: targetToken, password: 'TargetPass123' })
+      .expect(200);
+
+    // The target's own agent — its cookie is the one that must stop working.
+    const targetAgent = request.agent(app.getHttpServer());
+    await targetAgent
+      .post(`${API}/auth/login`)
+      .send({ email: 'target@revocation-test.test', password: 'TargetPass123' })
+      .expect(200);
+    await targetAgent.get(`${API}/auth/me`).expect(200);
+
+    const memberships = await org.agent.get(`${API}/memberships`).expect(200);
+    const targetMembership = memberships.body.find(
+      (m: { user: { email: string } }) => m.user.email === 'target@revocation-test.test',
+    );
+    await org.agent.post(`${API}/memberships/${targetMembership.id}/deactivate`).expect(200);
+
+    // Same agent, same cookie, no new login — must now be rejected.
+    await targetAgent.get(`${API}/auth/me`).expect(401);
+  });
+
+  it('does not revoke a session that switched to a different organization where the user remains Active (deactivation is per-membership, Priority 2)', async () => {
+    const superAdminAgent = request.agent(app.getHttpServer());
+    await superAdminAgent
+      .post(`${API}/auth/login`)
+      .send({ email: superAdminEmail, password: superAdminPassword })
+      .expect(200);
+
+    const sharedEmail = 'dual-org-member@revocation-scope-test.test';
+    const sharedPassword = 'DualOrgPass123';
+
+    // Org A and Org B each have their OWN distinct Admin — the shared user
+    // is a plain (non-Admin) member of both, so deactivating them from Org
+    // A is never blocked by zero-Admin protection (a separate, unrelated
+    // rule) and actually succeeds, which is what this test needs to prove
+    // anything about session scoping.
+    const orgA = await createAndActivateOrg({
+      legalName: 'Scoped Revocation Org A',
+      adminEmail: 'admin-a@revocation-scope-test.test',
+      adminPassword: 'AdminAPass123',
+      superAdminAgent,
+    });
+    const orgB = await createAndActivateOrg({
+      legalName: 'Scoped Revocation Org B',
+      adminEmail: 'admin-b@revocation-scope-test.test',
+      adminPassword: 'AdminBPass123',
+      superAdminAgent,
+    });
+
+    await orgA.agent
+      .post(`${API}/memberships/invite`)
+      .send({ email: sharedEmail, roles: ['DISPATCHER'] })
+      .expect(201);
+    const orgAInviteToken = extractToken(lastEmailTo(sharedEmail).body);
+    await request(app.getHttpServer())
+      .post(`${API}/auth/activate`)
+      .send({ token: orgAInviteToken, password: sharedPassword })
+      .expect(200);
+
+    await orgB.agent
+      .post(`${API}/memberships/invite`)
+      .send({ email: sharedEmail, roles: ['DISPATCHER'] })
+      .expect(201);
+    // Already-verified identity — activation needs no password (mirrors
+    // the "reuses an existing global User" test's second activation call).
+    const orgBInviteToken = extractToken(lastEmailTo(sharedEmail).body);
+    await request(app.getHttpServer())
+      .post(`${API}/auth/activate`)
+      .send({ token: orgBInviteToken })
+      .expect(200);
+
+    const sharedAgent = request.agent(app.getHttpServer());
+    const loginRes = await sharedAgent
+      .post(`${API}/auth/login`)
+      .send({ email: sharedEmail, password: sharedPassword })
+      .expect(200);
+    expect(loginRes.body.requiresOrganizationSelection).toBe(true);
+
+    await sharedAgent
+      .post(`${API}/auth/select-organization`)
+      .send({ organizationId: orgA.organizationId })
+      .expect(200);
+    // Full context switch away from Org A (§3.3) — this session no longer belongs to Org A.
+    await sharedAgent
+      .post(`${API}/auth/switch-organization`)
+      .send({ organizationId: orgB.organizationId })
+      .expect(200);
+
+    const orgAMemberships = await orgA.agent.get(`${API}/memberships`).expect(200);
+    const sharedMembershipInOrgA = orgAMemberships.body.find(
+      (m: { user: { email: string } }) => m.user.email === sharedEmail,
+    );
+    await orgA.agent.post(`${API}/memberships/${sharedMembershipInOrgA.id}/deactivate`).expect(200);
+
+    // The original session, currently switched to Org B where the user
+    // remains Active, must be unaffected by Org A's deactivation.
+    const meAfter = await sharedAgent.get(`${API}/auth/me`).expect(200);
+    expect(meAfter.body.organizationId).toBe(orgB.organizationId);
+  });
+
   it("proves cross-tenant isolation: one organization cannot read, list, or act on another organization's membership data", async () => {
     const superAdminAgent = request.agent(app.getHttpServer());
     await superAdminAgent

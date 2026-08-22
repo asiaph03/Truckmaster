@@ -61,6 +61,7 @@ describe('MembershipService.deactivate — zero-Admin protection', () => {
     };
 
     const audit = { record: jest.fn().mockResolvedValue(undefined) };
+    const sessionRegistry = { revokeAllForOrganization: jest.fn().mockResolvedValue(undefined) };
 
     const service = new MembershipService(
       prisma as never,
@@ -68,10 +69,11 @@ describe('MembershipService.deactivate — zero-Admin protection', () => {
       undefined as never,
       undefined as never,
       audit as never,
+      sessionRegistry as never,
       undefined as never,
     );
 
-    return { service, tx, audit, target };
+    return { service, tx, audit, target, sessionRegistry };
   }
 
   it('blocks deactivating the only active Admin (other-deactivation)', async () => {
@@ -112,6 +114,30 @@ describe('MembershipService.deactivate — zero-Admin protection', () => {
     await service.deactivate(ORG_ID, 'membership-target', 'acting-admin-user');
 
     expect(tx.organizationMembership.update).toHaveBeenCalled();
+  });
+
+  it("revokes the deactivated user's sessions for this organization once the transaction commits (Workflow 1 §1.7)", async () => {
+    const { service, sessionRegistry, target } = buildService({
+      targetIsAdmin: false,
+      otherActiveAdminCount: 0,
+    });
+
+    await service.deactivate(ORG_ID, 'membership-target', 'acting-admin-user');
+
+    expect(sessionRegistry.revokeAllForOrganization).toHaveBeenCalledWith(target.userId, ORG_ID);
+  });
+
+  it('does not revoke any session when deactivation is blocked', async () => {
+    const { service, sessionRegistry } = buildService({
+      targetIsAdmin: true,
+      otherActiveAdminCount: 0,
+    });
+
+    await expect(
+      service.deactivate(ORG_ID, 'membership-target', 'acting-admin-user'),
+    ).rejects.toThrow();
+
+    expect(sessionRegistry.revokeAllForOrganization).not.toHaveBeenCalled();
   });
 
   it('records an audit event when deactivation is blocked, for traceability', async () => {

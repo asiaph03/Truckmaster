@@ -5,9 +5,28 @@ interface FinancialShapeable {
   customerRate: unknown;
   rateSource: unknown;
   rateAgreementId: unknown;
+  /**
+   * Post-Phase-8 remediation (Priority 1) — optional because not every
+   * shaped record carries them (e.g. a bare Quote has neither). Present on
+   * `Load` (carrierRate, a raw scalar Prisma always returns) and on
+   * `LoadService.getReadyToInvoice`'s computed `customerChargesTotal`
+   * field — both were leaking to Dispatcher because this helper never
+   * knew about them.
+   */
+  carrierRate?: unknown;
+  customerChargesTotal?: unknown;
 }
 
-const FULL_VISIBILITY_ROLES: MembershipRoleName[] = ['ADMIN', 'OPERATIONS_MANAGER', 'ACCOUNTING'];
+/**
+ * Exported (was module-private) so callers needing a guard-level check —
+ * e.g. `LoadController`'s `ready-to-invoice` route — can reuse the exact
+ * same role list this helper redacts against, rather than duplicating it.
+ */
+export const FULL_VISIBILITY_ROLES: MembershipRoleName[] = [
+  'ADMIN',
+  'OPERATIONS_MANAGER',
+  'ACCOUNTING',
+];
 
 /**
  * TECHNICAL_ARCHITECTURE.md §7 — "View (financial fields per
@@ -27,7 +46,14 @@ export function shapeFinancialFields<T extends FinancialShapeable>(
   if (actingRoles.includes('SALES_BOOKING') && record.createdByUserId === actingUserId)
     return record;
 
-  return { ...record, customerRate: null, rateSource: null, rateAgreementId: null };
+  return {
+    ...record,
+    customerRate: null,
+    rateSource: null,
+    rateAgreementId: null,
+    ...('carrierRate' in record ? { carrierRate: null } : {}),
+    ...('customerChargesTotal' in record ? { customerChargesTotal: null } : {}),
+  };
 }
 
 export function shapeFinancialFieldsList<T extends FinancialShapeable>(

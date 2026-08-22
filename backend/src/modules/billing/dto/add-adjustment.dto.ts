@@ -1,14 +1,13 @@
 import { AdjustmentType } from '@prisma/client';
-import { IsDateString, IsEnum, IsOptional, IsString, Matches, MinLength } from 'class-validator';
+import { IsDateString, IsEnum, IsOptional, IsString, MinLength } from 'class-validator';
+import { IsPositiveDecimalString } from '../../../common/validation/positive-decimal.decorator';
 
-const DECIMAL_RE = /^\d+(\.\d{1,2})?$/;
-
-/** Workflow 8 §8.11 — reason is required, non-empty. */
+/** Workflow 8 §8.11 — reason is required, non-empty; amount must be > 0 (post-Phase-8 remediation, Priority 3). */
 export class AddAdjustmentDto {
   @IsEnum(AdjustmentType)
   type!: AdjustmentType;
 
-  @Matches(DECIMAL_RE, { message: 'amount must be a decimal string, e.g. "150.00"' })
+  @IsPositiveDecimalString()
   amount!: string;
 
   @IsString()

@@ -31,6 +31,7 @@ import { AddChargeDto } from '../dto/add-charge.dto';
 import { RolesGuard } from '../../identity/guards/roles.guard';
 import { Roles } from '../../identity/decorators/roles.decorator';
 import { RequestContextStore } from '../../../common/tenant-context/request-context';
+import { FULL_VISIBILITY_ROLES } from '../services/financial-field-shaping';
 
 /**
  * TECHNICAL_ARCHITECTURE.md §5.1 Loads resource row. Phase 3: `POST
@@ -87,7 +88,15 @@ export class LoadController {
   // Must be registered before @Get(':id') — a static path segment has to
   // precede a dynamic :id route, or NestJS's :id param would greedily
   // match "ready-to-invoice" as an id.
+  //
+  // Post-Phase-8 remediation (Priority 1) — this is a Financials-specific
+  // queue with no legitimate Dispatcher/Sales-Booking use case (unlike
+  // GET /loads, where every role has a non-financial reason to see Load
+  // data), so it's gated to the same full-financial-visibility role set
+  // `shapeFinancialFields` already redacts against, rather than relying on
+  // redaction alone.
   @Get('ready-to-invoice')
+  @Roles(...FULL_VISIBILITY_ROLES)
   getReadyToInvoice(@Query('customerId') customerId?: string) {
     const organizationId = RequestContextStore.requireOrganizationId();
     const actingUserId = RequestContextStore.requireUserId();

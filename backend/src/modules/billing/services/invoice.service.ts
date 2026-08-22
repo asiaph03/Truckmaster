@@ -165,10 +165,24 @@ export class InvoiceService {
     const { invoice, document } = await this.prisma.withTenantTransaction(
       organizationId,
       async (tx) => {
-        const existing = await tx.invoice.findFirst({ where: { id, organizationId } });
+        const existing = await tx.invoice.findFirst({
+          where: { id, organizationId },
+          include: { lineItems: true },
+        });
         if (!existing) throw new NotFoundError('Invoice not found.');
         if (existing.status !== 'DRAFT') {
           throw new InvalidTransitionError('Only a Draft invoice can be sent.');
+        }
+        // Post-Phase-8 remediation (Priority 4) — Workflow 8 §8.6 step 2 /
+        // exception table: "Invoice sent with no line items / zero total ->
+        // Blocked." Currently unreachable through the normal creation flow
+        // (every Load gets an auto-created LINEHAUL charge at booking, so a
+        // real invoice always has >=1 line item), but the documented guard
+        // itself was previously absent.
+        if (existing.lineItems.length === 0 || Number(existing.total) <= 0) {
+          throw new BusinessRuleError(
+            'An invoice must have at least one line item and a total greater than zero before it can be sent.',
+          );
         }
 
         const customer = await tx.customer.findFirst({

@@ -7,6 +7,7 @@ import { UserService } from './user.service';
 import { PasswordService } from './password.service';
 import { InviteMemberDto } from '../dto/invite-member.dto';
 import { EMAIL_SENDER, IEmailSender } from '../../../common/email/email-sender.interface';
+import { SessionRegistryService } from './session-registry.service';
 import {
   BusinessRuleError,
   ConflictError,
@@ -24,6 +25,7 @@ export class MembershipService {
     private readonly tokenService: TokenService,
     private readonly passwordService: PasswordService,
     private readonly audit: AuditService,
+    private readonly sessionRegistry: SessionRegistryService,
     @Inject(EMAIL_SENDER) private readonly emailSender: IEmailSender,
   ) {}
 
@@ -305,61 +307,83 @@ export class MembershipService {
   async deactivate(organizationId: string, targetMembershipId: string, actingUserId: string) {
     await this.assertHasRole(organizationId, actingUserId, 'ADMIN');
 
-    return this.prisma.withTenantTransaction(organizationId, async (tx) => {
-      const target = await this.requireMembershipTx(tx, organizationId, targetMembershipId);
+    const deactivatedMembership = await this.prisma.withTenantTransaction(
+      organizationId,
+      async (tx) => {
+        const target = await this.requireMembershipTx(tx, organizationId, targetMembershipId);
 
-      if (target.status !== 'ACTIVE') {
-        throw new BusinessRuleError('Only an active member can be deactivated.');
-      }
+        if (target.status !== 'ACTIVE') {
+          throw new BusinessRuleError('Only an active member can be deactivated.');
+        }
 
-      const targetRoles = await tx.membershipRole.findMany({ where: { membershipId: target.id } });
-      const targetIsAdmin = targetRoles.some((r) => r.role === 'ADMIN');
+        const targetRoles = await tx.membershipRole.findMany({
+          where: { membershipId: target.id },
+        });
+        const targetIsAdmin = targetRoles.some((r) => r.role === 'ADMIN');
 
-      if (targetIsAdmin) {
-        // Re-counted INSIDE this transaction (§4.5) — never trusted from
-        // an earlier read, closing the race window between two
-        // simultaneous deactivation requests.
-        const otherActiveAdminCount = await tx.membershipRole.count({
-          where: {
-            organizationId,
-            role: 'ADMIN',
-            membership: { status: 'ACTIVE', id: { not: target.id } },
+        if (targetIsAdmin) {
+          // Re-counted INSIDE this transaction (§4.5) — never trusted from
+          // an earlier read, closing the race window between two
+          // simultaneous deactivation requests.
+          const otherActiveAdminCount = await tx.membershipRole.count({
+            where: {
+              organizationId,
+              role: 'ADMIN',
+              membership: { status: 'ACTIVE', id: { not: target.id } },
+            },
+          });
+
+          if (otherActiveAdminCount === 0) {
+            await this.audit.record(tx, {
+              organizationId,
+              action: 'User Deactivation Blocked — Last Active Admin',
+              entityType: 'OrganizationMembership',
+              entityId: target.id,
+              actorUserId: actingUserId,
+              actorType: 'SYSTEM',
+            });
+            const isSelf = target.userId === actingUserId;
+            throw new BusinessRuleError(
+              isSelf
+                ? 'You cannot deactivate your own account because you are the only active Admin in your organization. Assign Admin to another user first.'
+                : 'You cannot deactivate this user because they are the only active Admin in your organization. Assign Admin to another user first.',
+            );
+          }
+        }
+
+        const updated = await tx.organizationMembership.update({
+          where: { id: target.id },
+          data: {
+            status: 'INACTIVE',
+            deactivatedAt: new Date(),
+            deactivatedByUserId: actingUserId,
           },
         });
 
-        if (otherActiveAdminCount === 0) {
-          await this.audit.record(tx, {
-            organizationId,
-            action: 'User Deactivation Blocked — Last Active Admin',
-            entityType: 'OrganizationMembership',
-            entityId: target.id,
-            actorUserId: actingUserId,
-            actorType: 'SYSTEM',
-          });
-          const isSelf = target.userId === actingUserId;
-          throw new BusinessRuleError(
-            isSelf
-              ? 'You cannot deactivate your own account because you are the only active Admin in your organization. Assign Admin to another user first.'
-              : 'You cannot deactivate this user because they are the only active Admin in your organization. Assign Admin to another user first.',
-          );
-        }
-      }
+        await this.audit.record(tx, {
+          organizationId,
+          action: 'User Deactivated',
+          entityType: 'OrganizationMembership',
+          entityId: target.id,
+          actorUserId: actingUserId,
+        });
 
-      const updated = await tx.organizationMembership.update({
-        where: { id: target.id },
-        data: { status: 'INACTIVE', deactivatedAt: new Date(), deactivatedByUserId: actingUserId },
-      });
+        return updated;
+      },
+    );
 
-      await this.audit.record(tx, {
-        organizationId,
-        action: 'User Deactivated',
-        entityType: 'OrganizationMembership',
-        entityId: target.id,
-        actorUserId: actingUserId,
-      });
+    // Workflow 1 §1.7 — outside the Postgres transaction (Redis isn't part
+    // of it, matching the established "side effect after commit" pattern
+    // used for BullMQ job enqueueing elsewhere): destroys every session
+    // currently selected to this organization for this user, so the
+    // deactivation takes effect immediately rather than waiting for their
+    // cookie to expire naturally.
+    await this.sessionRegistry.revokeAllForOrganization(
+      deactivatedMembership.userId,
+      organizationId,
+    );
 
-      return updated;
-    });
+    return deactivatedMembership;
   }
 
   // ---------------------------------------------------------------------

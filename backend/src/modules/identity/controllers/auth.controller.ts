@@ -2,6 +2,7 @@ import { Body, Controller, Get, HttpCode, Patch, Post, Req } from '@nestjs/commo
 import { Request } from 'express';
 import { AuthService } from '../services/auth.service';
 import { MembershipService } from '../services/membership.service';
+import { SessionRegistryService } from '../services/session-registry.service';
 import { LoginDto } from '../dto/login.dto';
 import { SelectOrganizationDto } from '../dto/select-organization.dto';
 import { ActivateMembershipDto } from '../dto/activate-membership.dto';
@@ -21,6 +22,7 @@ export class AuthController {
   constructor(
     private readonly authService: AuthService,
     private readonly membershipService: MembershipService,
+    private readonly sessionRegistry: SessionRegistryService,
   ) {}
 
   @Public()
@@ -29,6 +31,15 @@ export class AuthController {
   async login(@Body() dto: LoginDto, @Req() req: Request) {
     const result = await this.authService.login(dto.email, dto.password);
     req.session.auth = result.session;
+    // Auto-select case only (single active membership) — the org-pending
+    // case has no organizationId yet, nothing to index.
+    if (result.session.organizationId) {
+      await this.sessionRegistry.recordActiveOrganization(
+        req.sessionID,
+        result.session.userId,
+        result.session.organizationId,
+      );
+    }
     return {
       requiresOrganizationSelection: result.requiresOrganizationSelection,
       organizations: result.organizations,
@@ -48,8 +59,17 @@ export class AuthController {
   async selectOrganization(@Body() dto: SelectOrganizationDto, @Req() req: Request) {
     const userId = req.session.auth?.userId;
     if (!userId) throw new AuthenticationError('Authentication required.');
+    const previousOrganizationId = req.session.auth?.organizationId;
     const session = await this.authService.selectOrganization(userId, dto.organizationId);
     req.session.auth = session;
+    if (session.organizationId) {
+      await this.sessionRegistry.recordActiveOrganization(
+        req.sessionID,
+        session.userId,
+        session.organizationId,
+        previousOrganizationId,
+      );
+    }
     return { organizationId: session.organizationId, roles: session.roles };
   }
 
@@ -58,18 +78,31 @@ export class AuthController {
   async switchOrganization(@Body() dto: SelectOrganizationDto, @Req() req: Request) {
     const userId = req.session.auth?.userId;
     if (!userId) throw new AuthenticationError('Authentication required.');
+    const previousOrganizationId = req.session.auth?.organizationId;
     // §3.3 — a full context switch, never a partial in-place merge.
     const session = await this.authService.switchOrganization(userId, dto.organizationId);
     req.session.auth = session;
+    if (session.organizationId) {
+      await this.sessionRegistry.recordActiveOrganization(
+        req.sessionID,
+        session.userId,
+        session.organizationId,
+        previousOrganizationId,
+      );
+    }
     return { organizationId: session.organizationId, roles: session.roles };
   }
 
   @Post('logout')
   @HttpCode(200)
   async logout(@Req() req: Request) {
+    const auth = req.session.auth;
     await new Promise<void>((resolve, reject) => {
       req.session.destroy((err) => (err ? reject(err) : resolve()));
     });
+    if (auth?.organizationId) {
+      await this.sessionRegistry.forget(req.sessionID, auth.userId, auth.organizationId);
+    }
     return { success: true };
   }
 
