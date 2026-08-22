@@ -1,0 +1,119 @@
+/**
+ * Design tokens ported verbatim from docs/UI_UX_DESIGN.md §5.2.1–5.2.3
+ * (🔒 locked). No values invented, none omitted — every token in the
+ * spec's tables exists here even before a component uses it.
+ */
+
+:root {
+  /* 5.2.1 Brand */
+  --brand-600: #1a2bc3;
+  --brand-700: #12208f;
+  --brand-100: #e7e9fb;
+  --brand-50: #f4f5fe;
+
+  /* 5.2.1 Neutrals */
+  --neutral-0: #ffffff;
+  --neutral-50: #f7f8fa;
+  --neutral-100: #f0f1f4;
+  --neutral-200: #e2e4e9;
+  --neutral-300: #cbced6;
+  --neutral-400: #9297a3;
+  --neutral-500: #6b707c;
+  --neutral-700: #3c4049;
+  --neutral-900: #16181d;
+
+  /* 5.2.1 Semantic (status) */
+  --success-600: #157f3c;
+  --success-bg: #e5f6ea;
+  --warning-600: #b4770b;
+  --warning-bg: #fdf1dc;
+  --danger-600: #c4293a;
+  --danger-bg: #fbe7e9;
+  --info-600: #0e7490;
+  --info-bg: #e1f2f5;
+
+  /* 5.2.2 Typography */
+  --font-ui:
+    Inter, -apple-system, 'Segoe UI', Roboto, sans-serif;
+
+  --text-display-size: 28px;
+  --text-display-line: 36px;
+  --text-display-weight: 600;
+
+  --text-h1-size: 22px;
+  --text-h1-line: 28px;
+  --text-h1-weight: 600;
+
+  --text-h2-size: 17px;
+  --text-h2-line: 24px;
+  --text-h2-weight: 600;
+
+  --text-body-size: 14px;
+  --text-body-line: 20px;
+  --text-body-weight: 400;
+
+  --text-body-medium-size: 14px;
+  --text-body-medium-line: 20px;
+  --text-body-medium-weight: 500;
+
+  --text-small-size: 13px;
+  --text-small-line: 18px;
+  --text-small-weight: 400;
+
+  --text-caption-size: 12px;
+  --text-caption-line: 16px;
+  --text-caption-weight: 500;
+
+  /* 5.2.3 Spacing (4px base) */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 32px;
+  --space-8: 40px;
+  --space-9: 48px;
+  --space-10: 64px;
+
+  /* 5.2.3 Radius */
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+
+  /* 5.2.3 Shadow */
+  --shadow-sm: 0 1px 2px rgba(22, 24, 29, 0.06);
+  --shadow-md: 0 4px 12px rgba(22, 24, 29, 0.1);
+  --shadow-lg: 0 12px 32px rgba(22, 24, 29, 0.16);
+
+  /* 5.3 App shell dimensions */
+  --shell-sidebar-width: 240px;
+  --shell-sidebar-width-collapsed: 64px;
+  --shell-topbar-height: 56px;
+  --shell-min-viewport-width: 1280px;
+
+  /* 5.2.4 Icons */
+  --icon-stroke-width: 1.5;
+  --icon-color-inactive: var(--neutral-500);
+  --icon-color-active: var(--brand-600);
+
+  color-scheme: light;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-ui);
+  font-size: var(--text-body-size);
+  line-height: var(--text-body-line);
+  color: var(--neutral-900);
+  background: var(--neutral-50);
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}

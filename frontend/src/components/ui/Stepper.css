@@ -1,0 +1,54 @@
+.stepper {
+  display: flex;
+  align-items: center;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.stepper-step {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.stepper-step:not(:last-child)::after {
+  content: '';
+  width: var(--space-6);
+  height: 1px;
+  background: var(--neutral-200);
+  margin: 0 var(--space-2);
+}
+
+.stepper-marker {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  font-size: var(--text-caption-size);
+  font-weight: var(--text-caption-weight);
+  background: var(--neutral-100);
+  color: var(--neutral-500);
+}
+
+.stepper-done .stepper-marker {
+  background: var(--success-600);
+  color: var(--neutral-0);
+}
+
+.stepper-current .stepper-marker {
+  background: var(--brand-600);
+  color: var(--neutral-0);
+}
+
+.stepper-label {
+  font-size: var(--text-small-size);
+  color: var(--neutral-500);
+}
+
+.stepper-current .stepper-label,
+.stepper-done .stepper-label {
+  color: var(--neutral-900);
+}

@@ -1,0 +1,35 @@
+.checklist-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) 0;
+}
+
+.checklist-icon {
+  display: inline-flex;
+  width: 20px;
+  height: 20px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+}
+
+.checklist-clean .checklist-icon {
+  background: var(--success-bg);
+  color: var(--success-600);
+}
+.checklist-warning .checklist-icon {
+  background: var(--warning-bg);
+  color: var(--warning-600);
+}
+
+.checklist-label {
+  font-size: var(--text-body-size);
+  color: var(--neutral-900);
+}
+
+.checklist-detail {
+  font-size: var(--text-small-size);
+  color: var(--neutral-500);
+  margin-left: auto;
+}

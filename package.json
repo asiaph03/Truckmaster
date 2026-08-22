@@ -1,0 +1,9 @@
+{
+  "name": "tms-saas",
+  "private": true,
+  "workspaces": [
+    "backend",
+    "frontend",
+    "packages/*"
+  ]
+}
