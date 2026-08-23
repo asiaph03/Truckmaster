@@ -34,7 +34,17 @@ export type PermissionKey =
   // for Dispatcher (UI_UX_DESIGN.md §5.4.5) — a viewing distinction
   // independent of `manageCustomers` (create/edit), since even a
   // Dispatcher-only membership can view the other 4 tabs.
-  | 'viewCustomerFinancialTabs';
+  | 'viewCustomerFinancialTabs'
+  // Frontend Phase 4 addition — Decision Log D9's Add Charge role set
+  // (Admin/Ops Manager/Dispatcher/Accounting) matches no existing key:
+  // `viewLoadFinancials` excludes Dispatcher, `sourceAndDispatchLoads`
+  // excludes Accounting. The Financials tab this action lives in is
+  // itself hidden entirely for Dispatcher (locked, §5.4.4) — a genuine
+  // tension between the tab-hiding rule and D9's own role list that the
+  // locked docs don't reconcile; this key stays true to D9's backend
+  // role set regardless, so it stays correct if a future phase gives
+  // Dispatcher another surface to use it from.
+  | 'addChargeToLoad';
 
 export const ROLE_PERMISSIONS: Record<MembershipRoleName, PermissionKey[]> = {
   ADMIN: [
@@ -60,10 +70,10 @@ export const ROLE_PERMISSIONS: Record<MembershipRoleName, PermissionKey[]> = {
     'viewArApAging',
     'addCarrierInsurance',
     'viewCustomerFinancialTabs',
+    'addChargeToLoad',
   ],
   OPERATIONS_MANAGER: [
     'viewLoadFinancials',
-    'createOrSubmitCarrierPayment',
     'manageCustomers',
     'manageCarriers',
     'sourceAndDispatchLoads',
@@ -71,18 +81,32 @@ export const ROLE_PERMISSIONS: Record<MembershipRoleName, PermissionKey[]> = {
     'viewArApAging',
     'addCarrierInsurance',
     'viewCustomerFinancialTabs',
+    'addChargeToLoad',
     // No manageMemberships, approveOrRejectCarrierPayment, or
     // sendOrVoidInvoice/recordPaymentOrAdjustment — Ops Manager has full
     // *view* parity with Admin (UI_UX_DESIGN.md §5.1.7 item 1) but not
-    // these Admin/Accounting-only actions.
+    // these Admin/Accounting-only actions. Also NOT
+    // createOrSubmitCarrierPayment (Frontend Phase 4 correction) — the
+    // backend's CarrierPaymentController restricts create/submit/mark-paid
+    // to PREPARE_ROLES = ['ADMIN', 'ACCOUNTING'] only; Ops Manager is in
+    // VIEW_ROLES but not PREPARE_ROLES, so granting this key here made the
+    // Financials tab's "+ Add Carrier Payment" and the Carrier Payment
+    // Detail page's Submit/Mark Paid buttons render enabled for a role
+    // whose click would always 403. Caught during Phase 4 manual smoke
+    // testing.
   ],
   DISPATCHER: [
     'manageCarriers',
     'sourceAndDispatchLoads',
     'createQuoteOrLoad',
     'addCarrierInsurance',
+    'addChargeToLoad',
     // No viewLoadFinancials, no billing actions, no viewArApAging —
-    // financials/Billing nav are hidden entirely for Dispatcher.
+    // financials/Billing nav are hidden entirely for Dispatcher. This
+    // role does still hold `addChargeToLoad` (matches D9's real backend
+    // role set) even though the Financials tab it would be exercised
+    // from is itself hidden for Dispatcher — see the key's own doc
+    // comment above.
   ],
   SALES_BOOKING: [
     'manageCustomers',
@@ -103,6 +127,7 @@ export const ROLE_PERMISSIONS: Record<MembershipRoleName, PermissionKey[]> = {
     'manageCustomers',
     'viewArApAging',
     'viewCustomerFinancialTabs',
+    'addChargeToLoad',
     // No manageMemberships, no approveOrRejectCarrierPayment (Admin-only,
     // self-review-forbidden also applies), no sourceAndDispatchLoads
     // (view-only on Loads ops actions), no manageCarriers/

@@ -14,6 +14,7 @@ import { OverviewTab } from './tabs/OverviewTab';
 import { StopsTrackingTab } from './tabs/StopsTrackingTab';
 import { CarrierDispatchTab } from './tabs/CarrierDispatchTab';
 import { DocumentsTab } from './tabs/DocumentsTab';
+import { FinancialsTab } from './tabs/FinancialsTab';
 import '../shared/DetailPage.css';
 import './LoadDetailPage.css';
 
@@ -32,18 +33,21 @@ const STEPS = [
 const TRACKING_STATUSES = ['DISPATCHED', 'PICKUP', 'IN_TRANSIT'] as const;
 
 /**
- * UI_UX_DESIGN.md §5.4.4 Load Detail. Ships the 4 tabs approved for this
- * phase (Overview, Stops & Tracking, Carrier & Dispatch, Documents) —
- * Financials, Activity History, and the Load Closing screen remain
- * deferred (approved Phase 3 plan §7 decision 2), so the header's
- * `DELIVERED`/`CLOSED`-state primary actions (Create Invoice, Close
- * Load) are not rendered: no invented invoicing/closing behavior, just
- * an absent button for the statuses whose actions live in deferred
- * screens.
+ * UI_UX_DESIGN.md §5.4.4 Load Detail. Phase 3 shipped Overview, Stops &
+ * Tracking, Carrier & Dispatch, Documents; Phase 4 adds the Financials
+ * tab (hidden entirely for Dispatcher) and the Overview tab's Closing
+ * Readiness card (linking out to the dedicated Load Closing screen,
+ * §5.4.8). Activity History remains deferred (no Communication
+ * Activity/Internal Note data model exists yet). The header's
+ * `DELIVERED`/`CLOSED`-state primary action intentionally stays absent —
+ * Create Invoice/Close Load live in the Financials tab's Customer
+ * Invoice card and the Closing Readiness card respectively, not
+ * duplicated as a header button; this phase's plan scoped the header
+ * itself as unchanged.
  */
 export function LoadDetailPage() {
   const { id = '' } = useParams();
-  const { can } = usePermissions();
+  const { can, roles } = usePermissions();
   const queryClient = useQueryClient();
   const toast = useToast();
   const [activeTab, setActiveTab] = useState('overview');
@@ -110,11 +114,17 @@ export function LoadDetailPage() {
     STEPS.findIndex((s) => s.key === load.status),
   );
 
+  // Financials tab is fully hidden for Dispatcher, not just redacted
+  // (locked, §5.4.4 — "consistent with §5.4.1's 'financial columns fully
+  // absent' principle extended to a whole tab").
+  const showFinancialsTab = !roles.includes('DISPATCHER');
+
   const tabs = [
     { key: 'overview', label: 'Overview' },
     { key: 'stops', label: 'Stops & Tracking' },
     { key: 'carrier', label: 'Carrier & Dispatch' },
     { key: 'documents', label: 'Documents' },
+    ...(showFinancialsTab ? [{ key: 'financials', label: 'Financials' }] : []),
   ];
 
   return (
@@ -179,6 +189,9 @@ export function LoadDetailPage() {
       {activeTab === 'stops' ? <StopsTrackingTab load={load} onChanged={refetch} /> : null}
       {activeTab === 'carrier' ? <CarrierDispatchTab load={load} onChanged={refetch} /> : null}
       {activeTab === 'documents' ? <DocumentsTab load={load} /> : null}
+      {activeTab === 'financials' && showFinancialsTab ? (
+        <FinancialsTab load={load} onChanged={refetch} />
+      ) : null}
 
       <AssignCarrierModal
         open={assigningCarrier}

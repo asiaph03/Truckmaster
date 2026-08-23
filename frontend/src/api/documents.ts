@@ -192,4 +192,32 @@ export const documentsApi = {
     const found = docs.find((d) => d.id === documentId);
     return found?.scanStatus ?? 'PENDING';
   },
+
+  /**
+   * Frontend Phase 4 approved decision 4 (Invoice PDF / Settlement
+   * readiness): `POST /invoices/:id/send` and
+   * `POST /carrier-payments/:id/mark-paid` both create the Document row
+   * synchronously with `fileSizeBytes: 0` and enqueue a job that fills in
+   * the real PDF asynchronously. No backend readiness endpoint exists by
+   * design — this polls `GET /documents` every ~2s (mirroring
+   * `FileUploadField`'s `pollUntilResolved` cadence exactly) for up to 30
+   * attempts, resolving once a document for this entity has
+   * `fileSizeBytes > 0`. Returns `null` on timeout — the document keeps
+   * generating server-side and will show correctly on next reload.
+   */
+  waitForDocumentReady: async (
+    entityType: DocumentEntityType,
+    entityId: string,
+  ): Promise<AppDocument | null> => {
+    for (let i = 0; i < MAX_POLLS; i++) {
+      await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+      const docs = await documentsApi.list(entityType, entityId);
+      const ready = docs.find((d) => Number(d.fileSizeBytes) > 0);
+      if (ready) return ready;
+    }
+    return null;
+  },
 };
+
+const POLL_INTERVAL_MS = 2000;
+const MAX_POLLS = 30;

@@ -284,4 +284,15 @@ export class LoadController {
     const actingUserId = RequestContextStore.requireUserId();
     return this.loadService.closeLoad(organizationId, id, actingUserId);
   }
+
+  // Frontend Phase 4 gap-fix — read-only preview of the same checklist
+  // closeLoad computes, needed so the Closing Readiness card (Overview
+  // tab) and the Load Closing screen can show it before the user commits
+  // to closing. Same role gate as close itself; mutates nothing.
+  @Get(':id/closing-checklist')
+  @Roles(...LOAD_CLOSING_ROLES)
+  getClosingChecklist(@Param('id', ParseUUIDPipe) id: string) {
+    const organizationId = RequestContextStore.requireOrganizationId();
+    return this.loadService.getClosingChecklist(organizationId, id);
+  }
 }

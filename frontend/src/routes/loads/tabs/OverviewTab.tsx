@@ -1,8 +1,8 @@
 import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { carriersApi, customersApi, membershipsApi, type Load } from '../../../api';
-import { Badge } from '../../../components/ui';
+import { carriersApi, customersApi, loadsApi, membershipsApi, type Load } from '../../../api';
+import { Badge, ChecklistItem } from '../../../components/ui';
 import { getStatusBadgeColor } from '../../../components/ui/statusBadgeMap';
 import { usePermissions } from '../../../hooks/usePermissions';
 import { formatDateShort, originDestination } from '../loadDerived';
@@ -20,8 +20,17 @@ import '../LoadDetailPage.css';
  * `carrierRate` is always server-redacted to null).
  */
 export function OverviewTab({ load }: { load: Load }) {
-  const { roles } = usePermissions();
+  const { can, roles } = usePermissions();
   const showFinancialCard = !roles.includes('DISPATCHER');
+  // Workflow 10's exact actor list (Admin/Ops Manager/Accounting) matches
+  // `viewLoadFinancials`'s role set exactly — no separate key needed.
+  const showClosingCard = can('viewLoadFinancials') && load.status !== 'CLOSED';
+
+  const { data: closingChecklist } = useQuery({
+    queryKey: ['loads', load.id, 'closing-checklist'],
+    queryFn: () => loadsApi.getClosingChecklist(load.id),
+    enabled: showClosingCard,
+  });
 
   const { data: customer } = useQuery({
     queryKey: ['customers', load.customerId],
@@ -138,6 +147,33 @@ export function OverviewTab({ load }: { load: Load }) {
                 <Field label="Margin %" value={`${marginPct.toFixed(1)}%`} />
               ) : null}
             </div>
+          </div>
+        ) : null}
+
+        {showClosingCard ? (
+          <div className="detail-card">
+            <div className="detail-section-header">
+              <h2 className="detail-card-title" style={{ margin: 0 }}>
+                Closing Readiness
+              </h2>
+              <Link to={`/loads/${load.id}/close`}>Close Load →</Link>
+            </div>
+            {closingChecklist ? (
+              closingChecklist.checklist.map((item) => (
+                <ChecklistItem
+                  key={item.item}
+                  label={item.item}
+                  state={item.status === 'CLEAN' ? 'clean' : 'warning'}
+                  detail={
+                    item.remainingCarrierBalance
+                      ? `${item.detail} — $${item.remainingCarrierBalance} remaining`
+                      : item.detail
+                  }
+                />
+              ))
+            ) : (
+              <span className="detail-field-value">Loading…</span>
+            )}
           </div>
         ) : null}
       </div>

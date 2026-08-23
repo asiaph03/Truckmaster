@@ -33,6 +33,14 @@ const LOAD_WITH_SOURCING_ATTEMPTS = {
   ],
 };
 
+const LOAD_WITH_CHARGE_LINE_ITEMS = {
+  ...LOAD_RECORD,
+  chargeLineItems: [
+    { id: 'charge-1', side: 'CUSTOMER' as const, amount: '1800.00' },
+    { id: 'charge-2', side: 'CARRIER' as const, amount: '1500.00' },
+  ],
+};
+
 describe('shapeFinancialFields — post-Phase-8 remediation (Priority 1)', () => {
   it('leaves carrierRate and customerChargesTotal untouched for full-visibility roles', () => {
     const result = shapeFinancialFields(READY_TO_INVOICE_RECORD, ['ADMIN'], OTHER_USER_ID);
@@ -52,9 +60,15 @@ describe('shapeFinancialFields — post-Phase-8 remediation (Priority 1)', () =>
     expect(result.carrierRate).toBeNull();
   });
 
-  it('leaves carrierRate visible for Sales/Booking on their own record', () => {
+  it('leaves customerRate visible but still redacts carrierRate for Sales/Booking on their own record (Phase 4 correction)', () => {
+    // Margin is never shown to Sales/Booking regardless of ownership
+    // (§5.4.1 Resolution 1) — an unredacted carrierRate would let the
+    // exact same figure be derived client-side from customerRate minus
+    // carrierRate, so carrier-side visibility never follows ownership,
+    // only customer-side visibility does.
     const result = shapeFinancialFields(LOAD_RECORD, ['SALES_BOOKING'], OWNER_ID);
-    expect(result.carrierRate).toBe('1500.00');
+    expect(result.customerRate).toBe('1800.00');
+    expect(result.carrierRate).toBeNull();
   });
 
   it('does not add a carrierRate/customerChargesTotal key to a record that never had one (Quote)', () => {
@@ -88,6 +102,45 @@ describe('shapeFinancialFields — post-Phase-8 remediation (Priority 1)', () =>
   it('does not add a sourcingAttempts key to a record that never had one (Quote)', () => {
     const result = shapeFinancialFields(QUOTE_RECORD, ['DISPATCHER'], OTHER_USER_ID);
     expect('sourcingAttempts' in result).toBe(false);
+  });
+
+  it('still redacts nested sourcingAttempts carrierRate for Sales/Booking on their own record', () => {
+    const result = shapeFinancialFields(LOAD_WITH_SOURCING_ATTEMPTS, ['SALES_BOOKING'], OWNER_ID);
+    expect(result.sourcingAttempts.every((a) => a.carrierRate === null)).toBe(true);
+  });
+
+  it('redacts only the CARRIER-side chargeLineItems amount for Dispatcher, both sides for a non-owning Sales/Booking, and shows CUSTOMER-side only for an owning Sales/Booking', () => {
+    const dispatcherResult = shapeFinancialFields(
+      LOAD_WITH_CHARGE_LINE_ITEMS,
+      ['DISPATCHER'],
+      OTHER_USER_ID,
+    );
+    expect(dispatcherResult.chargeLineItems!.map((c) => c.amount)).toEqual([null, null]);
+
+    const nonOwningSalesResult = shapeFinancialFields(
+      LOAD_WITH_CHARGE_LINE_ITEMS,
+      ['SALES_BOOKING'],
+      OTHER_USER_ID,
+    );
+    expect(nonOwningSalesResult.chargeLineItems!.map((c) => c.amount)).toEqual([null, null]);
+
+    const owningSalesResult = shapeFinancialFields(
+      LOAD_WITH_CHARGE_LINE_ITEMS,
+      ['SALES_BOOKING'],
+      OWNER_ID,
+    );
+    expect(owningSalesResult.chargeLineItems!.map((c) => c.amount)).toEqual(['1800.00', null]);
+    expect(owningSalesResult.chargeLineItems!.map((c) => c.side)).toEqual(['CUSTOMER', 'CARRIER']);
+  });
+
+  it('leaves both sides of chargeLineItems visible for full-visibility roles', () => {
+    const result = shapeFinancialFields(LOAD_WITH_CHARGE_LINE_ITEMS, ['ACCOUNTING'], OTHER_USER_ID);
+    expect(result.chargeLineItems!.map((c) => c.amount)).toEqual(['1800.00', '1500.00']);
+  });
+
+  it('does not add a chargeLineItems key to a record that never had one (Quote)', () => {
+    const result = shapeFinancialFields(QUOTE_RECORD, ['DISPATCHER'], OTHER_USER_ID);
+    expect('chargeLineItems' in result).toBe(false);
   });
 
   it('shapeFinancialFieldsList applies the same redaction across an array', () => {

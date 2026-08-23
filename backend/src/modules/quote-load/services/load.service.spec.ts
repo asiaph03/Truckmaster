@@ -513,6 +513,69 @@ describe('LoadService.closeLoad — Workflow 10', () => {
   });
 });
 
+describe('LoadService.getClosingChecklist — Frontend Phase 4 gap-fix', () => {
+  it('returns the same checklist closeLoad would compute, without mutating the Load', async () => {
+    const { service, tx } = buildService({});
+    tx.load.findFirst.mockResolvedValue({
+      id: 'load-1',
+      status: 'DELIVERED',
+      podStatus: 'NOT_RECEIVED',
+      carrierRate: null,
+    });
+
+    const result = await service.getClosingChecklist(ORG_ID, 'load-1');
+
+    expect(result).toEqual({
+      checklist: [
+        { item: 'Rate Confirmation', status: 'WARNING', detail: 'Missing' },
+        { item: 'POD', status: 'WARNING', detail: 'Not Received' },
+        { item: 'Customer Invoice', status: 'WARNING', detail: 'Missing' },
+        { item: 'Carrier Pay', status: 'WARNING', detail: 'No payment recorded' },
+      ],
+    });
+    expect(tx.load.update).not.toHaveBeenCalled();
+  });
+
+  it('reflects Clean items identically to closeLoad for the same Load state', async () => {
+    const { service, tx } = buildService({});
+    const loadRow = {
+      id: 'load-1',
+      status: 'DELIVERED',
+      podStatus: 'COMPLETE',
+      carrierRate: new Prisma.Decimal('1500.00'),
+    };
+    tx.load.findFirst.mockResolvedValue(loadRow);
+    tx.document.findFirst.mockResolvedValue({ id: 'doc-1' });
+    tx.invoiceLoad.findFirst.mockResolvedValue({ id: 'invoice-load-1' });
+    tx.carrierPayment.findMany.mockResolvedValue([
+      { status: 'PAID', amount: new Prisma.Decimal('1500.00') },
+    ]);
+
+    const { checklist } = await service.getClosingChecklist(ORG_ID, 'load-1');
+
+    expect(checklist.every((c) => c.status === 'CLEAN')).toBe(true);
+  });
+
+  it('does not require the Load to be non-Closed — previewing an already-Closed Load is allowed', async () => {
+    const { service, tx } = buildService({});
+    tx.load.findFirst.mockResolvedValue({
+      id: 'load-1',
+      status: 'CLOSED',
+      podStatus: 'COMPLETE',
+      carrierRate: null,
+    });
+
+    await expect(service.getClosingChecklist(ORG_ID, 'load-1')).resolves.toBeDefined();
+  });
+
+  it('throws NotFoundError for a nonexistent Load', async () => {
+    const { service, tx } = buildService({});
+    tx.load.findFirst.mockResolvedValue(null);
+
+    await expect(service.getClosingChecklist(ORG_ID, 'nonexistent')).rejects.toThrow(NotFoundError);
+  });
+});
+
 describe('LoadService.getReadyToInvoice — Workflow 8 §8.1', () => {
   it('queries Loads at DELIVERED/CLOSED with invoiced=false, optionally scoped to one customer', async () => {
     const { service, tx } = buildService({});

@@ -1,6 +1,5 @@
 import type { EquipmentType } from '@tms/shared-constants';
 import { apiRequest } from './client';
-import { notImplemented } from './notImplemented';
 
 export type LoadStatus =
   | 'BOOKED'
@@ -84,12 +83,40 @@ export interface CheckCall {
   notes?: string;
 }
 
+export type ChargeLineItemSide = 'CUSTOMER' | 'CARRIER';
+export type ChargeLineItemSource = 'ORIGINAL' | 'ADJUSTMENT';
+
+export interface ChargeLineItem {
+  id: string;
+  loadId: string;
+  side: ChargeLineItemSide;
+  chargeTypeId: string;
+  description?: string;
+  quantity: string;
+  unitRate: string;
+  // Nullable when redacted server-side per its own `side` — a CUSTOMER
+  // charge follows customerRate visibility, a CARRIER charge follows
+  // carrierRate visibility (Frontend Phase 4 gap-fix). Never render as
+  // $0.00.
+  amount: string | null;
+  source: ChargeLineItemSource;
+  notes?: string;
+  createdByUserId: string;
+  createdAt: string;
+}
+
+export interface ClosingChecklistItem {
+  item: string;
+  status: 'CLEAN' | 'WARNING';
+  detail: string;
+  remainingCarrierBalance?: string;
+}
+
 /**
  * Full Load detail — `GET /loads/:id` include shape confirmed against
  * `LoadService.findById`: stops, sourcingAttempts, dispatchRecord,
- * checkCalls. Does NOT include chargeLineItems — no read endpoint
- * exists for those (approved plan §6 gap 1); the Financials tab is
- * deferred, not worked around.
+ * checkCalls, chargeLineItems (Frontend Phase 4 gap-fix — the Financials
+ * tab's itemized Customer/Carrier-side table).
  */
 export interface Load {
   id: string;
@@ -124,6 +151,7 @@ export interface Load {
   sourcingAttempts: CarrierSourcingAttempt[];
   dispatchRecord: DispatchRecord | null;
   checkCalls: CheckCall[];
+  chargeLineItems: ChargeLineItem[];
 }
 
 /**
@@ -156,6 +184,28 @@ export interface LoadListFilters {
   carrierId?: string;
   dispatcherId?: string;
   equipmentType?: string;
+}
+
+/**
+ * `GET /loads/ready-to-invoice` row shape — every scalar `Load` field
+ * plus `customer` and the full `chargeLineItems` array, plus a computed
+ * `customerChargesTotal`. Gated to `viewLoadFinancials` roles only at
+ * the guard level, so redaction never actually applies to a caller who
+ * can reach this endpoint — fields are typed non-null accordingly.
+ */
+export interface ReadyToInvoiceLoad {
+  id: string;
+  loadNumber: string;
+  customerId: string;
+  customer: { id: string; legalName: string };
+  status: LoadStatus;
+  equipmentType: EquipmentType;
+  customerRate: string;
+  carrierRate: string | null;
+  podStatus: PodStatus;
+  chargeLineItems: ChargeLineItem[];
+  customerChargesTotal: string;
+  createdAt: string;
 }
 
 export interface LoadStopInput {
@@ -247,6 +297,20 @@ export interface AssignDispatcherRequest {
   dispatcherUserId: string;
 }
 
+export interface AddChargeRequest {
+  side: ChargeLineItemSide;
+  chargeTypeId: string;
+  description?: string;
+  quantity?: string;
+  unitRate: string;
+  notes?: string;
+}
+
+export interface CloseLoadResponse {
+  load: Load;
+  checklistSnapshot: ClosingChecklistItem[];
+}
+
 /**
  * `EligibilityError`'s (409) `details.reasons` shape — surfaced verbatim
  * from `CarrierEligibilityService.recalculate`, same reason strings
@@ -308,16 +372,18 @@ export const loadsApi = {
   setDispatcher: (id: string, body: AssignDispatcherRequest) =>
     apiRequest<Load>(`/loads/${id}/dispatcher`, { method: 'PATCH', body }),
 
-  // Typed surface only — deferred per the approved Phase 3 plan §7
-  // decision 2 (Financials tab / Load Closing screen not built this
-  // phase: no GET endpoint exists for a Load's charge line items, and
-  // closing has no checklist-preview path separate from actually
-  // closing).
-  readyToInvoice: (_customerId?: string): Promise<unknown[]> =>
-    notImplemented('loadsApi.readyToInvoice'),
-  addCharge: (_id: string, _body: unknown): Promise<unknown> =>
-    notImplemented('loadsApi.addCharge'),
-  close: (_id: string): Promise<unknown> => notImplemented('loadsApi.close'),
+  readyToInvoice: (customerId?: string) =>
+    apiRequest<ReadyToInvoiceLoad[]>('/loads/ready-to-invoice', { query: { customerId } }),
+
+  addCharge: (id: string, body: AddChargeRequest) =>
+    apiRequest<ChargeLineItem>(`/loads/${id}/charges`, { method: 'POST', body }),
+
+  close: (id: string) => apiRequest<CloseLoadResponse>(`/loads/${id}/close`, { method: 'POST' }),
+
+  /** Frontend Phase 4 gap-fix — read-only preview of the same checklist `close` computes. */
+  getClosingChecklist: (id: string) =>
+    apiRequest<{ checklist: ClosingChecklistItem[] }>(`/loads/${id}/closing-checklist`),
+
   // NOTE: PATCH /loads/:id/stops/:seq (appointment reschedule) does not
   // exist on the backend yet — deferred alongside the Calendar view
   // (§7 decision 1), not built or stubbed here.

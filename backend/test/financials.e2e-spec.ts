@@ -876,6 +876,50 @@ describe('Financials (e2e)', () => {
     });
   });
 
+  describe('GET /loads/:id/closing-checklist — Frontend Phase 4 gap-fix (read-only preview)', () => {
+    it('returns the identical checklist that closing would produce, without closing the Load', async () => {
+      const { loadId } = await createBookedLoad('checklist-preview');
+      const carrierId = await createEligibleCarrier('checklist-preview');
+      await progressToDelivered(loadId, carrierId);
+      // progressToDelivered already generates a Rate Confirmation, so that
+      // item is Clean; no invoice, no carrier payment, no POD were ever
+      // created, so the other three should Warn.
+
+      const preview = await accountingAgent
+        .get(`${API}/loads/${loadId}/closing-checklist`)
+        .expect(200);
+      const byItem = (item: string) =>
+        preview.body.checklist.find((c: { item: string }) => c.item === item);
+      expect(byItem('Rate Confirmation').status).toBe('CLEAN');
+      expect(byItem('POD').status).toBe('WARNING');
+      expect(byItem('Customer Invoice').status).toBe('WARNING');
+      expect(byItem('Carrier Pay').status).toBe('WARNING');
+
+      const stillOpen = await adminAgent.get(`${API}/loads/${loadId}`).expect(200);
+      expect(stillOpen.body.status).not.toBe('CLOSED');
+
+      const closed = await accountingAgent.post(`${API}/loads/${loadId}/close`).expect(200);
+      expect(closed.body.checklistSnapshot).toEqual(preview.body.checklist);
+    });
+
+    it('Dispatcher cannot preview the closing checklist (same role gate as close)', async () => {
+      const { loadId } = await createBookedLoad('checklist-preview-dispatcher-blocked');
+      const carrierId = await createEligibleCarrier('checklist-preview-dispatcher-blocked');
+      await progressToDelivered(loadId, carrierId);
+
+      await dispatcherAgent.get(`${API}/loads/${loadId}/closing-checklist`).expect(403);
+    });
+
+    it('previewing an already-Closed Load is allowed (no precondition beyond the Load existing)', async () => {
+      const { loadId } = await createBookedLoad('checklist-preview-already-closed');
+      const carrierId = await createEligibleCarrier('checklist-preview-already-closed');
+      await progressToDelivered(loadId, carrierId);
+      await accountingAgent.post(`${API}/loads/${loadId}/close`).expect(200);
+
+      await accountingAgent.get(`${API}/loads/${loadId}/closing-checklist`).expect(200);
+    });
+  });
+
   describe('Financial data exposure remediation — Priority 1 (post-Phase-8)', () => {
     it('blocks Dispatcher and Sales/Booking from GET /loads/ready-to-invoice', async () => {
       await dispatcherAgent.get(`${API}/loads/ready-to-invoice`).expect(403);
@@ -905,6 +949,54 @@ describe('Financials (e2e)', () => {
 
       const adminView = await adminAgent.get(`${API}/loads/${loadId}`).expect(200);
       expect(adminView.body.carrierRate).not.toBeNull();
+    });
+
+    it('redacts chargeLineItems per-side on GET /loads/:id — Dispatcher sees neither side, full-visibility roles see both, Sales/Booking sees CUSTOMER-side only on their own Load', async () => {
+      const carrierId = await createEligibleCarrier('p1-charge-line-items');
+      const { loadId } = await createBookedLoad('p1-charge-line-items', undefined, '2000.00');
+      await progressToDelivered(loadId, carrierId, '1500.00');
+
+      const dispatcherView = await dispatcherAgent.get(`${API}/loads/${loadId}`).expect(200);
+      expect(
+        dispatcherView.body.chargeLineItems.every((c: { amount: unknown }) => c.amount === null),
+      ).toBe(true);
+
+      const adminView = await adminAgent.get(`${API}/loads/${loadId}`).expect(200);
+      const adminCustomerCharge = adminView.body.chargeLineItems.find(
+        (c: { side: string }) => c.side === 'CUSTOMER',
+      );
+      const adminCarrierCharge = adminView.body.chargeLineItems.find(
+        (c: { side: string }) => c.side === 'CARRIER',
+      );
+      expect(adminCustomerCharge.amount).not.toBeNull();
+      expect(adminCarrierCharge.amount).not.toBeNull();
+
+      // A Sales/Booking-created Load: customer-side visible, carrier-side
+      // still redacted even though it's their own deal (§5.4.1 Resolution
+      // 1 — Margin, and the carrier cost it's derived from, is never
+      // shown to Sales/Booking regardless of ownership).
+      const salesCarrierId = await createEligibleCarrier('p1-charge-line-items-sales');
+      const customerId = await createActiveCustomer(adminAgent, 'p1-charge-line-items-sales');
+      const ownLoadRes = await salesAgent
+        .post(`${API}/loads`)
+        .send({ customerId, stops: LOAD_STOPS, equipmentType: 'DRY_VAN', customerRate: '900.00' })
+        .expect(201);
+      const ownLoadId = ownLoadRes.body.id;
+      await adminAgent.post(`${API}/loads/${ownLoadId}/begin-sourcing`).expect(200);
+      await adminAgent
+        .post(`${API}/loads/${ownLoadId}/assign-carrier`)
+        .send({ carrierId: salesCarrierId, carrierRate: '700.00' })
+        .expect(200);
+
+      const salesOwnView = await salesAgent.get(`${API}/loads/${ownLoadId}`).expect(200);
+      const salesCustomerCharge = salesOwnView.body.chargeLineItems.find(
+        (c: { side: string }) => c.side === 'CUSTOMER',
+      );
+      const salesCarrierCharge = salesOwnView.body.chargeLineItems.find(
+        (c: { side: string }) => c.side === 'CARRIER',
+      );
+      expect(salesCustomerCharge.amount).not.toBeNull();
+      expect(salesCarrierCharge.amount).toBeNull();
     });
   });
 

@@ -89,8 +89,19 @@ export class LoadService {
         where: { id, organizationId },
         // Phase 4 addition — sourcingAttempts/dispatchRecord/checkCalls are
         // purely additive read-side includes (new Phase 4 relations); no
-        // Phase 3 business rule changes.
-        include: { stops: true, sourcingAttempts: true, dispatchRecord: true, checkCalls: true },
+        // Phase 3 business rule changes. chargeLineItems is a Frontend
+        // Phase 4 gap-fix — the Financials tab's locked design requires an
+        // itemized Customer/Carrier-side table, and no read endpoint
+        // existed for it at all; shapeFinancialFields below redacts each
+        // item's `amount` per its `side`, same as every other financial
+        // field on this response.
+        include: {
+          stops: true,
+          sourcingAttempts: true,
+          dispatchRecord: true,
+          checkCalls: true,
+          chargeLineItems: true,
+        },
       });
       if (!found) return null;
 
@@ -532,6 +543,28 @@ export class LoadService {
       });
 
       return { load: updated, checklistSnapshot };
+    });
+  }
+
+  /**
+   * Frontend Phase 4 gap-fix — Load Detail's Closing Readiness card
+   * (Overview tab) and the Load Closing screen itself (§5.4.8) both need
+   * to show the checklist BEFORE the user commits to closing; previously
+   * `evaluateClosingChecklist` was only reachable as a side effect of
+   * `closeLoad` actually flipping the Load to CLOSED. This wrapper opens
+   * its own read-only transaction and calls the exact same private
+   * evaluation method `closeLoad` uses — no checklist logic is
+   * duplicated, and nothing here can mutate the Load.
+   */
+  async getClosingChecklist(
+    organizationId: string,
+    loadId: string,
+  ): Promise<{ checklist: ChecklistItem[] }> {
+    return this.prisma.withTenantTransaction(organizationId, async (tx) => {
+      const load = await tx.load.findFirst({ where: { id: loadId, organizationId } });
+      if (!load) throw new NotFoundError('Load not found.');
+      const checklist = await this.evaluateClosingChecklist(tx, organizationId, load);
+      return { checklist };
     });
   }
 
