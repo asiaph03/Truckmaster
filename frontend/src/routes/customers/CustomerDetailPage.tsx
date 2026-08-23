@@ -21,6 +21,7 @@ import {
 } from '../../components/ui';
 import { useToast } from '../../components/ui/toastStore';
 import { usePermissions } from '../../hooks/usePermissions';
+import { NewLoadChoiceModal } from '../loads/modals/NewLoadChoiceModal';
 import { OverviewTab } from './tabs/OverviewTab';
 import { ContactsTab } from './tabs/ContactsTab';
 import { LocationsTab } from './tabs/LocationsTab';
@@ -39,6 +40,7 @@ export function CustomerDetailPage() {
   const [activeTab, setActiveTab] = useState('overview');
   const [editing, setEditing] = useState(false);
   const [changingStatus, setChangingStatus] = useState(false);
+  const [newQuoteOpen, setNewQuoteOpen] = useState(false);
 
   const { data: customer, isLoading } = useQuery({
     queryKey: ['customers', id],
@@ -48,6 +50,7 @@ export function CustomerDetailPage() {
 
   const canEdit = can('manageCustomers');
   const canViewFinancialTabs = can('viewCustomerFinancialTabs');
+  const canCreateQuote = can('createQuoteOrLoad');
 
   const editForm = useForm<UpdateCustomerRequest>();
   const statusForm = useForm<ChangeCustomerStatusRequest>();
@@ -101,26 +104,39 @@ export function CustomerDetailPage() {
             color={getStatusBadgeColor('Customer.status', customer.status) ?? 'neutral'}
           />
         </div>
-        {canEdit ? (
+        {canEdit || canCreateQuote ? (
           <div className="detail-page-actions">
-            <Button
-              variant="secondary"
-              onClick={() => {
-                editForm.reset(customer);
-                setEditing(true);
-              }}
-            >
-              Edit
-            </Button>
-            <Button
-              variant="secondary"
-              onClick={() => {
-                statusForm.reset({ status: customer.status });
-                setChangingStatus(true);
-              }}
-            >
-              Change Status
-            </Button>
+            {canCreateQuote ? (
+              <Button
+                disabled={customer.status === 'BLOCKED'}
+                title={customer.status === 'BLOCKED' ? 'Customer is Blocked.' : undefined}
+                onClick={() => setNewQuoteOpen(true)}
+              >
+                + New Quote
+              </Button>
+            ) : null}
+            {canEdit ? (
+              <>
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    editForm.reset(customer);
+                    setEditing(true);
+                  }}
+                >
+                  Edit
+                </Button>
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    statusForm.reset({ status: customer.status });
+                    setChangingStatus(true);
+                  }}
+                >
+                  Change Status
+                </Button>
+              </>
+            ) : null}
           </div>
         ) : null}
       </div>
@@ -181,6 +197,12 @@ export function CustomerDetailPage() {
           <Select label="Status" options={STATUS_OPTIONS} {...statusForm.register('status')} />
         </form>
       </Modal>
+
+      <NewLoadChoiceModal
+        open={newQuoteOpen}
+        onClose={() => setNewQuoteOpen(false)}
+        customerId={customer.id}
+      />
     </div>
   );
 }

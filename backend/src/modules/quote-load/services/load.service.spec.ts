@@ -93,6 +93,53 @@ function buildService(opts: {
   return { service, tx, audit, sequences, rateAgreementMatching };
 }
 
+describe('LoadService.list — Frontend Phase 3 gap-fix (Dispatch Board Table View)', () => {
+  it('includes stops on every row (Origin/Destination + Pickup/Delivery Date columns need them)', async () => {
+    const { service, tx } = buildService({});
+
+    await service.list(ORG_ID, USER_ID, ['ADMIN']);
+
+    expect(tx.load.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ include: { stops: true } }),
+    );
+  });
+
+  it('applies carrierId, dispatcherId, and equipmentType filters when provided, alongside the existing status/customerId ones', async () => {
+    const { service, tx } = buildService({});
+
+    await service.list(ORG_ID, USER_ID, ['ADMIN'], {
+      status: 'DISPATCHED',
+      customerId: CUSTOMER_ID,
+      carrierId: 'carrier-1',
+      dispatcherId: 'dispatcher-1',
+      equipmentType: 'DRY_VAN',
+    });
+
+    expect(tx.load.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          status: 'DISPATCHED',
+          customerId: CUSTOMER_ID,
+          assignedCarrierId: 'carrier-1',
+          assignedDispatcherId: 'dispatcher-1',
+          equipmentType: 'DRY_VAN',
+        }),
+      }),
+    );
+  });
+
+  it('omits the new filters entirely when not provided — no behavior change for existing callers', async () => {
+    const { service, tx } = buildService({});
+
+    await service.list(ORG_ID, USER_ID, ['ADMIN'], { status: 'BOOKED' });
+
+    const call = tx.load.findMany.mock.calls[0][0];
+    expect(call.where).not.toHaveProperty('assignedCarrierId');
+    expect(call.where).not.toHaveProperty('assignedDispatcherId');
+    expect(call.where).not.toHaveProperty('equipmentType');
+  });
+});
+
 describe('LoadService.createDirect — Workflow 4 §4.8', () => {
   it('creates a Load at status BOOKED with bookingSource=DIRECT, quoteId=NULL, dispatcherId=NULL', async () => {
     const { service, sequences, audit } = buildService({});

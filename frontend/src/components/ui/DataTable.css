@@ -140,6 +140,22 @@
   min-width: 160px;
 }
 
+.data-table-row-action {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: var(--space-2) var(--space-3);
+  background: none;
+  border: none;
+  font-size: var(--text-body-size);
+  color: var(--neutral-900);
+  cursor: pointer;
+}
+
+.data-table-row-action:hover {
+  background: var(--brand-50);
+}
+
 .data-table-row-actions:focus-within .data-table-row-actions-menu,
 .data-table-row-actions:hover .data-table-row-actions-menu {
   display: block;

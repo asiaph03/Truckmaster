@@ -25,6 +25,14 @@ const READY_TO_INVOICE_RECORD = {
   customerChargesTotal: '1800.00',
 };
 
+const LOAD_WITH_SOURCING_ATTEMPTS = {
+  ...LOAD_RECORD,
+  sourcingAttempts: [
+    { id: 'attempt-1', outcome: 'DECLINED', carrierRate: null },
+    { id: 'attempt-2', outcome: 'ASSIGNED', carrierRate: '1500.00' },
+  ],
+};
+
 describe('shapeFinancialFields — post-Phase-8 remediation (Priority 1)', () => {
   it('leaves carrierRate and customerChargesTotal untouched for full-visibility roles', () => {
     const result = shapeFinancialFields(READY_TO_INVOICE_RECORD, ['ADMIN'], OTHER_USER_ID);
@@ -54,6 +62,32 @@ describe('shapeFinancialFields — post-Phase-8 remediation (Priority 1)', () =>
     expect('carrierRate' in result).toBe(false);
     expect('customerChargesTotal' in result).toBe(false);
     expect(result.customerRate).toBeNull();
+  });
+
+  it('redacts carrierRate on every nested sourcingAttempts entry for Dispatcher', () => {
+    const result = shapeFinancialFields(LOAD_WITH_SOURCING_ATTEMPTS, ['DISPATCHER'], OTHER_USER_ID);
+    expect(result.sourcingAttempts.map((a) => a.carrierRate)).toEqual([null, null]);
+    // Non-financial fields on each attempt survive the redaction untouched.
+    expect(result.sourcingAttempts.map((a) => a.outcome)).toEqual(['DECLINED', 'ASSIGNED']);
+  });
+
+  it('redacts nested sourcingAttempts carrierRate for Sales/Booking on a record they did not create', () => {
+    const result = shapeFinancialFields(
+      LOAD_WITH_SOURCING_ATTEMPTS,
+      ['SALES_BOOKING'],
+      OTHER_USER_ID,
+    );
+    expect(result.sourcingAttempts.every((a) => a.carrierRate === null)).toBe(true);
+  });
+
+  it('leaves nested sourcingAttempts carrierRate visible for full-visibility roles', () => {
+    const result = shapeFinancialFields(LOAD_WITH_SOURCING_ATTEMPTS, ['ADMIN'], OTHER_USER_ID);
+    expect(result.sourcingAttempts[1].carrierRate).toBe('1500.00');
+  });
+
+  it('does not add a sourcingAttempts key to a record that never had one (Quote)', () => {
+    const result = shapeFinancialFields(QUOTE_RECORD, ['DISPATCHER'], OTHER_USER_ID);
+    expect('sourcingAttempts' in result).toBe(false);
   });
 
   it('shapeFinancialFieldsList applies the same redaction across an array', () => {

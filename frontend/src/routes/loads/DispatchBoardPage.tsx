@@ -1,0 +1,473 @@
+import { useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { Search } from 'lucide-react';
+import { EQUIPMENT_TYPES } from '@tms/shared-constants';
+import { carriersApi, customersApi, loadsApi, membershipsApi, type LoadSummary } from '../../api';
+import {
+  Badge,
+  BulkActionBar,
+  Button,
+  DataTable,
+  Drawer,
+  FilterChip,
+  Modal,
+  ModalFooter,
+  RowActionsMenu,
+  Select,
+} from '../../components/ui';
+import { getStatusBadgeColor } from '../../components/ui/statusBadgeMap';
+import { useToast } from '../../components/ui/toastStore';
+import { usePermissions } from '../../hooks/usePermissions';
+import {
+  firstPickupDate,
+  formatDateShort,
+  isWithinHours,
+  lastDeliveryDate,
+  originDestination,
+} from './loadDerived';
+import { NewLoadChoiceModal } from './modals/NewLoadChoiceModal';
+import { AssignDispatcherModal } from './modals/AssignDispatcherModal';
+import '../shared/ListPage.css';
+import './DispatchBoardPage.css';
+
+const EQUIPMENT_OPTIONS = EQUIPMENT_TYPES.map((t) => ({ value: t, label: t.replace('_', ' ') }));
+const STATUS_OPTIONS = [
+  { value: '', label: 'All (excl. Closed)' },
+  { value: 'BOOKED', label: 'Booked' },
+  { value: 'CARRIER_SOURCING', label: 'Carrier Sourcing' },
+  { value: 'CARRIER_ASSIGNED', label: 'Carrier Assigned' },
+  { value: 'RATE_CONFIRMATION', label: 'Rate Confirmation' },
+  { value: 'DISPATCHED', label: 'Dispatched' },
+  { value: 'PICKUP', label: 'Pickup' },
+  { value: 'IN_TRANSIT', label: 'In Transit' },
+  { value: 'DELIVERED', label: 'Delivered' },
+  { value: 'CLOSED', label: 'Closed' },
+];
+
+type QuickFilter = 'pickups4h' | 'deliveries4h' | 'today' | 'overdue' | null;
+
+function isToday(dateStr: string | null): boolean {
+  if (!dateStr) return false;
+  const d = new Date(dateStr);
+  const now = new Date();
+  return (
+    d.getFullYear() === now.getFullYear() &&
+    d.getMonth() === now.getMonth() &&
+    d.getDate() === now.getDate()
+  );
+}
+
+/**
+ * No locked "new-org empty state" exists (§5.3.13, left open in the
+ * spec itself) — uses the standard `EmptyState` pattern. Row-click
+ * Drawer intentionally shows a summary + "Open Full Detail" only (no
+ * duplicated context-sensitive action button) — Load Detail is the
+ * authoritative place for lifecycle actions, keeping the state-machine
+ * logic in one place. Bulk actions scoped to "Assign Dispatcher" only
+ * this phase (bulk Assign Carrier and Export are deferred — Export
+ * needs backend CSV support, a known gap from Phase 2).
+ */
+export function DispatchBoardPage() {
+  const navigate = useNavigate();
+  const { can } = usePermissions();
+  const queryClient = useQueryClient();
+
+  const [status, setStatus] = useState('');
+  const [equipmentType, setEquipmentType] = useState('');
+  const [carrierId, setCarrierId] = useState('');
+  const [dispatcherId, setDispatcherId] = useState('');
+  const [search, setSearch] = useState('');
+  const [quickFilter, setQuickFilter] = useState<QuickFilter>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [drawerLoad, setDrawerLoad] = useState<LoadSummary | null>(null);
+  const [newLoadModalOpen, setNewLoadModalOpen] = useState(false);
+  const [assigningDispatcherFor, setAssigningDispatcherFor] = useState<string | null>(null);
+  const [bulkAssigning, setBulkAssigning] = useState(false);
+
+  const canManage = can('sourceAndDispatchLoads');
+
+  const { data: loads = [], isLoading } = useQuery({
+    queryKey: ['loads', { status, equipmentType, carrierId, dispatcherId }],
+    queryFn: () =>
+      loadsApi.list({
+        status: status || undefined,
+        equipmentType: equipmentType || undefined,
+        carrierId: carrierId || undefined,
+        dispatcherId: dispatcherId || undefined,
+      }),
+  });
+  const { data: customers = [] } = useQuery({
+    queryKey: ['customers', {}],
+    queryFn: () => customersApi.list(),
+  });
+  const { data: carriers = [] } = useQuery({
+    queryKey: ['carriers', {}],
+    queryFn: () => carriersApi.list(),
+  });
+  const { data: memberships = [] } = useQuery({
+    queryKey: ['memberships'],
+    queryFn: () => membershipsApi.list(),
+  });
+
+  const customerName = (id: string) => customers.find((c) => c.id === id)?.legalName ?? id;
+  const carrierName = (id?: string) =>
+    id ? (carriers.find((c) => c.id === id)?.legalName ?? id) : '—';
+  const dispatcherName = (id?: string) =>
+    id ? (memberships.find((m) => m.userId === id)?.user.name ?? id) : 'Unassigned';
+
+  const filtered = useMemo(() => {
+    let rows = loads;
+    if (!status) rows = rows.filter((l) => l.status !== 'CLOSED');
+    if (search.trim()) {
+      const q = search.trim().toLowerCase();
+      rows = rows.filter(
+        (l) =>
+          l.loadNumber.toLowerCase().includes(q) ||
+          customerName(l.customerId).toLowerCase().includes(q),
+      );
+    }
+    if (quickFilter === 'pickups4h')
+      rows = rows.filter((l) => isWithinHours(firstPickupDate(l.stops), 4));
+    if (quickFilter === 'deliveries4h')
+      rows = rows.filter((l) => isWithinHours(lastDeliveryDate(l.stops), 4));
+    if (quickFilter === 'today')
+      rows = rows.filter(
+        (l) => isToday(firstPickupDate(l.stops)) || isToday(lastDeliveryDate(l.stops)),
+      );
+    if (quickFilter === 'overdue')
+      rows = rows.filter((l) => {
+        const pickup = firstPickupDate(l.stops);
+        const delivery = lastDeliveryDate(l.stops);
+        const now = Date.now();
+        return (
+          (pickup &&
+            new Date(pickup).getTime() < now &&
+            l.status !== 'DELIVERED' &&
+            l.status !== 'CLOSED') ||
+          (delivery &&
+            new Date(delivery).getTime() < now &&
+            l.status !== 'DELIVERED' &&
+            l.status !== 'CLOSED')
+        );
+      });
+    return rows;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loads, status, search, quickFilter, customers]);
+
+  function afterMutation() {
+    queryClient.invalidateQueries({ queryKey: ['loads'] });
+  }
+
+  return (
+    <div>
+      <div className="list-page-header">
+        <div>
+          <h1 className="list-page-title">Dispatch Board</h1>
+          <p style={{ margin: 0, color: 'var(--neutral-500)', fontSize: 'var(--text-small-size)' }}>
+            Table view — Kanban and Calendar are coming in a later phase.
+          </p>
+        </div>
+        {can('createQuoteOrLoad') ? (
+          <Button onClick={() => setNewLoadModalOpen(true)}>+ New Load</Button>
+        ) : null}
+      </div>
+
+      <div className="list-page-toolbar">
+        <div className="list-page-search">
+          <Search size={14} strokeWidth={1.5} />
+          <input
+            placeholder="Search Load # or Customer…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+        </div>
+        <select
+          className="field-select list-page-filter"
+          value={status}
+          onChange={(e) => setStatus(e.target.value)}
+        >
+          {STATUS_OPTIONS.map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
+        </select>
+        <select
+          className="field-select list-page-filter"
+          value={equipmentType}
+          onChange={(e) => setEquipmentType(e.target.value)}
+        >
+          <option value="">All equipment</option>
+          {EQUIPMENT_OPTIONS.map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
+        </select>
+        <select
+          className="field-select list-page-filter"
+          value={carrierId}
+          onChange={(e) => setCarrierId(e.target.value)}
+        >
+          <option value="">All carriers</option>
+          {carriers.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.legalName}
+            </option>
+          ))}
+        </select>
+        <select
+          className="field-select list-page-filter"
+          value={dispatcherId}
+          onChange={(e) => setDispatcherId(e.target.value)}
+        >
+          <option value="">All dispatchers</option>
+          {memberships.map((m) => (
+            <option key={m.userId} value={m.userId}>
+              {m.user.name}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {selected.size > 0 ? (
+        <BulkActionBar selectedCount={selected.size} onClear={() => setSelected(new Set())}>
+          {canManage ? (
+            <Button size="sm" variant="secondary" onClick={() => setBulkAssigning(true)}>
+              Assign Dispatcher
+            </Button>
+          ) : null}
+        </BulkActionBar>
+      ) : (
+        <div className="dispatch-board-chips">
+          <FilterChip
+            label="Pickups next 4h"
+            active={quickFilter === 'pickups4h'}
+            onClick={() => setQuickFilter(quickFilter === 'pickups4h' ? null : 'pickups4h')}
+          />
+          <FilterChip
+            label="Deliveries next 4h"
+            active={quickFilter === 'deliveries4h'}
+            onClick={() => setQuickFilter(quickFilter === 'deliveries4h' ? null : 'deliveries4h')}
+          />
+          <FilterChip
+            label="Today"
+            active={quickFilter === 'today'}
+            onClick={() => setQuickFilter(quickFilter === 'today' ? null : 'today')}
+          />
+          <FilterChip
+            label="Overdue"
+            active={quickFilter === 'overdue'}
+            onClick={() => setQuickFilter(quickFilter === 'overdue' ? null : 'overdue')}
+          />
+        </div>
+      )}
+
+      <DataTable
+        loading={isLoading}
+        rows={filtered}
+        rowKey={(r) => r.id}
+        selectable
+        selectedKeys={selected}
+        onSelectionChange={setSelected}
+        onRowClick={(row) => setDrawerLoad(row)}
+        emptyMessage="No loads match your filters."
+        columns={[
+          { key: 'loadNumber', header: 'Load #', render: (r) => r.loadNumber },
+          { key: 'customer', header: 'Customer', render: (r) => customerName(r.customerId) },
+          {
+            key: 'status',
+            header: 'Status',
+            render: (r) => (
+              <Badge
+                label={r.status}
+                color={getStatusBadgeColor('Load.status', r.status) ?? 'neutral'}
+              />
+            ),
+          },
+          {
+            key: 'risk',
+            header: 'Risk',
+            render: (r) =>
+              r.riskStatus !== 'NORMAL' ? (
+                <Badge
+                  label={r.riskStatus}
+                  color={getStatusBadgeColor('Load.riskStatus', r.riskStatus) ?? 'warning'}
+                />
+              ) : null,
+          },
+          { key: 'carrier', header: 'Carrier', render: (r) => carrierName(r.assignedCarrierId) },
+          {
+            key: 'dispatcher',
+            header: 'Dispatcher',
+            render: (r) => dispatcherName(r.assignedDispatcherId),
+          },
+          {
+            key: 'lane',
+            header: 'Origin → Destination',
+            render: (r) => originDestination(r.stops),
+          },
+          {
+            key: 'pickup',
+            header: 'Pickup',
+            render: (r) => formatDateShort(firstPickupDate(r.stops)),
+          },
+          {
+            key: 'delivery',
+            header: 'Delivery',
+            render: (r) => formatDateShort(lastDeliveryDate(r.stops)),
+          },
+          {
+            key: 'equipment',
+            header: 'Equipment',
+            render: (r) => r.equipmentType.replace('_', ' '),
+          },
+          {
+            key: 'customerRate',
+            header: 'Customer Rate',
+            numeric: true,
+            render: (r) => (r.customerRate != null ? `$${r.customerRate}` : '—'),
+          },
+          {
+            key: 'carrierRate',
+            header: 'Carrier Rate',
+            numeric: true,
+            render: (r) => (r.carrierRate != null ? `$${r.carrierRate}` : '—'),
+          },
+        ]}
+        rowActions={
+          canManage
+            ? (r) => (
+                <RowActionsMenu>
+                  <button
+                    className="data-table-row-action"
+                    onClick={() => navigate(`/loads/${r.id}`)}
+                  >
+                    Open Full Detail
+                  </button>
+                  <button
+                    className="data-table-row-action"
+                    onClick={() => setAssigningDispatcherFor(r.id)}
+                  >
+                    {r.assignedDispatcherId ? 'Reassign Dispatcher' : 'Assign Dispatcher'}
+                  </button>
+                </RowActionsMenu>
+              )
+            : undefined
+        }
+      />
+
+      <NewLoadChoiceModal open={newLoadModalOpen} onClose={() => setNewLoadModalOpen(false)} />
+
+      <Drawer
+        open={drawerLoad !== null}
+        title={drawerLoad?.loadNumber ?? ''}
+        onClose={() => setDrawerLoad(null)}
+      >
+        {drawerLoad ? (
+          <div>
+            <p>
+              <strong>Customer:</strong> {customerName(drawerLoad.customerId)}
+            </p>
+            <p>
+              <strong>Status:</strong>{' '}
+              <Badge
+                label={drawerLoad.status}
+                color={getStatusBadgeColor('Load.status', drawerLoad.status) ?? 'neutral'}
+              />
+            </p>
+            <p>
+              <strong>Carrier:</strong> {carrierName(drawerLoad.assignedCarrierId)}
+            </p>
+            <p>
+              <strong>Lane:</strong> {originDestination(drawerLoad.stops)}
+            </p>
+            <Button onClick={() => navigate(`/loads/${drawerLoad.id}`)}>Open Full Detail →</Button>
+          </div>
+        ) : null}
+      </Drawer>
+
+      {assigningDispatcherFor ? (
+        <AssignDispatcherModal
+          open
+          loadId={assigningDispatcherFor}
+          onClose={() => setAssigningDispatcherFor(null)}
+          onAssigned={() => {
+            setAssigningDispatcherFor(null);
+            afterMutation();
+          }}
+        />
+      ) : null}
+
+      {bulkAssigning ? (
+        <BulkAssignDispatcherFlow
+          loadIds={Array.from(selected)}
+          onClose={() => setBulkAssigning(false)}
+          onDone={() => {
+            setBulkAssigning(false);
+            setSelected(new Set());
+            afterMutation();
+          }}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+/** Applies one dispatcher choice to every selected Load, sequentially (no bulk endpoint exists — nor is one needed at this scale). */
+function BulkAssignDispatcherFlow({
+  loadIds,
+  onClose,
+  onDone,
+}: {
+  loadIds: string[];
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const { data: memberships = [] } = useQuery({
+    queryKey: ['memberships'],
+    queryFn: () => membershipsApi.list(),
+  });
+  const [dispatcherUserId, setDispatcherUserId] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const toast = useToast();
+
+  async function apply() {
+    if (!dispatcherUserId) return;
+    setSubmitting(true);
+    try {
+      await Promise.all(loadIds.map((id) => loadsApi.setDispatcher(id, { dispatcherUserId })));
+      toast.success(`Dispatcher assigned to ${loadIds.length} load(s).`);
+      onDone();
+    } catch {
+      toast.danger('Some loads could not be updated.');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <Modal
+      open
+      title={`Assign Dispatcher to ${loadIds.length} Load(s)`}
+      onClose={onClose}
+      footer={
+        <ModalFooter
+          onCancel={onClose}
+          onConfirm={apply}
+          confirmLabel="Assign"
+          loading={submitting}
+        />
+      }
+    >
+      <Select
+        label="Dispatcher"
+        required
+        value={dispatcherUserId}
+        onChange={(e) => setDispatcherUserId(e.target.value)}
+        options={memberships.map((m) => ({ value: m.userId, label: m.user.name }))}
+      />
+    </Modal>
+  );
+}

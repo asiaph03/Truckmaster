@@ -1,0 +1,22 @@
+.bulk-action-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  background: var(--brand-50);
+  border: 1px solid var(--brand-100);
+  border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-3);
+  margin-bottom: var(--space-3);
+}
+
+.bulk-action-bar-count {
+  font-size: var(--text-body-medium-size);
+  font-weight: 500;
+  color: var(--brand-700);
+}
+
+.bulk-action-bar-actions {
+  display: flex;
+  gap: var(--space-2);
+  flex: 1;
+}

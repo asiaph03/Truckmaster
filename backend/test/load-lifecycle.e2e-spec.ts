@@ -568,6 +568,28 @@ describe('Load Lifecycle Core (e2e)', () => {
     });
   });
 
+  describe('GET /loads — Frontend Phase 3 gap-fix (Dispatch Board Table View)', () => {
+    it("includes each Load's stops, and filters by customerId and equipmentType", async () => {
+      const customerId = await createCustomer(adminAgent, 'ACTIVE', 'list-gapfix');
+      const created = await adminAgent
+        .post(`${API}/loads`)
+        .send({ customerId, stops: LOAD_STOPS, equipmentType: 'REEFER', customerRate: '900.00' })
+        .expect(201);
+
+      const res = await adminAgent.get(`${API}/loads`).query({ customerId }).expect(200);
+      const found = res.body.find((l: { id: string }) => l.id === created.body.id);
+      expect(found).toBeDefined();
+      expect(found.stops).toHaveLength(2);
+      expect(found.stops[0]).toMatchObject({ city: 'Dallas', stopType: 'PICKUP' });
+
+      const filtered = await adminAgent
+        .get(`${API}/loads`)
+        .query({ customerId, equipmentType: 'DRY_VAN' })
+        .expect(200);
+      expect(filtered.body.find((l: { id: string }) => l.id === created.body.id)).toBeUndefined();
+    });
+  });
+
   describe('Load & Quote numbering — Workflow 4 §4.9', () => {
     it('assigns independent, sequential numbers — a Quote never consumes a Load number', async () => {
       const customerId = await createCustomer(adminAgent, 'ACTIVE', 'numbering');

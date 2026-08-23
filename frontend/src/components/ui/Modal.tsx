@@ -28,10 +28,23 @@ export function Modal({
 }: ModalProps) {
   const dialogRef = useRef<HTMLDivElement>(null);
 
+  // Callers universally pass an inline `onClose` (e.g. `() =>
+  // setEditing(false)`), a fresh function reference every render. Keeping
+  // `onClose` in the effect's own deps re-ran it — including the
+  // `dialogRef.current?.focus()` call — on every parent re-render while
+  // open (a background refetch, an unrelated state change), silently
+  // yanking focus away from whatever field the user was typing in. A ref
+  // lets the keydown handler always call the latest `onClose` without the
+  // effect (and its one-time focus grab) re-running on every render.
+  const onCloseRef = useRef(onClose);
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
+
   useEffect(() => {
     if (!open) return;
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape') onCloseRef.current();
       if (e.key === 'Tab' && dialogRef.current) {
         const focusable = dialogRef.current.querySelectorAll<HTMLElement>(
           'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
@@ -51,7 +64,7 @@ export function Modal({
     document.addEventListener('keydown', onKeyDown);
     dialogRef.current?.focus();
     return () => document.removeEventListener('keydown', onKeyDown);
-  }, [open, onClose]);
+  }, [open]);
 
   if (!open) return null;
 

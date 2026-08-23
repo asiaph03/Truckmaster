@@ -127,7 +127,13 @@ export class LoadService {
     organizationId: string,
     actingUserId: string,
     actingRoles: MembershipRoleName[],
-    filters: { status?: string; customerId?: string } = {},
+    filters: {
+      status?: string;
+      customerId?: string;
+      carrierId?: string;
+      dispatcherId?: string;
+      equipmentType?: string;
+    } = {},
   ) {
     const loads = await this.prisma.withTenantTransaction(organizationId, (tx) =>
       tx.load.findMany({
@@ -135,7 +141,19 @@ export class LoadService {
           organizationId,
           ...(filters.status ? { status: filters.status as Load['status'] } : {}),
           ...(filters.customerId ? { customerId: filters.customerId } : {}),
+          ...(filters.carrierId ? { assignedCarrierId: filters.carrierId } : {}),
+          ...(filters.dispatcherId ? { assignedDispatcherId: filters.dispatcherId } : {}),
+          ...(filters.equipmentType
+            ? { equipmentType: filters.equipmentType as EquipmentType }
+            : {}),
         },
+        // Frontend Phase 3 gap-fix — Dispatch Board Table View's locked
+        // Origin→Destination / Pickup/Delivery Date columns are derived
+        // from each Load's Stops (§5.4.1); the list endpoint previously
+        // returned bare Load rows with no way to render them short of an
+        // N+1 fetch per row. Mirrors findById's own `stops: true`
+        // include exactly — same shape, no new projection invented.
+        include: { stops: true },
         orderBy: { createdAt: 'desc' },
       }),
     );

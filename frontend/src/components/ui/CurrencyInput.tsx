@@ -34,6 +34,7 @@ export const CurrencyInput = forwardRef<HTMLInputElement, CurrencyInputProps>(
       value,
       defaultValue,
       onValueChange,
+      onChange,
       onBlur,
       ...rest
     },
@@ -53,10 +54,24 @@ export const CurrencyInput = forwardRef<HTMLInputElement, CurrencyInputProps>(
       onBlur?.(e);
     }
 
+    // `onChange` (e.g. react-hook-form's `register()`) must be destructured
+    // out and composed here, not left in `...rest` — spreading `rest` after
+    // this element's own `onChange`/`value` (as JSX prop order requires,
+    // since `value` must stay controlled by `current`) would let a
+    // caller-supplied `onChange` silently replace this one, freezing the
+    // field at its initial value: every keystroke would filter/format
+    // correctly in a local variable that never reaches `current`, so
+    // nothing ever appears to be typed. Composing here — filter first,
+    // sync the DOM node so the caller reads the same filtered value, then
+    // forward the event — fixes every existing `register()` call site at
+    // once (Load/Quote Customer Rate, Carrier Rate modals, Insurance/Rate
+    // Agreement forms) without changing any of their call sites.
     function handleChange(e: React.ChangeEvent<HTMLInputElement>) {
       const raw = e.target.value.replace(/[^0-9.]/g, '');
       if (!isControlled) setInternal(raw);
       onValueChange?.(raw);
+      e.target.value = raw;
+      onChange?.(e);
     }
 
     return (

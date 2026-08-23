@@ -10,16 +10,22 @@ import { CustomerDetailPage } from './routes/customers/CustomerDetailPage';
 import { CarrierListPage } from './routes/carriers/CarrierListPage';
 import { CarrierCreatePage } from './routes/carriers/CarrierCreatePage';
 import { CarrierDetailPage } from './routes/carriers/CarrierDetailPage';
+import { DispatchBoardPage } from './routes/loads/DispatchBoardPage';
+import { LoadCreatePage } from './routes/loads/LoadCreatePage';
+import { LoadDetailPage } from './routes/loads/LoadDetailPage';
+import { QuoteListPage } from './routes/quotes/QuoteListPage';
+import { QuoteCreatePage } from './routes/quotes/QuoteCreatePage';
+import { QuoteDetailPage } from './routes/quotes/QuoteDetailPage';
 import { AppShell } from './shell/AppShell';
 import { ToastViewport } from './components/ui';
 
 /**
  * §8/§9 of the approved Phase 1 plan: GET /auth/me on boot is the sole
  * point session state is "trusted"; every screen after that reads the
- * store. Phase 2 adds the real router, mapped 1:1 to the routes it
- * covers (Customers, Carriers) — everything else is a ComingSoonPage
- * placeholder per the approved scope (no Loads/Billing/Dashboard/
- * Reports/Settings screens yet).
+ * store. Phase 2 added Customers/Carriers; Phase 3 adds the Load
+ * lifecycle (Dispatch Board Table View, Direct Booking, Quotes, Load
+ * Detail). Billing/Dashboard/Reports/Settings remain ComingSoonPage per
+ * the approved scope.
  */
 function App() {
   const status = useSessionStore((s) => s.status);
@@ -51,7 +57,13 @@ function App() {
     <Routes>
       <Route element={<AppShell />}>
         <Route path="/" element={<ComingSoonPage title="Dashboard" />} />
-        <Route path="/loads" element={<ComingSoonPage title="Loads" />} />
+        <Route path="/loads" element={<Navigate to="/loads/board" replace />} />
+        <Route path="/loads/board" element={<DispatchBoardPage />} />
+        <Route path="/loads/new" element={<LoadCreatePage />} />
+        <Route path="/loads/:id" element={<LoadDetailPage />} />
+        <Route path="/quotes" element={<QuoteListPage />} />
+        <Route path="/quotes/new" element={<QuoteCreatePage />} />
+        <Route path="/quotes/:id" element={<QuoteDetailPage />} />
         <Route path="/customers" element={<CustomerListPage />} />
         <Route path="/customers/new" element={<CustomerCreatePage />} />
         <Route path="/customers/:id" element={<CustomerDetailPage />} />

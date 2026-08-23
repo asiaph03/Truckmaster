@@ -78,11 +78,23 @@ export class LoadController {
   ) {}
 
   @Get()
-  list(@Query('status') status?: string, @Query('customerId') customerId?: string) {
+  list(
+    @Query('status') status?: string,
+    @Query('customerId') customerId?: string,
+    @Query('carrierId') carrierId?: string,
+    @Query('dispatcherId') dispatcherId?: string,
+    @Query('equipmentType') equipmentType?: string,
+  ) {
     const organizationId = RequestContextStore.requireOrganizationId();
     const actingUserId = RequestContextStore.requireUserId();
     const actingRoles = (RequestContextStore.current().roles ?? []) as MembershipRoleName[];
-    return this.loadService.list(organizationId, actingUserId, actingRoles, { status, customerId });
+    return this.loadService.list(organizationId, actingUserId, actingRoles, {
+      status,
+      customerId,
+      carrierId,
+      dispatcherId,
+      equipmentType,
+    });
   }
 
   // Must be registered before @Get(':id') — a static path segment has to

@@ -15,6 +15,17 @@ interface FinancialShapeable {
    */
   carrierRate?: unknown;
   customerChargesTotal?: unknown;
+  /**
+   * Frontend Phase 3 remediation — `LoadService.findById` includes the
+   * full `sourcingAttempts` history (Carrier & Dispatch tab, §5.4.4), and
+   * each attempt carries its own `carrierRate`. This helper redacted only
+   * the top-level `Load.carrierRate`; the nested per-attempt rate was
+   * never touched, so Dispatcher/non-owning Sales-Booking could still read
+   * carrier cost off the Sourcing Attempts table even though the Current
+   * Assignment card correctly showed it redacted. Optional for the same
+   * reason as the fields above — a bare Quote/Load-list row has none.
+   */
+  sourcingAttempts?: { carrierRate: unknown }[];
 }
 
 /**
@@ -53,6 +64,9 @@ export function shapeFinancialFields<T extends FinancialShapeable>(
     rateAgreementId: null,
     ...('carrierRate' in record ? { carrierRate: null } : {}),
     ...('customerChargesTotal' in record ? { customerChargesTotal: null } : {}),
+    ...('sourcingAttempts' in record && record.sourcingAttempts
+      ? { sourcingAttempts: record.sourcingAttempts.map((a) => ({ ...a, carrierRate: null })) }
+      : {}),
   };
 }
 
