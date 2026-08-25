@@ -397,8 +397,4 @@ export const loadsApi = {
   /** Frontend Phase 4 gap-fix — read-only preview of the same checklist `close` computes. */
   getClosingChecklist: (id: string) =>
     apiRequest<{ checklist: ClosingChecklistItem[] }>(`/loads/${id}/closing-checklist`),
-
-  // NOTE: PATCH /loads/:id/stops/:seq (appointment reschedule) does not
-  // exist on the backend yet — deferred alongside the Calendar view
-  // (§7 decision 1), not built or stubbed here.
 };

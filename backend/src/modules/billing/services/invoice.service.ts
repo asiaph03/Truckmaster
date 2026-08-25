@@ -18,6 +18,7 @@ import {
   PermissionError,
   PodIncompleteWarningError,
 } from '../../../common/errors/app-error';
+import { FINANCIAL_VIEW_ROLES } from '../../../common/authorization/financial-view-roles';
 
 /** Workflow 8 §8.8 — due_date = send-time + this many days, computed server-side. */
 const PAYMENT_TERMS_DAYS: Record<PaymentTerms, number> = {
@@ -27,9 +28,6 @@ const PAYMENT_TERMS_DAYS: Record<PaymentTerms, number> = {
   NET_45: 45,
   NET_60: 60,
 };
-
-/** UI_UX_DESIGN.md §5.4.7 Permission Summary — full view; not a Workflow 8 action-taking role. */
-const FULL_VIEW_ROLES: MembershipRoleName[] = ['ADMIN', 'ACCOUNTING', 'OPERATIONS_MANAGER'];
 
 @Injectable()
 export class InvoiceService {
@@ -406,7 +404,7 @@ export class InvoiceService {
     );
     if (!invoice) throw new NotFoundError('Invoice not found.');
 
-    if (actingRoles.some((r) => FULL_VIEW_ROLES.includes(r))) return invoice;
+    if (actingRoles.some((r) => FINANCIAL_VIEW_ROLES.includes(r))) return invoice;
     if (actingRoles.includes('SALES_BOOKING') && this.isOwnDeal(invoice.customer, actingUserId)) {
       return invoice;
     }
@@ -419,7 +417,7 @@ export class InvoiceService {
     actingRoles: MembershipRoleName[],
     filters: { customerId?: string; status?: string } = {},
   ) {
-    if (!actingRoles.some((r) => [...FULL_VIEW_ROLES, 'SALES_BOOKING'].includes(r))) {
+    if (!actingRoles.some((r) => [...FINANCIAL_VIEW_ROLES, 'SALES_BOOKING'].includes(r))) {
       throw new PermissionError('You do not have permission to view Invoices.');
     }
 
@@ -435,7 +433,7 @@ export class InvoiceService {
       }),
     );
 
-    if (actingRoles.some((r) => FULL_VIEW_ROLES.includes(r))) return invoices;
+    if (actingRoles.some((r) => FINANCIAL_VIEW_ROLES.includes(r))) return invoices;
 
     // Sales/Booking: full row for own-deal invoices, status-only (amounts
     // redacted) for everyone else's — UI_UX_DESIGN.md §5.4.5's exact rule.

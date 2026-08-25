@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { MembershipRoleName, Prisma } from '@prisma/client';
 import { PrismaService } from '../../../common/prisma/prisma.service';
 import { shapeFinancialFieldsList } from '../../quote-load/services/financial-field-shaping';
+import { FINANCIAL_VIEW_ROLES } from '../../../common/authorization/financial-view-roles';
 
 const SEARCH_RESULT_LIMIT = 5;
 
@@ -12,7 +13,6 @@ const INVOICE_VIEW_ROLES: MembershipRoleName[] = [
   'OPERATIONS_MANAGER',
   'SALES_BOOKING',
 ];
-const INVOICE_FULL_VIEW_ROLES: MembershipRoleName[] = ['ADMIN', 'ACCOUNTING', 'OPERATIONS_MANAGER'];
 
 const AGING_BUCKET_KEYS = [
   'current',
@@ -128,7 +128,7 @@ export class ReportingService {
       include: { customer: true },
     });
 
-    if (actingRoles.some((r) => INVOICE_FULL_VIEW_ROLES.includes(r))) return invoices;
+    if (actingRoles.some((r) => FINANCIAL_VIEW_ROLES.includes(r))) return invoices;
 
     // Sales/Booking: full row for own-deal invoices, status-only for
     // others' — mirrors InvoiceService.list()'s own redaction exactly.

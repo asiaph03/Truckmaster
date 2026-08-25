@@ -61,7 +61,9 @@ export const reportingApi = {
   /** Decision D14 — buckets CarrierPayments by submitted_at. Admin/Accounting/Ops Manager only. */
   apAging: () => apiRequest<AgingReport>('/reports/ap-aging'),
 
-  // Typed surface only — Dashboard is explicitly deferred (Frontend Phase 5 plan).
+  // Typed surface only — the backend's GET /dashboard is fully built, but
+  // Dashboard has no locked screen-level design (widget/KPI layout) to
+  // build a frontend against yet (Frontend Phase 7/8/9 inspections).
   dashboard: (): Promise<unknown> => notImplemented('reportingApi.dashboard'),
   // NOTE: the broader Operations/Financial/Carrier-Performance/Sales
   // report library, CSV/Excel export, and saved views have no backend

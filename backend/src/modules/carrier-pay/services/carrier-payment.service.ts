@@ -15,6 +15,7 @@ import {
   PermissionError,
   SelfReviewForbiddenError,
 } from '../../../common/errors/app-error';
+import { FINANCIAL_VIEW_ROLES } from '../../../common/authorization/financial-view-roles';
 
 /**
  * UI_UX_DESIGN.md §5.1.6 — Billing nav (Carrier Pay included) hidden
@@ -25,7 +26,6 @@ import {
  * below, since fine-grained checks (self-approval, status gates) already
  * cover the mutation paths.
  */
-const VIEW_ROLES: MembershipRoleName[] = ['ADMIN', 'ACCOUNTING', 'OPERATIONS_MANAGER'];
 
 @Injectable()
 export class CarrierPaymentService {
@@ -272,7 +272,7 @@ export class CarrierPaymentService {
   }
 
   async findById(organizationId: string, id: string, actingRoles: MembershipRoleName[]) {
-    if (!actingRoles.some((r) => VIEW_ROLES.includes(r))) {
+    if (!actingRoles.some((r) => FINANCIAL_VIEW_ROLES.includes(r))) {
       throw new PermissionError('You do not have permission to view Carrier Payments.');
     }
     const carrierPayment = await this.prisma.withTenantTransaction(organizationId, (tx) =>
@@ -287,7 +287,7 @@ export class CarrierPaymentService {
     actingRoles: MembershipRoleName[],
     filters: { loadId?: string; status?: string } = {},
   ) {
-    if (!actingRoles.some((r) => VIEW_ROLES.includes(r))) {
+    if (!actingRoles.some((r) => FINANCIAL_VIEW_ROLES.includes(r))) {
       throw new PermissionError('You do not have permission to view Carrier Payments.');
     }
     return this.prisma.withTenantTransaction(organizationId, (tx) =>

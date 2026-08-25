@@ -17,6 +17,7 @@ import { MarkPaidDto } from '../dto/mark-paid.dto';
 import { RolesGuard } from '../../identity/guards/roles.guard';
 import { Roles } from '../../identity/decorators/roles.decorator';
 import { RequestContextStore } from '../../../common/tenant-context/request-context';
+import { FINANCIAL_VIEW_ROLES } from '../../../common/authorization/financial-view-roles';
 
 /**
  * TECHNICAL_ARCHITECTURE.md §5.1 Carrier Pay resource. `GET /carrier-payments`
@@ -27,7 +28,6 @@ import { RequestContextStore } from '../../../common/tenant-context/request-cont
  * expansion).
  */
 const PREPARE_ROLES: MembershipRoleName[] = ['ADMIN', 'ACCOUNTING'];
-const VIEW_ROLES: MembershipRoleName[] = ['ADMIN', 'ACCOUNTING', 'OPERATIONS_MANAGER'];
 
 @Controller()
 @UseGuards(RolesGuard)
@@ -43,7 +43,7 @@ export class CarrierPaymentController {
   }
 
   @Get('carrier-payments')
-  @Roles(...VIEW_ROLES)
+  @Roles(...FINANCIAL_VIEW_ROLES)
   list(@Query('loadId') loadId?: string, @Query('status') status?: string) {
     const organizationId = RequestContextStore.requireOrganizationId();
     const actingRoles = (RequestContextStore.current().roles ?? []) as MembershipRoleName[];
@@ -51,7 +51,7 @@ export class CarrierPaymentController {
   }
 
   @Get('carrier-payments/:id')
-  @Roles(...VIEW_ROLES)
+  @Roles(...FINANCIAL_VIEW_ROLES)
   findById(@Param('id', ParseUUIDPipe) id: string) {
     const organizationId = RequestContextStore.requireOrganizationId();
     const actingRoles = (RequestContextStore.current().roles ?? []) as MembershipRoleName[];
