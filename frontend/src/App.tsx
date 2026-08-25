@@ -33,15 +33,17 @@ import { ToastViewport } from './components/ui';
  * §8/§9 of the approved Phase 1 plan: GET /auth/me on boot is the sole
  * point session state is "trusted"; every screen after that reads the
  * store. Phase 2 added Customers/Carriers; Phase 3 added the Load
- * lifecycle; Phase 4 added Financials & Load Closing. Phase 5 adds AR/AP
+ * lifecycle; Phase 4 added Financials & Load Closing. Phase 5 added AR/AP
  * Aging, the Compliance Review Queue, Settings → Users & Roles (invite/
  * resend/cancel/deactivate only — no role-edit endpoint exists), the
- * Dispatch Board's Kanban view (a `?view=kanban` query param on
- * `/loads/board`, matching the locked sitemap — not a separate route),
- * and finishes the Global Search palette. Dashboard, Document Center, the
- * broader Reports
- * library, Load Search, and Dispatch Board Calendar remain ComingSoonPage
- * or unbuilt — explicitly deferred per the approved Phase 5 scope.
+ * Dispatch Board's Kanban view, and the Global Search palette. Phase 6
+ * added the Dispatch Board's Calendar view. Phase 7 added Load Detail's
+ * sixth tab, Activity History. Table/Kanban/Calendar are one screen at
+ * `/loads/board?view=`, matching the locked sitemap, not separate routes.
+ * Dashboard, Document Center, the broader Reports library, Load Search,
+ * Organization Settings, and membership role-editing remain ComingSoonPage
+ * or unbuilt — none has a locked screen-level design yet (Frontend Phase
+ * 8 inspection).
  */
 function App() {
   const status = useSessionStore((s) => s.status);

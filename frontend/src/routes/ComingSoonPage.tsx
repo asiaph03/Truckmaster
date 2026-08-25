@@ -1,10 +1,13 @@
 import { EmptyState } from '../components/ui';
 
 /**
- * Nav destinations not yet built (Loads, Billing, Documents Center,
- * Reports, Settings, Dashboard) — kept out of Phase 2 scope per the
- * approved plan. This placeholder exists only so the always-visible
- * shell nav doesn't link to a blank/broken route.
+ * Placeholder for nav destinations with no locked screen-level design yet
+ * (Dashboard, Document Center, Reports) — as of the Frontend Phase 8
+ * inspection, none of the remaining undesigned items (Dashboard, Document
+ * Center, Reports Library, Load Search, Organization Settings, membership
+ * role-editing) has an approved scope to build against. This placeholder
+ * exists only so the always-visible shell nav doesn't link to a blank/
+ * broken route.
  */
 export function ComingSoonPage({ title }: { title: string }) {
   return (
