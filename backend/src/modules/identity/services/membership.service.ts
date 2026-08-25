@@ -6,6 +6,7 @@ import { TokenService } from './token.service';
 import { UserService } from './user.service';
 import { PasswordService } from './password.service';
 import { InviteMemberDto } from '../dto/invite-member.dto';
+import { UpdateMembershipRolesDto } from '../dto/update-membership-roles.dto';
 import { EMAIL_SENDER, IEmailSender } from '../../../common/email/email-sender.interface';
 import { SessionRegistryService } from './session-registry.service';
 import {
@@ -384,6 +385,87 @@ export class MembershipService {
     );
 
     return deactivatedMembership;
+  }
+
+  // ---------------------------------------------------------------------
+  // Frontend Phase 11 — Role editing. Locked policy: an organization must
+  // never be left with zero active Admins. Mirrors deactivate()'s exact
+  // last-Admin protection (re-counted inside this transaction, never
+  // trusted from an earlier read).
+  // ---------------------------------------------------------------------
+
+  async updateRoles(
+    organizationId: string,
+    targetMembershipId: string,
+    dto: UpdateMembershipRolesDto,
+    actingUserId: string,
+  ) {
+    await this.assertHasRole(organizationId, actingUserId, 'ADMIN');
+
+    return this.prisma.withTenantTransaction(organizationId, async (tx) => {
+      const target = await this.requireMembershipTx(tx, organizationId, targetMembershipId);
+
+      if (target.status !== 'ACTIVE') {
+        throw new BusinessRuleError("Only an active member's roles can be changed.");
+      }
+
+      const currentRoles = await tx.membershipRole.findMany({
+        where: { membershipId: target.id },
+      });
+      const targetIsCurrentlyAdmin = currentRoles.some((r) => r.role === 'ADMIN');
+      const wouldRemainAdmin = dto.roles.includes('ADMIN');
+
+      if (targetIsCurrentlyAdmin && !wouldRemainAdmin) {
+        const otherActiveAdminCount = await tx.membershipRole.count({
+          where: {
+            organizationId,
+            role: 'ADMIN',
+            membership: { status: 'ACTIVE', id: { not: target.id } },
+          },
+        });
+
+        if (otherActiveAdminCount === 0) {
+          await this.audit.record(tx, {
+            organizationId,
+            action: 'Role Change Blocked — Last Active Admin',
+            entityType: 'OrganizationMembership',
+            entityId: target.id,
+            actorUserId: actingUserId,
+            actorType: 'SYSTEM',
+          });
+          const isSelf = target.userId === actingUserId;
+          throw new BusinessRuleError(
+            isSelf
+              ? 'You cannot remove your own Admin role because you are the only active Admin in your organization. Assign Admin to another user first.'
+              : "You cannot remove this user's Admin role because they are the only active Admin in your organization. Assign Admin to another user first.",
+          );
+        }
+      }
+
+      const previousRoles = currentRoles.map((r) => r.role);
+
+      await tx.membershipRole.deleteMany({ where: { membershipId: target.id } });
+      for (const role of dto.roles) {
+        await tx.membershipRole.create({
+          data: { organizationId, membershipId: target.id, role },
+        });
+      }
+
+      await this.audit.record(tx, {
+        organizationId,
+        action: 'Member Roles Changed',
+        entityType: 'OrganizationMembership',
+        entityId: target.id,
+        previousValue: { roles: previousRoles },
+        newValue: { roles: dto.roles },
+        actorUserId: actingUserId,
+      });
+
+      return tx.organizationMembership.findFirstOrThrow({
+        where: { id: target.id },
+        include: { user: true, roles: true },
+      });
+    });
   }
 
   // ---------------------------------------------------------------------

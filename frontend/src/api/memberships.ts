@@ -16,15 +16,19 @@ export interface InviteMemberRequest {
   roles: MembershipRoleName[];
 }
 
+export interface UpdateMembershipRolesRequest {
+  roles: MembershipRoleName[];
+}
+
 /**
  * `GET /memberships` was already used by Customer Overview's "Assign
  * Account Owner" picker and the Dispatch Board's dispatcher filter.
  * invite/resend/cancel/deactivate are Frontend Phase 5 additions for the
- * Settings → Users & Roles screen — there is no role-change endpoint on
- * the backend (`MembershipsController` only exposes those four actions,
- * all Admin-only), so this client deliberately has no `updateRoles`
- * method: inventing one client-side would build a UI action that always
- * 404s.
+ * Settings → Users & Roles screen. `updateRoles` is a Frontend Phase 11
+ * addition — replaces an active member's full role set; server-side
+ * enforces the last-active-Admin protection (never trust a client-side
+ * check for this), so a rejected call surfaces as a normal ApiError with
+ * the backend's own message, not a client-computed one.
  */
 export const membershipsApi = {
   list: () => apiRequest<MembershipListItem[]>('/memberships'),
@@ -40,4 +44,7 @@ export const membershipsApi = {
 
   deactivate: (id: string) =>
     apiRequest<MembershipListItem>(`/memberships/${id}/deactivate`, { method: 'POST' }),
+
+  updateRoles: (id: string, body: UpdateMembershipRolesRequest) =>
+    apiRequest<MembershipListItem>(`/memberships/${id}/roles`, { method: 'PATCH', body }),
 };

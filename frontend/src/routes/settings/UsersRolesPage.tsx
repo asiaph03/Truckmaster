@@ -8,6 +8,7 @@ import {
   type InviteMemberRequest,
   type MembershipListItem,
   type MembershipStatus,
+  type UpdateMembershipRolesRequest,
 } from '../../api';
 import { ApiError } from '../../api/errors';
 import {
@@ -47,12 +48,13 @@ const STATUS_COLOR: Record<MembershipStatus, BadgeColor> = {
 };
 
 /**
- * Approved Frontend Phase 5 scope: invite, resend, cancel, and deactivate
- * only — the backend (`MembershipsController`) has no role-change
- * endpoint on an existing member, so this screen deliberately has no
- * "Edit Roles" action. Roles are shown read-only after invite, with an
- * explicit caption saying so, rather than a control that would always
- * 404.
+ * Approved Frontend Phase 5 scope: invite, resend, cancel, and deactivate.
+ * Frontend Phase 11 adds "Edit Roles" for an existing Active member,
+ * backed by `PATCH /memberships/:id/roles`. The last-active-Admin
+ * protection is enforced entirely server-side (`MembershipService.
+ * updateRoles`) — this screen never computes or second-guesses that rule
+ * client-side; a rejected change surfaces the backend's own error message
+ * via the same toast pattern every other action here already uses.
  *
  * `GET /memberships` itself carries no backend role restriction (it's
  * also used by non-Admin screens — the Dispatch Board's dispatcher
@@ -71,6 +73,7 @@ export function UsersRolesPage() {
   const [inviting, setInviting] = useState(false);
   const [cancelling, setCancelling] = useState<MembershipListItem | null>(null);
   const [deactivating, setDeactivating] = useState<MembershipListItem | null>(null);
+  const [editingRoles, setEditingRoles] = useState<MembershipListItem | null>(null);
 
   const canManage = can('manageMemberships');
 
@@ -87,6 +90,13 @@ export function UsersRolesPage() {
     reset,
     formState: { errors, isSubmitting },
   } = useForm<InviteMemberRequest>({ defaultValues: { roles: [] } });
+
+  const {
+    control: editRolesControl,
+    handleSubmit: handleEditRolesSubmit,
+    reset: resetEditRoles,
+    formState: { errors: editRolesErrors, isSubmitting: isSubmittingEditRoles },
+  } = useForm<UpdateMembershipRolesRequest>({ defaultValues: { roles: [] } });
 
   function afterMutation() {
     queryClient.invalidateQueries({ queryKey: ['memberships'] });
@@ -138,6 +148,26 @@ export function UsersRolesPage() {
     }
   }
 
+  function openEditRoles(membership: MembershipListItem) {
+    resetEditRoles({ roles: membership.roles.map((r) => r.role) });
+    setEditingRoles(membership);
+  }
+
+  async function onUpdateRoles(values: UpdateMembershipRolesRequest) {
+    if (!editingRoles) return;
+    try {
+      await membershipsApi.updateRoles(editingRoles.id, values);
+      toast.success(`Roles updated for ${editingRoles.user.name}.`);
+      setEditingRoles(null);
+      afterMutation();
+    } catch (error) {
+      // The last-active-Admin protection is enforced server-side
+      // (MembershipService.updateRoles) — this surfaces the backend's own
+      // rejection message verbatim rather than a client-computed one.
+      toast.danger(error instanceof ApiError ? error.message : 'Something went wrong.');
+    }
+  }
+
   if (!canManage) {
     return (
       <EmptyState
@@ -153,8 +183,7 @@ export function UsersRolesPage() {
         <div>
           <h1 className="list-page-title">Users & Roles</h1>
           <p style={{ margin: 0, color: 'var(--neutral-500)', fontSize: 'var(--text-small-size)' }}>
-            Invite, resend, cancel, or deactivate. Changing an existing member's roles isn't
-            supported yet — cancel and re-invite instead.
+            Invite, resend, cancel, deactivate, or edit an existing member's roles.
           </p>
         </div>
         <Button
@@ -207,9 +236,14 @@ export function UsersRolesPage() {
                   </>
                 ) : null}
                 {m.status === 'ACTIVE' ? (
-                  <Button variant="destructive" size="sm" onClick={() => setDeactivating(m)}>
-                    Deactivate
-                  </Button>
+                  <>
+                    <Button variant="tertiary" size="sm" onClick={() => openEditRoles(m)}>
+                      Edit Roles
+                    </Button>
+                    <Button variant="destructive" size="sm" onClick={() => setDeactivating(m)}>
+                      Deactivate
+                    </Button>
+                  </>
                 ) : null}
               </div>
             ),
@@ -270,6 +304,61 @@ export function UsersRolesPage() {
             {errors.roles ? (
               <div style={{ color: 'var(--danger-600)', fontSize: 'var(--text-caption-size)' }}>
                 {errors.roles.message}
+              </div>
+            ) : null}
+          </div>
+        </form>
+      </Modal>
+
+      <Modal
+        open={editingRoles !== null}
+        title="Edit Roles"
+        onClose={() => setEditingRoles(null)}
+        footer={
+          <ModalFooter
+            onCancel={() => setEditingRoles(null)}
+            onConfirm={handleEditRolesSubmit(onUpdateRoles)}
+            confirmLabel="Save Roles"
+            loading={isSubmittingEditRoles}
+          />
+        }
+      >
+        <form onSubmit={handleEditRolesSubmit(onUpdateRoles)}>
+          <p style={{ margin: '0 0 var(--space-3)', color: 'var(--neutral-500)' }}>
+            Editing roles for {editingRoles?.user.name}.
+          </p>
+          <div className="form-field">
+            <label className="form-field-label">Roles</label>
+            <Controller
+              name="roles"
+              control={editRolesControl}
+              rules={{ validate: (v) => (v && v.length > 0) || 'Select at least one role.' }}
+              render={({ field }) => (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
+                  {MEMBERSHIP_ROLES.map((role) => (
+                    <label
+                      key={role}
+                      style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={field.value?.includes(role) ?? false}
+                        onChange={(e) => {
+                          const next = new Set(field.value ?? []);
+                          if (e.target.checked) next.add(role);
+                          else next.delete(role);
+                          field.onChange([...next]);
+                        }}
+                      />
+                      {ROLE_LABELS[role]}
+                    </label>
+                  ))}
+                </div>
+              )}
+            />
+            {editRolesErrors.roles ? (
+              <div style={{ color: 'var(--danger-600)', fontSize: 'var(--text-caption-size)' }}>
+                {editRolesErrors.roles.message}
               </div>
             ) : null}
           </div>

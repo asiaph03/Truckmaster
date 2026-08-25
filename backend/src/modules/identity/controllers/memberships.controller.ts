@@ -5,11 +5,13 @@ import {
   HttpCode,
   Param,
   ParseUUIDPipe,
+  Patch,
   Post,
   UseGuards,
 } from '@nestjs/common';
 import { MembershipService } from '../services/membership.service';
 import { InviteMemberDto } from '../dto/invite-member.dto';
+import { UpdateMembershipRolesDto } from '../dto/update-membership-roles.dto';
 import { RolesGuard } from '../guards/roles.guard';
 import { Roles } from '../decorators/roles.decorator';
 import { RequestContextStore } from '../../../common/tenant-context/request-context';
@@ -64,5 +66,14 @@ export class MembershipsController {
     const organizationId = RequestContextStore.requireOrganizationId();
     const actingUserId = RequestContextStore.requireUserId();
     return this.membershipService.deactivate(organizationId, id, actingUserId);
+  }
+
+  /** Frontend Phase 11 — replaces an active member's full role set. Same last-Admin protection as deactivate(). */
+  @Patch(':id/roles')
+  @Roles('ADMIN')
+  async updateRoles(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateMembershipRolesDto) {
+    const organizationId = RequestContextStore.requireOrganizationId();
+    const actingUserId = RequestContextStore.requireUserId();
+    return this.membershipService.updateRoles(organizationId, id, dto, actingUserId);
   }
 }

@@ -454,4 +454,182 @@ describe('Identity & Tenancy (e2e)', () => {
     >`SELECT * FROM organization_membership WHERE organization_id = ${orgA.organizationId}::uuid`;
     expect(rowsVisibleWithNoContext).toHaveLength(0);
   });
+
+  describe('PATCH /memberships/:id/roles — Frontend Phase 11 role editing', () => {
+    async function setUpOrgWithTwoMembers(seed: string, superAdminAgent: SuperAgentTest) {
+      const org = await createAndActivateOrg({
+        legalName: `Role Edit Test Org ${seed}`,
+        adminEmail: `admin-${seed}@role-edit-test.test`,
+        adminPassword: 'RoleEditAdminPass123',
+        superAdminAgent,
+      });
+
+      const inviteRes = await org.agent
+        .post(`${API}/memberships/invite`)
+        .send({ email: `dispatcher-${seed}@role-edit-test.test`, roles: ['DISPATCHER'] })
+        .expect(201);
+      const dispatcherMembershipId: string = inviteRes.body.id;
+
+      const token = extractToken(lastEmailTo(`dispatcher-${seed}@role-edit-test.test`).body);
+      await request(app.getHttpServer())
+        .post(`${API}/auth/activate`)
+        .send({ token, password: 'DispatcherPass123' })
+        .expect(200);
+
+      const listRes = await org.agent.get(`${API}/memberships`).expect(200);
+      const adminMembershipId: string = listRes.body.find(
+        (m: { user: { email: string } }) => m.user.email === `admin-${seed}@role-edit-test.test`,
+      ).id;
+
+      return { org, adminMembershipId, dispatcherMembershipId };
+    }
+
+    it("Admin can change another active member's role", async () => {
+      const superAdminAgent = request.agent(app.getHttpServer());
+      await superAdminAgent
+        .post(`${API}/auth/login`)
+        .send({ email: superAdminEmail, password: superAdminPassword })
+        .expect(200);
+      const { org, dispatcherMembershipId } = await setUpOrgWithTwoMembers(
+        'admin-changes-other',
+        superAdminAgent,
+      );
+
+      const res = await org.agent
+        .patch(`${API}/memberships/${dispatcherMembershipId}/roles`)
+        .send({ roles: ['ACCOUNTING'] })
+        .expect(200);
+      expect(res.body.roles.map((r: { role: string }) => r.role)).toEqual(['ACCOUNTING']);
+    });
+
+    it("a non-Admin cannot change a member's role", async () => {
+      const superAdminAgent = request.agent(app.getHttpServer());
+      await superAdminAgent
+        .post(`${API}/auth/login`)
+        .send({ email: superAdminEmail, password: superAdminPassword })
+        .expect(200);
+      const { adminMembershipId } = await setUpOrgWithTwoMembers(
+        'non-admin-blocked',
+        superAdminAgent,
+      );
+
+      const dispatcherAgent = request.agent(app.getHttpServer());
+      await dispatcherAgent
+        .post(`${API}/auth/login`)
+        .send({
+          email: 'dispatcher-non-admin-blocked@role-edit-test.test',
+          password: 'DispatcherPass123',
+        })
+        .expect(200);
+
+      await dispatcherAgent
+        .patch(`${API}/memberships/${adminMembershipId}/roles`)
+        .send({ roles: ['ACCOUNTING'] })
+        .expect(403);
+    });
+
+    it('rejects a cross-tenant role change', async () => {
+      const superAdminAgent = request.agent(app.getHttpServer());
+      await superAdminAgent
+        .post(`${API}/auth/login`)
+        .send({ email: superAdminEmail, password: superAdminPassword })
+        .expect(200);
+      const { dispatcherMembershipId } = await setUpOrgWithTwoMembers(
+        'cross-tenant-a',
+        superAdminAgent,
+      );
+      const { org: orgB } = await setUpOrgWithTwoMembers('cross-tenant-b', superAdminAgent);
+
+      await orgB.agent
+        .patch(`${API}/memberships/${dispatcherMembershipId}/roles`)
+        .send({ roles: ['ACCOUNTING'] })
+        .expect(404);
+    });
+
+    it('blocks demoting the last active Admin to a non-Admin role set', async () => {
+      const superAdminAgent = request.agent(app.getHttpServer());
+      await superAdminAgent
+        .post(`${API}/auth/login`)
+        .send({ email: superAdminEmail, password: superAdminPassword })
+        .expect(200);
+      const { org, adminMembershipId } = await setUpOrgWithTwoMembers(
+        'block-demote',
+        superAdminAgent,
+      );
+
+      const res = await org.agent
+        .patch(`${API}/memberships/${adminMembershipId}/roles`)
+        .send({ roles: ['DISPATCHER'] })
+        .expect(422);
+      expect(res.body.error).toBeDefined();
+
+      // Roles are unchanged — the block was applied, not silently ignored.
+      const listRes = await org.agent.get(`${API}/memberships`).expect(200);
+      const adminMembership = listRes.body.find((m: { id: string }) => m.id === adminMembershipId);
+      expect(adminMembership.roles.map((r: { role: string }) => r.role)).toEqual(['ADMIN']);
+    });
+
+    it('blocks deactivating the last active Admin (existing zero-Admin protection, re-confirmed alongside role editing)', async () => {
+      const superAdminAgent = request.agent(app.getHttpServer());
+      await superAdminAgent
+        .post(`${API}/auth/login`)
+        .send({ email: superAdminEmail, password: superAdminPassword })
+        .expect(200);
+      const { org, adminMembershipId } = await setUpOrgWithTwoMembers(
+        'block-deactivate',
+        superAdminAgent,
+      );
+
+      await org.agent.post(`${API}/memberships/${adminMembershipId}/deactivate`).expect(422);
+    });
+
+    it('allows demoting an Admin once a second active Admin exists', async () => {
+      const superAdminAgent = request.agent(app.getHttpServer());
+      await superAdminAgent
+        .post(`${API}/auth/login`)
+        .send({ email: superAdminEmail, password: superAdminPassword })
+        .expect(200);
+      const { org, adminMembershipId, dispatcherMembershipId } = await setUpOrgWithTwoMembers(
+        'allow-demote',
+        superAdminAgent,
+      );
+
+      // Promote the Dispatcher to Admin first — now there are two active Admins.
+      await org.agent
+        .patch(`${API}/memberships/${dispatcherMembershipId}/roles`)
+        .send({ roles: ['ADMIN'] })
+        .expect(200);
+
+      // The original Admin can now be demoted normally.
+      const res = await org.agent
+        .patch(`${API}/memberships/${adminMembershipId}/roles`)
+        .send({ roles: ['ACCOUNTING'] })
+        .expect(200);
+      expect(res.body.roles.map((r: { role: string }) => r.role)).toEqual(['ACCOUNTING']);
+    });
+
+    it('rejects changing roles on a non-Active membership (e.g. still Invited)', async () => {
+      const superAdminAgent = request.agent(app.getHttpServer());
+      await superAdminAgent
+        .post(`${API}/auth/login`)
+        .send({ email: superAdminEmail, password: superAdminPassword })
+        .expect(200);
+      const org = await createAndActivateOrg({
+        legalName: 'Role Edit Pending Org',
+        adminEmail: 'admin-pending-role-edit@role-edit-test.test',
+        adminPassword: 'RoleEditAdminPass123',
+        superAdminAgent,
+      });
+      const inviteRes = await org.agent
+        .post(`${API}/memberships/invite`)
+        .send({ email: 'pending-invitee@role-edit-test.test', roles: ['DISPATCHER'] })
+        .expect(201);
+
+      const res = await org.agent
+        .patch(`${API}/memberships/${inviteRes.body.id}/roles`)
+        .send({ roles: ['ACCOUNTING'] })
+        .expect(422);
+      expect(res.body.error).toBeDefined();
+    });
+  });
 });
