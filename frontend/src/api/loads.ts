@@ -1,5 +1,6 @@
 import type { EquipmentType } from '@tms/shared-constants';
 import { apiRequest } from './client';
+import { ApiError } from './errors';
 
 export type LoadStatus =
   | 'BOOKED'
@@ -186,6 +187,42 @@ export interface LoadListFilters {
   equipmentType?: string;
 }
 
+export type LoadSearchSort = 'loadNumber' | 'pickupDate' | 'deliveryDate';
+export type LoadSearchSortDirection = 'asc' | 'desc';
+
+/**
+ * Frontend Phase 13 — a dedicated `GET /loads/search` request shape, kept
+ * separate from `LoadListFilters` above: Load Search adds riskStatus,
+ * date-range, free-text, sort, and pagination params that `GET /loads`
+ * (Dispatch Board) deliberately does not carry, per the approved plan's
+ * decision not to touch `GET /loads`'s existing shape/behavior at all.
+ */
+export interface LoadSearchFilters {
+  status?: string;
+  customerId?: string;
+  carrierId?: string;
+  dispatcherId?: string;
+  equipmentType?: string;
+  riskStatus?: RiskStatus;
+  pickupFrom?: string;
+  pickupTo?: string;
+  deliveryFrom?: string;
+  deliveryTo?: string;
+  q?: string;
+  sort?: LoadSearchSort;
+  sortDirection?: LoadSearchSortDirection;
+  page?: number;
+  pageSize?: number;
+}
+
+/** Row shape is identical to `GET /loads`'s `LoadSummary` — same bare-Load-plus-stops shape, same redaction. */
+export interface LoadSearchResult {
+  items: LoadSummary[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
 /**
  * `GET /loads/ready-to-invoice` row shape — every scalar `Load` field
  * plus `customer` and the full `chargeLineItems` array, plus a computed
@@ -325,8 +362,48 @@ export interface EligibilityErrorDetails {
   reasons: string[];
 }
 
+function buildSearchQueryString(filters: LoadSearchFilters): string {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(filters)) {
+    if (value !== undefined && value !== '') params.set(key, String(value));
+  }
+  return params.toString();
+}
+
 export const loadsApi = {
   list: (filters?: LoadListFilters) => apiRequest<LoadSummary[]>('/loads', { query: filters }),
+
+  search: (filters: LoadSearchFilters) =>
+    apiRequest<LoadSearchResult>('/loads/search', { query: filters }),
+
+  /**
+   * Not routed through `apiRequest` — that helper always parses a JSON
+   * body, but this endpoint returns a raw CSV file. Triggers a normal
+   * browser file download via a throwaway object URL, same approach any
+   * static file download would use; no new library needed.
+   */
+  exportSearchCsv: async (filters: LoadSearchFilters): Promise<void> => {
+    const qs = buildSearchQueryString(filters);
+    const response = await fetch(`/api/v1/loads/search/export${qs ? `?${qs}` : ''}`, {
+      credentials: 'include',
+    });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => undefined);
+      throw new ApiError(
+        response.status,
+        payload?.error ?? { code: 'INTERNAL_ERROR', message: 'Export failed' },
+      );
+    }
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'load-search-export.csv';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  },
 
   getById: (id: string) => apiRequest<Load>(`/loads/${id}`),
 

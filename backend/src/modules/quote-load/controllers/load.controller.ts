@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Get,
+  Header,
   HttpCode,
   Param,
   ParseIntPipe,
@@ -36,6 +37,12 @@ import { Roles } from '../../identity/decorators/roles.decorator';
 import { RequestContextStore } from '../../../common/tenant-context/request-context';
 import { FULL_VISIBILITY_ROLES } from '../services/financial-field-shaping';
 import { ActivityHistoryService } from '../services/activity-history.service';
+import {
+  LoadSearchFilters,
+  LoadSearchService,
+  LoadSearchSort,
+  LoadSearchSortDirection,
+} from '../services/load-search.service';
 
 /**
  * TECHNICAL_ARCHITECTURE.md §5.1 Loads resource row. Phase 3: `POST
@@ -87,6 +94,67 @@ const ACTIVITY_LOG_ROLES: MembershipRoleName[] = [
   'ACCOUNTING',
 ];
 
+const LOAD_SEARCH_SORT_KEYS: LoadSearchSort[] = ['loadNumber', 'pickupDate', 'deliveryDate'];
+
+/**
+ * Frontend Phase 13 — no `@Query() dto:` class-validator object exists
+ * anywhere else in this controller (every route uses individual
+ * `@Query('x')` params, matching every other controller in the app), so
+ * this mirrors `list()`'s own permissive style: unrecognized `sort`
+ * values are treated as "no sort" (falls back to the default
+ * `createdAt desc` ordering) rather than throwing, same permissiveness
+ * `list()` already has for `status`/`equipmentType`.
+ */
+function buildLoadSearchFilters(raw: {
+  status?: string;
+  customerId?: string;
+  carrierId?: string;
+  dispatcherId?: string;
+  equipmentType?: string;
+  riskStatus?: string;
+  pickupFrom?: string;
+  pickupTo?: string;
+  deliveryFrom?: string;
+  deliveryTo?: string;
+  q?: string;
+  sort?: string;
+  sortDirection?: string;
+}): LoadSearchFilters {
+  const sort = LOAD_SEARCH_SORT_KEYS.includes(raw.sort as LoadSearchSort)
+    ? (raw.sort as LoadSearchSort)
+    : undefined;
+  const sortDirection: LoadSearchSortDirection | undefined =
+    raw.sortDirection === 'asc' || raw.sortDirection === 'desc' ? raw.sortDirection : undefined;
+
+  return {
+    status: raw.status,
+    customerId: raw.customerId,
+    carrierId: raw.carrierId,
+    dispatcherId: raw.dispatcherId,
+    equipmentType: raw.equipmentType,
+    riskStatus: raw.riskStatus,
+    pickupFrom: raw.pickupFrom,
+    pickupTo: raw.pickupTo,
+    deliveryFrom: raw.deliveryFrom,
+    deliveryTo: raw.deliveryTo,
+    q: raw.q,
+    sort,
+    sortDirection,
+  };
+}
+
+function parsePagination(
+  pageParam?: string,
+  pageSizeParam?: string,
+): { page: number; pageSize: number } {
+  const page = Number(pageParam);
+  const pageSize = Number(pageSizeParam);
+  return {
+    page: Number.isFinite(page) && page > 0 ? Math.floor(page) : 1,
+    pageSize: Number.isFinite(pageSize) && pageSize > 0 ? Math.floor(pageSize) : 50,
+  };
+}
+
 @Controller('loads')
 @UseGuards(RolesGuard)
 export class LoadController {
@@ -95,6 +163,7 @@ export class LoadController {
     private readonly carrierSourcing: CarrierSourcingService,
     private readonly dispatchTracking: DispatchTrackingService,
     private readonly activityHistory: ActivityHistoryService,
+    private readonly loadSearch: LoadSearchService,
   ) {}
 
   @Get()
@@ -115,6 +184,105 @@ export class LoadController {
       dispatcherId,
       equipmentType,
     });
+  }
+
+  // Frontend Phase 13 — Load Search. A dedicated endpoint (not a change to
+  // `list()`/`GET /loads` above) per the approved plan: Dispatch Board
+  // depends on `GET /loads`'s exact current unpaginated shape, and Load
+  // Search needs its own paginated/sortable/CSV-exportable shape covering
+  // all loads including Closed. Must be registered before @Get(':id') —
+  // same reason as `ready-to-invoice` below.
+  @Get('search')
+  search(
+    @Query('status') status?: string,
+    @Query('customerId') customerId?: string,
+    @Query('carrierId') carrierId?: string,
+    @Query('dispatcherId') dispatcherId?: string,
+    @Query('equipmentType') equipmentType?: string,
+    @Query('riskStatus') riskStatus?: string,
+    @Query('pickupFrom') pickupFrom?: string,
+    @Query('pickupTo') pickupTo?: string,
+    @Query('deliveryFrom') deliveryFrom?: string,
+    @Query('deliveryTo') deliveryTo?: string,
+    @Query('q') q?: string,
+    @Query('sort') sort?: string,
+    @Query('sortDirection') sortDirection?: string,
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
+  ) {
+    const organizationId = RequestContextStore.requireOrganizationId();
+    const actingUserId = RequestContextStore.requireUserId();
+    const actingRoles = (RequestContextStore.current().roles ?? []) as MembershipRoleName[];
+    return this.loadSearch.search(
+      organizationId,
+      actingUserId,
+      actingRoles,
+      buildLoadSearchFilters({
+        status,
+        customerId,
+        carrierId,
+        dispatcherId,
+        equipmentType,
+        riskStatus,
+        pickupFrom,
+        pickupTo,
+        deliveryFrom,
+        deliveryTo,
+        q,
+        sort,
+        sortDirection,
+      }),
+      parsePagination(page, pageSize),
+    );
+  }
+
+  // Export shares the exact same filter/search/sort query params as
+  // `search` above (decision: "respects the exact current filters and
+  // search criteria"), with no page/pageSize — it always returns every
+  // matching row (decision #7). Raw string body + these two headers is
+  // sufficient here since no global response-wrapping interceptor exists
+  // in this app (confirmed) — no need for @Res()/StreamableFile.
+  @Get('search/export')
+  @Header('Content-Type', 'text/csv')
+  @Header('Content-Disposition', 'attachment; filename="load-search-export.csv"')
+  exportSearch(
+    @Query('status') status?: string,
+    @Query('customerId') customerId?: string,
+    @Query('carrierId') carrierId?: string,
+    @Query('dispatcherId') dispatcherId?: string,
+    @Query('equipmentType') equipmentType?: string,
+    @Query('riskStatus') riskStatus?: string,
+    @Query('pickupFrom') pickupFrom?: string,
+    @Query('pickupTo') pickupTo?: string,
+    @Query('deliveryFrom') deliveryFrom?: string,
+    @Query('deliveryTo') deliveryTo?: string,
+    @Query('q') q?: string,
+    @Query('sort') sort?: string,
+    @Query('sortDirection') sortDirection?: string,
+  ) {
+    const organizationId = RequestContextStore.requireOrganizationId();
+    const actingUserId = RequestContextStore.requireUserId();
+    const actingRoles = (RequestContextStore.current().roles ?? []) as MembershipRoleName[];
+    return this.loadSearch.exportCsv(
+      organizationId,
+      actingUserId,
+      actingRoles,
+      buildLoadSearchFilters({
+        status,
+        customerId,
+        carrierId,
+        dispatcherId,
+        equipmentType,
+        riskStatus,
+        pickupFrom,
+        pickupTo,
+        deliveryFrom,
+        deliveryTo,
+        q,
+        sort,
+        sortDirection,
+      }),
+    );
   }
 
   // Must be registered before @Get(':id') — a static path segment has to

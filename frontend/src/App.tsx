@@ -13,6 +13,7 @@ import { CarrierCreatePage } from './routes/carriers/CarrierCreatePage';
 import { CarrierDetailPage } from './routes/carriers/CarrierDetailPage';
 import { ComplianceQueuePage } from './routes/carriers/ComplianceQueuePage';
 import { DispatchBoardPage } from './routes/loads/DispatchBoardPage';
+import { LoadSearchPage } from './routes/loads/LoadSearchPage';
 import { LoadCreatePage } from './routes/loads/LoadCreatePage';
 import { LoadDetailPage } from './routes/loads/LoadDetailPage';
 import { LoadClosingPage } from './routes/loads/LoadClosingPage';
@@ -44,10 +45,14 @@ import { ToastViewport } from './components/ui';
  * Dashboard (`/`), rendered strictly off `GET /dashboard`'s returned keys
  * — no client-side role-to-section mapping. Phase 11 added membership
  * role editing (`PATCH /memberships/:id/roles`) to Settings → Users &
- * Roles, with server-enforced last-active-Admin protection. Document
- * Center, the broader Reports library, Load Search, and Organization
- * Settings remain ComingSoonPage or unbuilt — none has a locked
- * screen-level design yet.
+ * Roles, with server-enforced last-active-Admin protection. Phase 13
+ * added Load Search (`/loads/search`) — a dedicated all-loads (including
+ * Closed), filterable/searchable/sortable/paginated/CSV-exportable
+ * screen backed by its own `GET /loads/search` and
+ * `GET /loads/search/export` endpoints, deliberately independent of
+ * `GET /loads` so Dispatch Board's behavior is unaffected. Document
+ * Center, the broader Reports library, and Organization Settings remain
+ * ComingSoonPage or unbuilt — none has a locked screen-level design yet.
  */
 function App() {
   const status = useSessionStore((s) => s.status);
@@ -81,6 +86,7 @@ function App() {
         <Route path="/" element={<DashboardPage />} />
         <Route path="/loads" element={<Navigate to="/loads/board" replace />} />
         <Route path="/loads/board" element={<DispatchBoardPage />} />
+        <Route path="/loads/search" element={<LoadSearchPage />} />
         <Route path="/loads/new" element={<LoadCreatePage />} />
         <Route path="/loads/:id" element={<LoadDetailPage />} />
         <Route path="/loads/:id/close" element={<LoadClosingPage />} />

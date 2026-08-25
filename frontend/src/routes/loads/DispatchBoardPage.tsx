@@ -202,8 +202,9 @@ export function DispatchBoardPage() {
 
   // Calendar has no "Show Closed" toggle of its own (§5.4.3 lists no such
   // control) — Closed loads stay reachable via Load Search's "all loads
-  // including closed" escape hatch (deferred), matching Table View's own
-  // default-excludes-Closed behavior rather than inventing a new toggle.
+  // including closed" escape hatch (Frontend Phase 13), matching Table
+  // View's own default-excludes-Closed behavior rather than inventing a
+  // new toggle.
   const calendarFiltered = useMemo(() => {
     const notClosed = loads.filter((l) => l.status !== 'CLOSED');
     if (!search.trim()) return notClosed;
@@ -249,9 +250,14 @@ export function DispatchBoardPage() {
             </button>
           </div>
         </div>
-        {can('createQuoteOrLoad') ? (
-          <Button onClick={() => setNewLoadModalOpen(true)}>+ New Load</Button>
-        ) : null}
+        <div className="dispatch-board-header-actions">
+          <Button variant="secondary" onClick={() => navigate('/loads/search')}>
+            Load Search
+          </Button>
+          {can('createQuoteOrLoad') ? (
+            <Button onClick={() => setNewLoadModalOpen(true)}>+ New Load</Button>
+          ) : null}
+        </div>
       </div>
 
       <div className="list-page-toolbar">

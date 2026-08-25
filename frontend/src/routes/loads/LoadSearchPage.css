@@ -1,0 +1,16 @@
+.load-search-date-filter {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-small-size);
+  color: var(--neutral-500);
+}
+
+.load-search-date-filter input {
+  border: 1px solid var(--neutral-300);
+  border-radius: var(--radius-sm);
+  height: 36px;
+  padding: 0 var(--space-2);
+  font-size: var(--text-body-size);
+  color: var(--neutral-900);
+}
