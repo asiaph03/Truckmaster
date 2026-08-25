@@ -7,6 +7,7 @@ import { LoadStatusDerivationService } from './load-status-derivation.service';
 import { DispatchLoadDto } from '../dto/dispatch-load.dto';
 import { UpdateDispatchDto } from '../dto/update-dispatch.dto';
 import { StopTimestampDto } from '../dto/stop-timestamp.dto';
+import { RescheduleStopDto } from '../dto/reschedule-stop.dto';
 import { LogCheckCallDto } from '../dto/log-check-call.dto';
 import { SetRiskStatusDto } from '../dto/set-risk-status.dto';
 import { AssignDispatcherDto } from '../dto/assign-dispatcher.dto';
@@ -286,6 +287,64 @@ export class DispatchTrackingService {
 
       const updatedLoad = await this.reEvaluateLoadStatus(tx, organizationId, load);
       return { stop: updatedStop, load: updatedLoad };
+    });
+  }
+
+  /**
+   * UI_UX_DESIGN.md §5.4.3 Decision DB-C-4 (Frontend Phase 6 approved
+   * gap-fix) — Calendar drag-to-reschedule. Updates
+   * `Stop.appointmentDatetime` only, never `Stop.status` or
+   * `Load.status` — a pure reschedule, not a general stop-editing
+   * endpoint. Re-validated here, not trusted from the client:
+   * restricted to a still-`PENDING` stop (an `ARRIVED`/`COMPLETED` stop
+   * has already happened and isn't reschedulable) on a Load that hasn't
+   * reached `DELIVERED`/`CLOSED`. The two checks are not redundant —
+   * `LoadStatusDerivationService.deriveLoadStatus` only requires every
+   * Pickup plus the *final* Delivery stop to be COMPLETED for
+   * `DELIVERED`, so an earlier Delivery stop on a multi-delivery Load
+   * can still be PENDING after the Load itself reads DELIVERED.
+   */
+  async rescheduleStop(
+    organizationId: string,
+    loadId: string,
+    sequence: number,
+    dto: RescheduleStopDto,
+    actingUserId: string,
+  ): Promise<Stop> {
+    return this.prisma.withTenantTransaction(organizationId, async (tx) => {
+      const load = await tx.load.findFirst({ where: { id: loadId, organizationId } });
+      if (!load) throw new NotFoundError('Load not found.');
+      if (load.status === 'DELIVERED' || load.status === 'CLOSED') {
+        throw new InvalidTransitionError(
+          'Stops on a Delivered or Closed Load cannot be rescheduled.',
+        );
+      }
+
+      const stop = await tx.stop.findFirst({ where: { loadId, organizationId, sequence } });
+      if (!stop) throw new NotFoundError('Stop not found.');
+      if (stop.status !== 'PENDING') {
+        throw new InvalidTransitionError('Only a Pending stop can be rescheduled.');
+      }
+
+      const previousAppointment = stop.appointmentDatetime;
+      const newAppointment = new Date(dto.appointmentDatetime);
+
+      const updatedStop = await tx.stop.update({
+        where: { id: stop.id },
+        data: { appointmentDatetime: newAppointment },
+      });
+
+      await this.audit.record(tx, {
+        organizationId,
+        action: 'Stop Rescheduled',
+        entityType: 'Stop',
+        entityId: stop.id,
+        previousValue: { sequence: stop.sequence, appointmentDatetime: previousAppointment },
+        newValue: { sequence: stop.sequence, appointmentDatetime: newAppointment },
+        actorUserId: actingUserId,
+      });
+
+      return updatedStop;
     });
   }
 

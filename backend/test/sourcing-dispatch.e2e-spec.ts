@@ -119,6 +119,7 @@ describe('Sourcing & Dispatch (e2e)', () => {
   const superAdminPassword = 'SuperAdminPass123';
 
   let adminAgent: SuperAgentTest;
+  let opsManagerAgent: SuperAgentTest;
   let salesAgent: SuperAgentTest;
   let dispatcherAgent: SuperAgentTest;
   let accountingAgent: SuperAgentTest;
@@ -184,6 +185,7 @@ describe('Sourcing & Dispatch (e2e)', () => {
     const org = await setUpOrganization('main');
     orgId = org.organizationId;
     adminAgent = org.adminAgent;
+    opsManagerAgent = org.opsManagerAgent;
     salesAgent = org.salesAgent;
     dispatcherAgent = org.dispatcherAgent;
     accountingAgent = org.accountingAgent;
@@ -225,6 +227,7 @@ describe('Sourcing & Dispatch (e2e)', () => {
       .expect(200);
 
     const adminEmail = `admin-${seed}@sourcing-dispatch-test.test`;
+    const opsManagerEmail = `opsmanager-${seed}@sourcing-dispatch-test.test`;
     const salesEmail = `sales-${seed}@sourcing-dispatch-test.test`;
     const dispatcherEmail = `dispatcher-${seed}@sourcing-dispatch-test.test`;
     const accountingEmail = `accounting-${seed}@sourcing-dispatch-test.test`;
@@ -246,6 +249,12 @@ describe('Sourcing & Dispatch (e2e)', () => {
     const newOrgId: string = createRes.body.organization.id;
 
     const adminAgentLocal = await activateAndLogin(adminEmail, 'OrgAdminPass123');
+
+    await adminAgentLocal
+      .post(`${API}/memberships/invite`)
+      .send({ email: opsManagerEmail, roles: ['OPERATIONS_MANAGER'] })
+      .expect(201);
+    const opsManagerAgentLocal = await activateAndLogin(opsManagerEmail, 'OpsManagerPass123');
 
     await adminAgentLocal
       .post(`${API}/memberships/invite`)
@@ -274,6 +283,7 @@ describe('Sourcing & Dispatch (e2e)', () => {
     return {
       organizationId: newOrgId,
       adminAgent: adminAgentLocal,
+      opsManagerAgent: opsManagerAgentLocal,
       salesAgent: salesAgentLocal,
       dispatcherAgent: dispatcherAgentLocal,
       accountingAgent: accountingAgentLocal,
@@ -902,6 +912,140 @@ describe('Sourcing & Dispatch (e2e)', () => {
       const loadAfter = await adminAgent.get(`${API}/loads/${loadId}`).expect(200);
       expect(loadAfter.body.status).toBe('DISPATCHED');
       expect(loadAfter.body.assignedDispatcherId).toBeNull();
+    });
+  });
+
+  describe('Reschedule Stop — Frontend Phase 6 gap-fix (Dispatch Board Calendar drag-to-reschedule)', () => {
+    it('Admin reschedules a PENDING stop and an AuditLog entry is persisted with previous/new values', async () => {
+      const loadId = await createBookedLoad('reschedule-admin');
+      const before = await adminAgent.get(`${API}/loads/${loadId}`).expect(200);
+      const previousAppointment = before.body.stops.find(
+        (s: { sequence: number }) => s.sequence === 1,
+      ).appointmentDatetime;
+
+      const res = await adminAgent
+        .patch(`${API}/loads/${loadId}/stops/1/reschedule`)
+        .send({ appointmentDatetime: '2027-03-15T14:00:00.000Z' })
+        .expect(200);
+      expect(res.body.appointmentDatetime).toBe('2027-03-15T14:00:00.000Z');
+      expect(res.body.status).toBe('PENDING'); // never touched
+
+      const entry = await prisma.withTenantTransaction(orgId, (tx) =>
+        tx.auditLog.findFirst({
+          where: { organizationId: orgId, entityType: 'Stop', action: 'Stop Rescheduled' },
+          orderBy: { createdAt: 'desc' },
+        }),
+      );
+      expect(entry).toBeTruthy();
+      expect(entry?.newValue).toMatchObject({
+        sequence: 1,
+        appointmentDatetime: '2027-03-15T14:00:00.000Z',
+      });
+      expect(entry?.previousValue).toMatchObject({
+        sequence: 1,
+        appointmentDatetime: previousAppointment,
+      });
+    });
+
+    it('Operations Manager can reschedule an eligible PENDING stop', async () => {
+      const loadId = await createBookedLoad('reschedule-opsmanager');
+      await opsManagerAgent
+        .patch(`${API}/loads/${loadId}/stops/1/reschedule`)
+        .send({ appointmentDatetime: '2027-03-15T14:00:00.000Z' })
+        .expect(200);
+    });
+
+    it('Dispatcher can reschedule an eligible PENDING stop', async () => {
+      const loadId = await createBookedLoad('reschedule-dispatcher');
+      await dispatcherAgent
+        .patch(`${API}/loads/${loadId}/stops/1/reschedule`)
+        .send({ appointmentDatetime: '2027-03-15T14:00:00.000Z' })
+        .expect(200);
+    });
+
+    it('Sales/Booking cannot reschedule (403)', async () => {
+      const loadId = await createBookedLoad('reschedule-sales');
+      await salesAgent
+        .patch(`${API}/loads/${loadId}/stops/1/reschedule`)
+        .send({ appointmentDatetime: '2027-03-15T14:00:00.000Z' })
+        .expect(403);
+    });
+
+    it('Accounting cannot reschedule (403)', async () => {
+      const loadId = await createBookedLoad('reschedule-accounting');
+      await accountingAgent
+        .patch(`${API}/loads/${loadId}/stops/1/reschedule`)
+        .send({ appointmentDatetime: '2027-03-15T14:00:00.000Z' })
+        .expect(403);
+    });
+
+    it('rejects rescheduling a Stop that has already recorded an ARRIVED (409)', async () => {
+      const carrierId = await createEligibleCarrier('reschedule-arrived');
+      const loadId = await createBookedLoad('reschedule-arrived');
+      await progressToDispatched(loadId, carrierId);
+      await adminAgent.post(`${API}/loads/${loadId}/stops/1/arrival`).send({}).expect(200);
+
+      await adminAgent
+        .patch(`${API}/loads/${loadId}/stops/1/reschedule`)
+        .send({ appointmentDatetime: '2027-03-15T14:00:00.000Z' })
+        .expect(409);
+    });
+
+    it('rejects rescheduling a COMPLETED Stop (409)', async () => {
+      const carrierId = await createEligibleCarrier('reschedule-completed');
+      const loadId = await createBookedLoad('reschedule-completed');
+      await progressToDispatched(loadId, carrierId);
+      await adminAgent.post(`${API}/loads/${loadId}/stops/1/arrival`).send({}).expect(200);
+      await adminAgent.post(`${API}/loads/${loadId}/stops/1/departure`).send({}).expect(200);
+
+      await adminAgent
+        .patch(`${API}/loads/${loadId}/stops/1/reschedule`)
+        .send({ appointmentDatetime: '2027-03-15T14:00:00.000Z' })
+        .expect(409);
+    });
+
+    it('rejects rescheduling on a DELIVERED Load even for a still-PENDING earlier Delivery stop (409)', async () => {
+      // MULTI_DELIVERY_STOPS: seq1 PICKUP, seq2 DELIVERY, seq3 DELIVERY (final).
+      // deriveLoadStatus only requires all Pickups + the FINAL Delivery
+      // COMPLETED for DELIVERED — seq2 can legitimately still be PENDING.
+      const carrierId = await createEligibleCarrier('reschedule-delivered');
+      const loadId = await createBookedLoad('reschedule-delivered', MULTI_DELIVERY_STOPS);
+      await progressToDispatched(loadId, carrierId);
+
+      await adminAgent.post(`${API}/loads/${loadId}/stops/1/arrival`).send({}).expect(200);
+      await adminAgent.post(`${API}/loads/${loadId}/stops/1/departure`).send({}).expect(200);
+      await adminAgent.post(`${API}/loads/${loadId}/stops/3/arrival`).send({}).expect(200);
+      const departure3 = await adminAgent
+        .post(`${API}/loads/${loadId}/stops/3/departure`)
+        .send({})
+        .expect(200);
+      expect(departure3.body.load.status).toBe('DELIVERED');
+
+      const loadAfter = await adminAgent.get(`${API}/loads/${loadId}`).expect(200);
+      const stop2 = loadAfter.body.stops.find((s: { sequence: number }) => s.sequence === 2);
+      expect(stop2.status).toBe('PENDING'); // confirms the edge case actually holds
+
+      await adminAgent
+        .patch(`${API}/loads/${loadId}/stops/2/reschedule`)
+        .send({ appointmentDatetime: '2027-03-15T14:00:00.000Z' })
+        .expect(409);
+    });
+
+    it('rejects rescheduling on a CLOSED Load (409)', async () => {
+      const carrierId = await createEligibleCarrier('reschedule-closed');
+      const loadId = await createBookedLoad('reschedule-closed', MULTI_DELIVERY_STOPS);
+      await progressToDispatched(loadId, carrierId);
+
+      await adminAgent.post(`${API}/loads/${loadId}/stops/1/arrival`).send({}).expect(200);
+      await adminAgent.post(`${API}/loads/${loadId}/stops/1/departure`).send({}).expect(200);
+      await adminAgent.post(`${API}/loads/${loadId}/stops/3/arrival`).send({}).expect(200);
+      await adminAgent.post(`${API}/loads/${loadId}/stops/3/departure`).send({}).expect(200);
+      await adminAgent.post(`${API}/loads/${loadId}/close`).expect(200);
+
+      await adminAgent
+        .patch(`${API}/loads/${loadId}/stops/2/reschedule`)
+        .send({ appointmentDatetime: '2027-03-15T14:00:00.000Z' })
+        .expect(409);
     });
   });
 

@@ -281,6 +281,152 @@ describe('DispatchTrackingService.recordArrival/recordDeparture — Workflow 6 �
   });
 });
 
+describe('DispatchTrackingService.rescheduleStop — Frontend Phase 6 gap-fix (Calendar drag-to-reschedule)', () => {
+  it('updates appointmentDatetime on a PENDING stop and audits the previous/new values', async () => {
+    const stops = [
+      {
+        id: 'stop-1',
+        sequence: 1,
+        stopType: 'PICKUP',
+        status: 'PENDING',
+        appointmentDatetime: new Date('2026-01-01T10:00:00Z'),
+      },
+    ];
+    const { service, tx, audit } = buildService({
+      load: { id: LOAD_ID, status: 'BOOKED' },
+      stops,
+    });
+
+    const updated = await service.rescheduleStop(
+      ORG_ID,
+      LOAD_ID,
+      1,
+      { appointmentDatetime: '2026-01-02T10:00:00Z' },
+      USER_ID,
+    );
+
+    expect(updated.appointmentDatetime).toEqual(new Date('2026-01-02T10:00:00Z'));
+    expect(tx.stop.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: { appointmentDatetime: new Date('2026-01-02T10:00:00Z') },
+      }),
+    );
+    expect(audit.record).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: 'Stop Rescheduled',
+        previousValue: { sequence: 1, appointmentDatetime: new Date('2026-01-01T10:00:00Z') },
+        newValue: { sequence: 1, appointmentDatetime: new Date('2026-01-02T10:00:00Z') },
+      }),
+    );
+  });
+
+  it('never touches Stop.status — a pure reschedule, not a general edit', async () => {
+    const stops = [{ id: 'stop-1', sequence: 1, stopType: 'PICKUP', status: 'PENDING' }];
+    const { service, tx } = buildService({ load: { id: LOAD_ID, status: 'BOOKED' }, stops });
+
+    await service.rescheduleStop(
+      ORG_ID,
+      LOAD_ID,
+      1,
+      { appointmentDatetime: '2026-01-02T10:00:00Z' },
+      USER_ID,
+    );
+
+    expect(tx.stop.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { appointmentDatetime: expect.any(Date) } }),
+    );
+  });
+
+  it('rejects rescheduling an ARRIVED stop', async () => {
+    const stops = [{ id: 'stop-1', sequence: 1, stopType: 'PICKUP', status: 'ARRIVED' }];
+    const { service } = buildService({ load: { id: LOAD_ID, status: 'DISPATCHED' }, stops });
+
+    await expect(
+      service.rescheduleStop(
+        ORG_ID,
+        LOAD_ID,
+        1,
+        { appointmentDatetime: '2026-01-02T10:00:00Z' },
+        USER_ID,
+      ),
+    ).rejects.toThrow(InvalidTransitionError);
+  });
+
+  it('rejects rescheduling a COMPLETED stop', async () => {
+    const stops = [{ id: 'stop-1', sequence: 1, stopType: 'PICKUP', status: 'COMPLETED' }];
+    const { service } = buildService({ load: { id: LOAD_ID, status: 'IN_TRANSIT' }, stops });
+
+    await expect(
+      service.rescheduleStop(
+        ORG_ID,
+        LOAD_ID,
+        1,
+        { appointmentDatetime: '2026-01-02T10:00:00Z' },
+        USER_ID,
+      ),
+    ).rejects.toThrow(InvalidTransitionError);
+  });
+
+  it('rejects any reschedule on a DELIVERED Load, even for a still-PENDING stop (multi-delivery edge case)', async () => {
+    const stops = [{ id: 'stop-1', sequence: 2, stopType: 'DELIVERY', status: 'PENDING' }];
+    const { service } = buildService({ load: { id: LOAD_ID, status: 'DELIVERED' }, stops });
+
+    await expect(
+      service.rescheduleStop(
+        ORG_ID,
+        LOAD_ID,
+        2,
+        { appointmentDatetime: '2026-01-02T10:00:00Z' },
+        USER_ID,
+      ),
+    ).rejects.toThrow(InvalidTransitionError);
+  });
+
+  it('rejects any reschedule on a CLOSED Load', async () => {
+    const stops = [{ id: 'stop-1', sequence: 1, stopType: 'PICKUP', status: 'PENDING' }];
+    const { service } = buildService({ load: { id: LOAD_ID, status: 'CLOSED' }, stops });
+
+    await expect(
+      service.rescheduleStop(
+        ORG_ID,
+        LOAD_ID,
+        1,
+        { appointmentDatetime: '2026-01-02T10:00:00Z' },
+        USER_ID,
+      ),
+    ).rejects.toThrow(InvalidTransitionError);
+  });
+
+  it('throws NotFoundError for a Load outside the organization', async () => {
+    const { service } = buildService({ load: null });
+
+    await expect(
+      service.rescheduleStop(
+        ORG_ID,
+        LOAD_ID,
+        1,
+        { appointmentDatetime: '2026-01-02T10:00:00Z' },
+        USER_ID,
+      ),
+    ).rejects.toThrow(NotFoundError);
+  });
+
+  it('throws NotFoundError for a sequence that does not exist on this Load', async () => {
+    const { service } = buildService({ load: { id: LOAD_ID, status: 'BOOKED' }, stops: [] });
+
+    await expect(
+      service.rescheduleStop(
+        ORG_ID,
+        LOAD_ID,
+        1,
+        { appointmentDatetime: '2026-01-02T10:00:00Z' },
+        USER_ID,
+      ),
+    ).rejects.toThrow(NotFoundError);
+  });
+});
+
 describe('DispatchTrackingService.logCheckCall — Workflow 6 §6.7', () => {
   const CHECK_CALL_DTO = {
     contactMethod: 'Phone',

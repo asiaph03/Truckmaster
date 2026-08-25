@@ -24,6 +24,7 @@ import { GenerateRateConfirmationDto } from '../dto/generate-rate-confirmation.d
 import { DispatchLoadDto } from '../dto/dispatch-load.dto';
 import { UpdateDispatchDto } from '../dto/update-dispatch.dto';
 import { StopTimestampDto } from '../dto/stop-timestamp.dto';
+import { RescheduleStopDto } from '../dto/reschedule-stop.dto';
 import { LogCheckCallDto } from '../dto/log-check-call.dto';
 import { SetRiskStatusDto } from '../dto/set-risk-status.dto';
 import { AssignDispatcherDto } from '../dto/assign-dispatcher.dto';
@@ -240,6 +241,25 @@ export class LoadController {
     const organizationId = RequestContextStore.requireOrganizationId();
     const actingUserId = RequestContextStore.requireUserId();
     return this.dispatchTracking.recordDeparture(organizationId, id, sequence, dto, actingUserId);
+  }
+
+  /**
+   * Frontend Phase 6 approved gap-fix — Dispatch Board Calendar's
+   * drag-to-reschedule. Same `SOURCING_DISPATCH_ROLES` as every other
+   * dispatch-mutating route on this controller (Decision DB-C-4's own
+   * "Admin, Operations Manager, Dispatcher" list matches exactly — no
+   * new permission key needed).
+   */
+  @Patch(':id/stops/:sequence/reschedule')
+  @Roles(...SOURCING_DISPATCH_ROLES)
+  rescheduleStop(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('sequence', ParseIntPipe) sequence: number,
+    @Body() dto: RescheduleStopDto,
+  ) {
+    const organizationId = RequestContextStore.requireOrganizationId();
+    const actingUserId = RequestContextStore.requireUserId();
+    return this.dispatchTracking.rescheduleStop(organizationId, id, sequence, dto, actingUserId);
   }
 
   @Post(':id/check-calls')

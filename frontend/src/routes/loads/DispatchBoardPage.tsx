@@ -28,12 +28,13 @@ import {
   originDestination,
 } from './loadDerived';
 import { KanbanBoard } from './KanbanBoard';
+import { CalendarBoard } from './CalendarBoard';
 import { NewLoadChoiceModal } from './modals/NewLoadChoiceModal';
 import { AssignDispatcherModal } from './modals/AssignDispatcherModal';
 import '../shared/ListPage.css';
 import './DispatchBoardPage.css';
 
-type BoardView = 'table' | 'kanban';
+type BoardView = 'table' | 'kanban' | 'calendar';
 
 const EQUIPMENT_OPTIONS = EQUIPMENT_TYPES.map((t) => ({ value: t, label: t.replace('_', ' ') }));
 const STATUS_OPTIONS = [
@@ -78,11 +79,11 @@ export function DispatchBoardPage() {
   const queryClient = useQueryClient();
 
   // UI_UX_DESIGN.md §5.1.4 sitemap — Table/Kanban/Calendar are one screen
-  // at `/loads/board?view=`, not separate URL-level identities. Calendar
-  // is explicitly out of scope this phase, so only 'table'/'kanban' are
-  // recognized; anything else falls back to 'table'.
+  // at `/loads/board?view=`, not separate URL-level identities.
   const [searchParams, setSearchParams] = useSearchParams();
-  const view: BoardView = searchParams.get('view') === 'kanban' ? 'kanban' : 'table';
+  const viewParam = searchParams.get('view');
+  const view: BoardView =
+    viewParam === 'kanban' ? 'kanban' : viewParam === 'calendar' ? 'calendar' : 'table';
   function setView(next: BoardView) {
     setSearchParams(
       (prev) => {
@@ -110,9 +111,10 @@ export function DispatchBoardPage() {
 
   const canManage = can('sourceAndDispatchLoads');
 
-  // Kanban shows every status as its own column (§5.4.2) — the Status
-  // dropdown is Table-only, so the server-side status filter never
-  // applies while viewing Kanban, regardless of what it was last set to.
+  // Kanban shows every status as its own column (§5.4.2) and Calendar
+  // organizes by date, not status (§5.4.3) — the Status dropdown is
+  // Table-only, so the server-side status filter never applies to those
+  // two views, regardless of what it was last set to.
   const { data: loads = [], isLoading } = useQuery({
     queryKey: [
       'loads',
@@ -198,6 +200,22 @@ export function DispatchBoardPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loads, search, customers]);
 
+  // Calendar has no "Show Closed" toggle of its own (§5.4.3 lists no such
+  // control) — Closed loads stay reachable via Load Search's "all loads
+  // including closed" escape hatch (deferred), matching Table View's own
+  // default-excludes-Closed behavior rather than inventing a new toggle.
+  const calendarFiltered = useMemo(() => {
+    const notClosed = loads.filter((l) => l.status !== 'CLOSED');
+    if (!search.trim()) return notClosed;
+    const q = search.trim().toLowerCase();
+    return notClosed.filter(
+      (l) =>
+        l.loadNumber.toLowerCase().includes(q) ||
+        customerName(l.customerId).toLowerCase().includes(q),
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loads, search, customers]);
+
   function afterMutation() {
     queryClient.invalidateQueries({ queryKey: ['loads'] });
   }
@@ -222,10 +240,14 @@ export function DispatchBoardPage() {
             >
               Kanban
             </button>
+            <button
+              type="button"
+              className={view === 'calendar' ? 'active' : ''}
+              onClick={() => setView('calendar')}
+            >
+              Calendar
+            </button>
           </div>
-          <p style={{ margin: 0, color: 'var(--neutral-500)', fontSize: 'var(--text-small-size)' }}>
-            Calendar is coming in a later phase.
-          </p>
         </div>
         {can('createQuoteOrLoad') ? (
           <Button onClick={() => setNewLoadModalOpen(true)}>+ New Load</Button>
@@ -340,6 +362,15 @@ export function DispatchBoardPage() {
           customerName={customerName}
           carrierName={carrierName}
           dispatcherInitial={dispatcherName}
+          onCardClick={(load) => setDrawerLoad(load)}
+          onChanged={afterMutation}
+        />
+      ) : null}
+
+      {view === 'calendar' ? (
+        <CalendarBoard
+          loads={calendarFiltered}
+          canManage={canManage}
           onCardClick={(load) => setDrawerLoad(load)}
           onChanged={afterMutation}
         />

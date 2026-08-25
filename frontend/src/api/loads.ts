@@ -276,6 +276,11 @@ export interface StopTimestampRequest {
   timestamp?: string;
 }
 
+/** Frontend Phase 6 approved gap-fix — Dispatch Board Calendar drag-to-reschedule. */
+export interface RescheduleStopRequest {
+  appointmentDatetime: string;
+}
+
 export interface LogCheckCallRequest {
   occurredAt?: string;
   contactMethod: string;
@@ -362,6 +367,15 @@ export const loadsApi = {
       method: 'POST',
       body,
     }),
+
+  /**
+   * Frontend Phase 6 approved gap-fix — Dispatch Board Calendar's
+   * drag-to-reschedule (Decision DB-C-4). Server re-validates the
+   * PENDING-stop / not-DELIVERED-or-CLOSED-Load restriction regardless
+   * of what the UI offers.
+   */
+  rescheduleStop: (id: string, sequence: number, body: RescheduleStopRequest) =>
+    apiRequest<Stop>(`/loads/${id}/stops/${sequence}/reschedule`, { method: 'PATCH', body }),
 
   logCheckCall: (id: string, body: LogCheckCallRequest) =>
     apiRequest<CheckCall>(`/loads/${id}/check-calls`, { method: 'POST', body }),
