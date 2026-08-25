@@ -12,3 +12,4 @@ export * from './billing';
 export * from './carrierPay';
 export * from './notifications';
 export * from './reporting';
+export * from './activity';

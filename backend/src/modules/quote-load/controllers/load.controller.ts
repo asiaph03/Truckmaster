@@ -29,10 +29,13 @@ import { LogCheckCallDto } from '../dto/log-check-call.dto';
 import { SetRiskStatusDto } from '../dto/set-risk-status.dto';
 import { AssignDispatcherDto } from '../dto/assign-dispatcher.dto';
 import { AddChargeDto } from '../dto/add-charge.dto';
+import { CreateInternalNoteDto } from '../dto/create-internal-note.dto';
+import { CreateCommunicationActivityDto } from '../dto/create-communication-activity.dto';
 import { RolesGuard } from '../../identity/guards/roles.guard';
 import { Roles } from '../../identity/decorators/roles.decorator';
 import { RequestContextStore } from '../../../common/tenant-context/request-context';
 import { FULL_VISIBILITY_ROLES } from '../services/financial-field-shaping';
+import { ActivityHistoryService } from '../services/activity-history.service';
 
 /**
  * TECHNICAL_ARCHITECTURE.md §5.1 Loads resource row. Phase 3: `POST
@@ -69,6 +72,21 @@ const ADD_CHARGE_ROLES: MembershipRoleName[] = [
 /** Workflow 10 Cross-Cutting Permissions — view checklist / Close: Admin, Ops Manager, Accounting. Not Dispatcher. */
 const LOAD_CLOSING_ROLES: MembershipRoleName[] = ['ADMIN', 'OPERATIONS_MANAGER', 'ACCOUNTING'];
 
+/**
+ * Frontend Phase 7 approved scope — every role except Compliance Reviewer
+ * may log an Internal Note / Communication Activity. Matches the tab's own
+ * "visible to all roles" rule (view itself carries no @Roles() at all,
+ * same as GET :id) — restricting creation further would leave Add buttons
+ * visible to roles that can never use them.
+ */
+const ACTIVITY_LOG_ROLES: MembershipRoleName[] = [
+  'ADMIN',
+  'OPERATIONS_MANAGER',
+  'DISPATCHER',
+  'SALES_BOOKING',
+  'ACCOUNTING',
+];
+
 @Controller('loads')
 @UseGuards(RolesGuard)
 export class LoadController {
@@ -76,6 +94,7 @@ export class LoadController {
     private readonly loadService: LoadService,
     private readonly carrierSourcing: CarrierSourcingService,
     private readonly dispatchTracking: DispatchTrackingService,
+    private readonly activityHistory: ActivityHistoryService,
   ) {}
 
   @Get()
@@ -314,5 +333,36 @@ export class LoadController {
   getClosingChecklist(@Param('id', ParseUUIDPipe) id: string) {
     const organizationId = RequestContextStore.requireOrganizationId();
     return this.loadService.getClosingChecklist(organizationId, id);
+  }
+
+  // --- Frontend Phase 7: Activity History (UI_UX_DESIGN.md §5.4.4, LD-6) --
+
+  @Post(':id/internal-notes')
+  @Roles(...ACTIVITY_LOG_ROLES)
+  addInternalNote(@Param('id', ParseUUIDPipe) id: string, @Body() dto: CreateInternalNoteDto) {
+    const actingUserId = RequestContextStore.requireUserId();
+    const organizationId = RequestContextStore.requireOrganizationId();
+    return this.activityHistory.addInternalNote(organizationId, id, dto, actingUserId);
+  }
+
+  @Post(':id/communication-activities')
+  @Roles(...ACTIVITY_LOG_ROLES)
+  logCommunicationActivity(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: CreateCommunicationActivityDto,
+  ) {
+    const actingUserId = RequestContextStore.requireUserId();
+    const organizationId = RequestContextStore.requireOrganizationId();
+    return this.activityHistory.logCommunicationActivity(organizationId, id, dto, actingUserId);
+  }
+
+  // No @Roles() — matches GET :id's own precedent and the locked "Visible
+  // to all roles (subject to redaction)" text (UI_UX_DESIGN.md §5.4.4).
+  @Get(':id/activity-history')
+  getActivityHistory(@Param('id', ParseUUIDPipe) id: string) {
+    const organizationId = RequestContextStore.requireOrganizationId();
+    const actingUserId = RequestContextStore.requireUserId();
+    const actingRoles = (RequestContextStore.current().roles ?? []) as MembershipRoleName[];
+    return this.activityHistory.getActivityHistory(organizationId, id, actingUserId, actingRoles);
   }
 }

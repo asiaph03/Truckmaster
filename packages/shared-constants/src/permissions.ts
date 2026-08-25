@@ -44,7 +44,15 @@ export type PermissionKey =
   // locked docs don't reconcile; this key stays true to D9's backend
   // role set regardless, so it stays correct if a future phase gives
   // Dispatcher another surface to use it from.
-  | 'addChargeToLoad';
+  | 'addChargeToLoad'
+  // Frontend Phase 7 addition — Activity History's "Add Internal Note" /
+  // "Log Communication Activity" actions (UI_UX_DESIGN.md §5.4.4, LD-6).
+  // The tab itself is visible to every role (no gate at all, matching the
+  // backend's unrestricted GET :id/activity-history); this key gates only
+  // the two create buttons, matching the backend's ACTIVITY_LOG_ROLES —
+  // every role except Compliance Reviewer, which has no other operational
+  // reason to touch a Load.
+  | 'logLoadActivity';
 
 export const ROLE_PERMISSIONS: Record<MembershipRoleName, PermissionKey[]> = {
   ADMIN: [
@@ -71,6 +79,7 @@ export const ROLE_PERMISSIONS: Record<MembershipRoleName, PermissionKey[]> = {
     'addCarrierInsurance',
     'viewCustomerFinancialTabs',
     'addChargeToLoad',
+    'logLoadActivity',
   ],
   OPERATIONS_MANAGER: [
     'viewLoadFinancials',
@@ -82,6 +91,7 @@ export const ROLE_PERMISSIONS: Record<MembershipRoleName, PermissionKey[]> = {
     'addCarrierInsurance',
     'viewCustomerFinancialTabs',
     'addChargeToLoad',
+    'logLoadActivity',
     // No manageMemberships, approveOrRejectCarrierPayment, or
     // sendOrVoidInvoice/recordPaymentOrAdjustment — Ops Manager has full
     // *view* parity with Admin (UI_UX_DESIGN.md §5.1.7 item 1) but not
@@ -101,6 +111,7 @@ export const ROLE_PERMISSIONS: Record<MembershipRoleName, PermissionKey[]> = {
     'createQuoteOrLoad',
     'addCarrierInsurance',
     'addChargeToLoad',
+    'logLoadActivity',
     // No viewLoadFinancials, no billing actions, no viewArApAging —
     // financials/Billing nav are hidden entirely for Dispatcher. This
     // role does still hold `addChargeToLoad` (matches D9's real backend
@@ -112,6 +123,7 @@ export const ROLE_PERMISSIONS: Record<MembershipRoleName, PermissionKey[]> = {
     'manageCustomers',
     'createQuoteOrLoad',
     'viewCustomerFinancialTabs',
+    'logLoadActivity',
     // viewLoadFinancials deliberately absent as a blanket grant — Sales
     // sees revenue only on "own deal" records (Account Owner, falling
     // back to creator), never margin/carrier cost regardless of
@@ -128,6 +140,7 @@ export const ROLE_PERMISSIONS: Record<MembershipRoleName, PermissionKey[]> = {
     'viewArApAging',
     'viewCustomerFinancialTabs',
     'addChargeToLoad',
+    'logLoadActivity',
     // No manageMemberships, no approveOrRejectCarrierPayment (Admin-only,
     // self-review-forbidden also applies), no sourceAndDispatchLoads
     // (view-only on Loads ops actions), no manageCarriers/

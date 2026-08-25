@@ -17,6 +17,7 @@ import { CarrierSourcingService } from './services/carrier-sourcing.service';
 import { DispatchTrackingService } from './services/dispatch-tracking.service';
 import { LoadStatusDerivationService } from './services/load-status-derivation.service';
 import { LoadPodStatusService } from './services/load-pod-status.service';
+import { ActivityHistoryService } from './services/activity-history.service';
 import { RateConfirmationGenerationWorker } from './services/rate-confirmation-generation.worker';
 import {
   RATE_CONFIRMATION_QUEUE,
@@ -57,6 +58,7 @@ const RATE_CONFIRMATION_QUEUE_CONNECTION = 'RATE_CONFIRMATION_QUEUE_CONNECTION';
     DispatchTrackingService,
     LoadStatusDerivationService,
     LoadPodStatusService,
+    ActivityHistoryService,
     RateConfirmationGenerationWorker,
     { provide: EMAIL_SENDER, useClass: ConsoleEmailSender },
     { provide: PDF_GENERATOR, useClass: StubPdfGenerator },

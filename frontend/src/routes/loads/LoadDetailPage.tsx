@@ -15,6 +15,7 @@ import { StopsTrackingTab } from './tabs/StopsTrackingTab';
 import { CarrierDispatchTab } from './tabs/CarrierDispatchTab';
 import { DocumentsTab } from './tabs/DocumentsTab';
 import { FinancialsTab } from './tabs/FinancialsTab';
+import { ActivityHistoryTab } from './tabs/ActivityHistoryTab';
 import '../shared/DetailPage.css';
 import './LoadDetailPage.css';
 
@@ -37,8 +38,9 @@ const TRACKING_STATUSES = ['DISPATCHED', 'PICKUP', 'IN_TRANSIT'] as const;
  * Tracking, Carrier & Dispatch, Documents; Phase 4 adds the Financials
  * tab (hidden entirely for Dispatcher) and the Overview tab's Closing
  * Readiness card (linking out to the dedicated Load Closing screen,
- * §5.4.8). Activity History remains deferred (no Communication
- * Activity/Internal Note data model exists yet). The header's
+ * §5.4.8). Frontend Phase 7 adds the sixth tab, Activity History —
+ * visible to every role (unlike Financials), matching the locked
+ * "visible to all roles (subject to redaction)" rule. The header's
  * `DELIVERED`/`CLOSED`-state primary action intentionally stays absent —
  * Create Invoice/Close Load live in the Financials tab's Customer
  * Invoice card and the Closing Readiness card respectively, not
@@ -125,6 +127,7 @@ export function LoadDetailPage() {
     { key: 'carrier', label: 'Carrier & Dispatch' },
     { key: 'documents', label: 'Documents' },
     ...(showFinancialsTab ? [{ key: 'financials', label: 'Financials' }] : []),
+    { key: 'activity', label: 'Activity History' },
   ];
 
   return (
@@ -192,6 +195,7 @@ export function LoadDetailPage() {
       {activeTab === 'financials' && showFinancialsTab ? (
         <FinancialsTab load={load} onChanged={refetch} />
       ) : null}
+      {activeTab === 'activity' ? <ActivityHistoryTab load={load} /> : null}
 
       <AssignCarrierModal
         open={assigningCarrier}

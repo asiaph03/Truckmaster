@@ -137,6 +137,10 @@ model User {
   // Phase 7 reverse relation
   notificationsReceived Notification[] @relation("NotificationRecipient")
 
+  // Frontend Phase 7 reverse relations (Activity History)
+  communicationActivitiesLogged CommunicationActivity[] @relation("CommunicationActivityLoggedBy")
+  internalNotesAuthored         InternalNote[]          @relation("InternalNoteAuthor")
+
   @@map("user")
 }
 
@@ -1170,6 +1174,10 @@ model Load {
   invoiceLineItemsSourced InvoiceLineItem[] @relation("InvoiceLineItemSourceLoad")
   carrierPayments         CarrierPayment[]
 
+  // Frontend Phase 7 reverse relations (Activity History)
+  communicationActivities CommunicationActivity[]
+  internalNotes           InternalNote[]
+
   @@unique([organizationId, loadNumber])
   @@index([organizationId, status])
   @@index([organizationId, customerId])
@@ -1361,6 +1369,62 @@ model CheckCall {
 
   @@index([organizationId, loadId])
   @@map("check_call")
+}
+
+/// Frontend Phase 7 (UI_UX_DESIGN.md §5.4.4, Decision LD-6) — one logged
+/// communication touchpoint for a Load's Activity History timeline.
+/// activityType is free text (PRD.md's documented example values:
+/// "Called Carrier", "Sent Rate Confirmation"), mirroring
+/// CheckCall.contactMethod rather than a fixed enum. direction is always
+/// optional — no conditional-required rule.
+model CommunicationActivity {
+  id String @id @default(uuid()) @db.Uuid
+
+  organizationId String @map("organization_id") @db.Uuid
+
+  loadId String @map("load_id") @db.Uuid
+  load   Load   @relation(fields: [loadId], references: [id])
+
+  loggedByUserId String @map("logged_by_user_id") @db.Uuid
+  loggedBy       User   @relation("CommunicationActivityLoggedBy", fields: [loggedByUserId], references: [id])
+
+  activityType  String                  @map("activity_type")
+  direction     CommunicationDirection? @map("direction")
+  contactPerson String?                 @map("contact_person")
+  notes         String
+  occurredAt    DateTime                @map("occurred_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([organizationId, loadId])
+  @@map("communication_activity")
+}
+
+/// Frontend Phase 7 (UI_UX_DESIGN.md §5.4.4, Decision LD-6) — free-text
+/// internal note against a Load, shown in the Activity History timeline.
+/// Timestamp and author are backend-set only; no edit/update path.
+model InternalNote {
+  id String @id @default(uuid()) @db.Uuid
+
+  organizationId String @map("organization_id") @db.Uuid
+
+  loadId String @map("load_id") @db.Uuid
+  load   Load   @relation(fields: [loadId], references: [id])
+
+  authorUserId String @map("author_user_id") @db.Uuid
+  author       User   @relation("InternalNoteAuthor", fields: [authorUserId], references: [id])
+
+  content String
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([organizationId, loadId])
+  @@map("internal_note")
+}
+
+enum CommunicationDirection {
+  INBOUND
+  OUTBOUND
 }
 
 // ---------------------------------------------------------------------
