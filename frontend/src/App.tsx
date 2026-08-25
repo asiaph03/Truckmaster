@@ -4,6 +4,7 @@ import { useSessionStore } from './auth/session-store';
 import { LoginPage } from './routes/LoginPage';
 import { SelectOrganizationPage } from './routes/SelectOrganizationPage';
 import { ComingSoonPage } from './routes/ComingSoonPage';
+import { DashboardPage } from './routes/DashboardPage';
 import { CustomerListPage } from './routes/customers/CustomerListPage';
 import { CustomerCreatePage } from './routes/customers/CustomerCreatePage';
 import { CustomerDetailPage } from './routes/customers/CustomerDetailPage';
@@ -40,10 +41,11 @@ import { ToastViewport } from './components/ui';
  * added the Dispatch Board's Calendar view. Phase 7 added Load Detail's
  * sixth tab, Activity History. Table/Kanban/Calendar are one screen at
  * `/loads/board?view=`, matching the locked sitemap, not separate routes.
- * Dashboard, Document Center, the broader Reports library, Load Search,
+ * Phase 10 added the role-aware Dashboard (`/`), rendered strictly off
+ * `GET /dashboard`'s returned keys — no client-side role-to-section
+ * mapping. Document Center, the broader Reports library, Load Search,
  * Organization Settings, and membership role-editing remain ComingSoonPage
- * or unbuilt — none has a locked screen-level design yet (Frontend Phase
- * 8 inspection).
+ * or unbuilt — none has a locked screen-level design yet.
  */
 function App() {
   const status = useSessionStore((s) => s.status);
@@ -74,7 +76,7 @@ function App() {
   return (
     <Routes>
       <Route element={<AppShell />}>
-        <Route path="/" element={<ComingSoonPage title="Dashboard" />} />
+        <Route path="/" element={<DashboardPage />} />
         <Route path="/loads" element={<Navigate to="/loads/board" replace />} />
         <Route path="/loads/board" element={<DispatchBoardPage />} />
         <Route path="/loads/new" element={<LoadCreatePage />} />

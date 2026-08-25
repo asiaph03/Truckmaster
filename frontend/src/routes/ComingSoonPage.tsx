@@ -2,12 +2,12 @@ import { EmptyState } from '../components/ui';
 
 /**
  * Placeholder for nav destinations with no locked screen-level design yet
- * (Dashboard, Document Center, Reports) — as of the Frontend Phase 8
- * inspection, none of the remaining undesigned items (Dashboard, Document
+ * (Document Center, Reports) — of the remaining undesigned items (Document
  * Center, Reports Library, Load Search, Organization Settings, membership
- * role-editing) has an approved scope to build against. This placeholder
- * exists only so the always-visible shell nav doesn't link to a blank/
- * broken route.
+ * role-editing), none has an approved scope to build against (Dashboard
+ * was the exception, built in Frontend Phase 10). This placeholder exists
+ * only so the always-visible shell nav doesn't link to a blank/broken
+ * route.
  */
 export function ComingSoonPage({ title }: { title: string }) {
   return (

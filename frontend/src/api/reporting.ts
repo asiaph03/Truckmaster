@@ -1,5 +1,4 @@
 import { apiRequest } from './client';
-import { notImplemented } from './notImplemented';
 
 export interface SearchResultLoad {
   id: string;
@@ -52,6 +51,38 @@ export interface AgingReport {
   grandTotal: string;
 }
 
+/**
+ * Frontend Phase 10 — matches ReportingService.dashboard()'s exact shape
+ * (backend/src/modules/reporting/services/reporting.service.ts). Every
+ * key is optional: the backend includes only the blocks the caller's
+ * role(s) qualify for, so a Compliance-Reviewer-only session gets `{}`.
+ */
+export interface DashboardDispatcherBlock {
+  activeLoads: number;
+  atRiskOrDelayed: number;
+  overdueCheckCalls: number;
+}
+
+export interface DashboardSalesBlock {
+  openQuotes: number;
+  wonLast30: number;
+  lostLast30: number;
+  winRate: number;
+}
+
+export interface DashboardAccountingBlock {
+  arOutstanding: string;
+  arOverdue: string;
+  apOutstanding: string;
+  pendingCarrierPayments: number;
+}
+
+export interface DashboardResponse {
+  dispatcher?: DashboardDispatcherBlock;
+  sales?: DashboardSalesBlock;
+  accounting?: DashboardAccountingBlock;
+}
+
 export const reportingApi = {
   search: (q: string) => apiRequest<GlobalSearchResult>('/search', { query: { q } }),
 
@@ -61,10 +92,8 @@ export const reportingApi = {
   /** Decision D14 — buckets CarrierPayments by submitted_at. Admin/Accounting/Ops Manager only. */
   apAging: () => apiRequest<AgingReport>('/reports/ap-aging'),
 
-  // Typed surface only — the backend's GET /dashboard is fully built, but
-  // Dashboard has no locked screen-level design (widget/KPI layout) to
-  // build a frontend against yet (Frontend Phase 7/8/9 inspections).
-  dashboard: (): Promise<unknown> => notImplemented('reportingApi.dashboard'),
+  /** PRD §9 role-aware Dashboard — open to any authenticated session; role-filtering happens entirely server-side. */
+  dashboard: () => apiRequest<DashboardResponse>('/dashboard'),
   // NOTE: the broader Operations/Financial/Carrier-Performance/Sales
   // report library, CSV/Excel export, and saved views have no backend
   // endpoints — deferred to a later phase per the approved gap analysis.
