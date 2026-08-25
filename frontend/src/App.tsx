@@ -36,16 +36,18 @@ import { ToastViewport } from './components/ui';
  * store. Phase 2 added Customers/Carriers; Phase 3 added the Load
  * lifecycle; Phase 4 added Financials & Load Closing. Phase 5 added AR/AP
  * Aging, the Compliance Review Queue, Settings → Users & Roles (invite/
- * resend/cancel/deactivate only — no role-edit endpoint exists), the
- * Dispatch Board's Kanban view, and the Global Search palette. Phase 6
- * added the Dispatch Board's Calendar view. Phase 7 added Load Detail's
- * sixth tab, Activity History. Table/Kanban/Calendar are one screen at
- * `/loads/board?view=`, matching the locked sitemap, not separate routes.
- * Phase 10 added the role-aware Dashboard (`/`), rendered strictly off
- * `GET /dashboard`'s returned keys — no client-side role-to-section
- * mapping. Document Center, the broader Reports library, Load Search,
- * Organization Settings, and membership role-editing remain ComingSoonPage
- * or unbuilt — none has a locked screen-level design yet.
+ * resend/cancel/deactivate), the Dispatch Board's Kanban view, and the
+ * Global Search palette. Phase 6 added the Dispatch Board's Calendar
+ * view. Phase 7 added Load Detail's sixth tab, Activity History.
+ * Table/Kanban/Calendar are one screen at `/loads/board?view=`, matching
+ * the locked sitemap, not separate routes. Phase 10 added the role-aware
+ * Dashboard (`/`), rendered strictly off `GET /dashboard`'s returned keys
+ * — no client-side role-to-section mapping. Phase 11 added membership
+ * role editing (`PATCH /memberships/:id/roles`) to Settings → Users &
+ * Roles, with server-enforced last-active-Admin protection. Document
+ * Center, the broader Reports library, Load Search, and Organization
+ * Settings remain ComingSoonPage or unbuilt — none has a locked
+ * screen-level design yet.
  */
 function App() {
   const status = useSessionStore((s) => s.status);
