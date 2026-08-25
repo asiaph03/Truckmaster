@@ -7,11 +7,15 @@ import './GlobalSearch.css';
 
 /**
  * UI_UX_DESIGN.md §5.3.6 — ⌘K/Ctrl+K command-palette overlay, results
- * grouped by entity type. Distinct from the future full-featured Load
- * Search screen (§5.1.5) — this is a fast jump-to tool, capped results.
- * Load/Invoice results aren't clickable yet (no detail screens exist
- * until later phases) — shown as plain text, Customer/Carrier results
- * navigate to their (now-built) detail pages.
+ * grouped by entity type. Distinct from the Load Search screen (§5.1.5,
+ * deferred — Frontend Phase 5 plan §8) — this is a fast jump-to tool,
+ * capped at 5 results per group by the backend (`SEARCH_RESULT_LIMIT`),
+ * which exposes no total count, so no "See all results" link is
+ * rendered — that would require a count the API doesn't return, not a
+ * missing frontend feature. Results are already role-filtered/redacted
+ * by `ReportingService.search` (Sales/Booking's non-own-deal invoices
+ * come back status-only, `total: null`) — this component renders
+ * exactly what it's given, no client-side re-filtering.
  */
 export function GlobalSearch() {
   const [open, setOpen] = useState(false);
@@ -55,6 +59,20 @@ export function GlobalSearch() {
             />
             {data ? (
               <div className="global-search-results">
+                <SearchGroup label="Loads">
+                  {data.loads.map((l) => (
+                    <button
+                      key={l.id}
+                      className="global-search-result"
+                      onClick={() => {
+                        navigate(`/loads/${l.id}`);
+                        setOpen(false);
+                      }}
+                    >
+                      {l.loadNumber}
+                    </button>
+                  ))}
+                </SearchGroup>
                 <SearchGroup label="Customers">
                   {data.customers.map((c) => (
                     <button
@@ -83,6 +101,26 @@ export function GlobalSearch() {
                     </button>
                   ))}
                 </SearchGroup>
+                <SearchGroup label="Invoices">
+                  {data.invoices.map((i) => (
+                    <button
+                      key={i.id}
+                      className="global-search-result"
+                      onClick={() => {
+                        navigate(`/billing/invoices/${i.id}`);
+                        setOpen(false);
+                      }}
+                    >
+                      {i.invoiceNumber}
+                    </button>
+                  ))}
+                </SearchGroup>
+                {data.loads.length === 0 &&
+                data.customers.length === 0 &&
+                data.carriers.length === 0 &&
+                data.invoices.length === 0 ? (
+                  <div className="global-search-empty">No results for "{query}".</div>
+                ) : null}
               </div>
             ) : null}
           </div>

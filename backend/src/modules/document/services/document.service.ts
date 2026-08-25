@@ -320,6 +320,45 @@ export class DocumentService {
     );
   }
 
+  /**
+   * Frontend Phase 5 approved gap-fix — Carrier Compliance Review Queue
+   * (cross-carrier). Same `reviewStatus === 'PENDING_REVIEW'` predicate
+   * `review()` already checks per-document; this just drops the
+   * entityId scoping `list()` requires and adds entityType: 'CARRIER' —
+   * the only entity type any seeded document type currently requires
+   * review for (see `assertUploadPermission`'s own comment above). No
+   * new tables/columns/RLS. `entityId` has no native FK (polymorphic,
+   * DATABASE_DESIGN.md §7), so the Carrier legal name is resolved with
+   * one bounded follow-up query rather than a Prisma include.
+   */
+  async listPendingReview(organizationId: string) {
+    return this.prisma.withTenantTransaction(organizationId, async (tx) => {
+      const documents = await tx.document.findMany({
+        where: {
+          organizationId,
+          entityType: 'CARRIER',
+          reviewStatus: 'PENDING_REVIEW',
+          isCurrentVersion: true,
+        },
+        include: { documentType: true },
+        orderBy: { uploadedAt: 'asc' },
+      });
+      if (documents.length === 0) return [];
+
+      const carrierIds = [...new Set(documents.map((d) => d.entityId))];
+      const carriers = await tx.carrier.findMany({
+        where: { id: { in: carrierIds }, organizationId },
+        select: { id: true, legalName: true },
+      });
+      const carrierNameById = new Map(carriers.map((c) => [c.id, c.legalName]));
+
+      return documents.map((d) => ({
+        ...d,
+        carrierLegalName: carrierNameById.get(d.entityId) ?? null,
+      }));
+    });
+  }
+
   /** §8.4 — permission to view the parent entity (checked by caller/guard) + scan_status === CLEAN. */
   async getDownloadUrl(organizationId: string, documentId: string): Promise<{ url: string }> {
     const document = await this.prisma.withTenantTransaction(organizationId, (tx) =>

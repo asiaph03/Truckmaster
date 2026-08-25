@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Search } from 'lucide-react';
 import { EQUIPMENT_TYPES } from '@tms/shared-constants';
@@ -15,6 +15,7 @@ import {
   ModalFooter,
   RowActionsMenu,
   Select,
+  Toggle,
 } from '../../components/ui';
 import { getStatusBadgeColor } from '../../components/ui/statusBadgeMap';
 import { useToast } from '../../components/ui/toastStore';
@@ -26,10 +27,13 @@ import {
   lastDeliveryDate,
   originDestination,
 } from './loadDerived';
+import { KanbanBoard } from './KanbanBoard';
 import { NewLoadChoiceModal } from './modals/NewLoadChoiceModal';
 import { AssignDispatcherModal } from './modals/AssignDispatcherModal';
 import '../shared/ListPage.css';
 import './DispatchBoardPage.css';
+
+type BoardView = 'table' | 'kanban';
 
 const EQUIPMENT_OPTIONS = EQUIPMENT_TYPES.map((t) => ({ value: t, label: t.replace('_', ' ') }));
 const STATUS_OPTIONS = [
@@ -73,12 +77,31 @@ export function DispatchBoardPage() {
   const { can } = usePermissions();
   const queryClient = useQueryClient();
 
+  // UI_UX_DESIGN.md §5.1.4 sitemap — Table/Kanban/Calendar are one screen
+  // at `/loads/board?view=`, not separate URL-level identities. Calendar
+  // is explicitly out of scope this phase, so only 'table'/'kanban' are
+  // recognized; anything else falls back to 'table'.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const view: BoardView = searchParams.get('view') === 'kanban' ? 'kanban' : 'table';
+  function setView(next: BoardView) {
+    setSearchParams(
+      (prev) => {
+        const params = new URLSearchParams(prev);
+        if (next === 'table') params.delete('view');
+        else params.set('view', next);
+        return params;
+      },
+      { replace: true },
+    );
+  }
+
   const [status, setStatus] = useState('');
   const [equipmentType, setEquipmentType] = useState('');
   const [carrierId, setCarrierId] = useState('');
   const [dispatcherId, setDispatcherId] = useState('');
   const [search, setSearch] = useState('');
   const [quickFilter, setQuickFilter] = useState<QuickFilter>(null);
+  const [showClosed, setShowClosed] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [drawerLoad, setDrawerLoad] = useState<LoadSummary | null>(null);
   const [newLoadModalOpen, setNewLoadModalOpen] = useState(false);
@@ -87,11 +110,17 @@ export function DispatchBoardPage() {
 
   const canManage = can('sourceAndDispatchLoads');
 
+  // Kanban shows every status as its own column (§5.4.2) — the Status
+  // dropdown is Table-only, so the server-side status filter never
+  // applies while viewing Kanban, regardless of what it was last set to.
   const { data: loads = [], isLoading } = useQuery({
-    queryKey: ['loads', { status, equipmentType, carrierId, dispatcherId }],
+    queryKey: [
+      'loads',
+      { status: view === 'table' ? status : '', equipmentType, carrierId, dispatcherId },
+    ],
     queryFn: () =>
       loadsApi.list({
-        status: status || undefined,
+        status: view === 'table' ? status || undefined : undefined,
         equipmentType: equipmentType || undefined,
         carrierId: carrierId || undefined,
         dispatcherId: dispatcherId || undefined,
@@ -155,6 +184,20 @@ export function DispatchBoardPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loads, status, search, quickFilter, customers]);
 
+  // Kanban's own "Show Closed" toggle replaces Table View's status-driven
+  // exclusion, and Kanban has no quick-filter chips — just the shared
+  // text search applies before KanbanBoard buckets rows into columns.
+  const kanbanFiltered = useMemo(() => {
+    if (!search.trim()) return loads;
+    const q = search.trim().toLowerCase();
+    return loads.filter(
+      (l) =>
+        l.loadNumber.toLowerCase().includes(q) ||
+        customerName(l.customerId).toLowerCase().includes(q),
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loads, search, customers]);
+
   function afterMutation() {
     queryClient.invalidateQueries({ queryKey: ['loads'] });
   }
@@ -164,8 +207,24 @@ export function DispatchBoardPage() {
       <div className="list-page-header">
         <div>
           <h1 className="list-page-title">Dispatch Board</h1>
+          <div className="dispatch-board-view-switch">
+            <button
+              type="button"
+              className={view === 'table' ? 'active' : ''}
+              onClick={() => setView('table')}
+            >
+              Table
+            </button>
+            <button
+              type="button"
+              className={view === 'kanban' ? 'active' : ''}
+              onClick={() => setView('kanban')}
+            >
+              Kanban
+            </button>
+          </div>
           <p style={{ margin: 0, color: 'var(--neutral-500)', fontSize: 'var(--text-small-size)' }}>
-            Table view — Kanban and Calendar are coming in a later phase.
+            Calendar is coming in a later phase.
           </p>
         </div>
         {can('createQuoteOrLoad') ? (
@@ -182,17 +241,19 @@ export function DispatchBoardPage() {
             onChange={(e) => setSearch(e.target.value)}
           />
         </div>
-        <select
-          className="field-select list-page-filter"
-          value={status}
-          onChange={(e) => setStatus(e.target.value)}
-        >
-          {STATUS_OPTIONS.map((o) => (
-            <option key={o.value} value={o.value}>
-              {o.label}
-            </option>
-          ))}
-        </select>
+        {view === 'table' ? (
+          <select
+            className="field-select list-page-filter"
+            value={status}
+            onChange={(e) => setStatus(e.target.value)}
+          >
+            {STATUS_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        ) : null}
         <select
           className="field-select list-page-filter"
           value={equipmentType}
@@ -229,9 +290,16 @@ export function DispatchBoardPage() {
             </option>
           ))}
         </select>
+        {view === 'kanban' ? (
+          <Toggle
+            label="Show Closed"
+            checked={showClosed}
+            onChange={(e) => setShowClosed(e.target.checked)}
+          />
+        ) : null}
       </div>
 
-      {selected.size > 0 ? (
+      {view === 'table' && selected.size > 0 ? (
         <BulkActionBar selectedCount={selected.size} onClear={() => setSelected(new Set())}>
           {canManage ? (
             <Button size="sm" variant="secondary" onClick={() => setBulkAssigning(true)}>
@@ -239,7 +307,7 @@ export function DispatchBoardPage() {
             </Button>
           ) : null}
         </BulkActionBar>
-      ) : (
+      ) : view === 'table' ? (
         <div className="dispatch-board-chips">
           <FilterChip
             label="Pickups next 4h"
@@ -262,101 +330,116 @@ export function DispatchBoardPage() {
             onClick={() => setQuickFilter(quickFilter === 'overdue' ? null : 'overdue')}
           />
         </div>
-      )}
+      ) : null}
 
-      <DataTable
-        loading={isLoading}
-        rows={filtered}
-        rowKey={(r) => r.id}
-        selectable
-        selectedKeys={selected}
-        onSelectionChange={setSelected}
-        onRowClick={(row) => setDrawerLoad(row)}
-        emptyMessage="No loads match your filters."
-        columns={[
-          { key: 'loadNumber', header: 'Load #', render: (r) => r.loadNumber },
-          { key: 'customer', header: 'Customer', render: (r) => customerName(r.customerId) },
-          {
-            key: 'status',
-            header: 'Status',
-            render: (r) => (
-              <Badge
-                label={r.status}
-                color={getStatusBadgeColor('Load.status', r.status) ?? 'neutral'}
-              />
-            ),
-          },
-          {
-            key: 'risk',
-            header: 'Risk',
-            render: (r) =>
-              r.riskStatus !== 'NORMAL' ? (
+      {view === 'kanban' ? (
+        <KanbanBoard
+          loads={kanbanFiltered}
+          canManage={canManage}
+          showClosed={showClosed}
+          customerName={customerName}
+          carrierName={carrierName}
+          dispatcherInitial={dispatcherName}
+          onCardClick={(load) => setDrawerLoad(load)}
+          onChanged={afterMutation}
+        />
+      ) : null}
+
+      {view === 'table' ? (
+        <DataTable
+          loading={isLoading}
+          rows={filtered}
+          rowKey={(r) => r.id}
+          selectable
+          selectedKeys={selected}
+          onSelectionChange={setSelected}
+          onRowClick={(row) => setDrawerLoad(row)}
+          emptyMessage="No loads match your filters."
+          columns={[
+            { key: 'loadNumber', header: 'Load #', render: (r) => r.loadNumber },
+            { key: 'customer', header: 'Customer', render: (r) => customerName(r.customerId) },
+            {
+              key: 'status',
+              header: 'Status',
+              render: (r) => (
                 <Badge
-                  label={r.riskStatus}
-                  color={getStatusBadgeColor('Load.riskStatus', r.riskStatus) ?? 'warning'}
+                  label={r.status}
+                  color={getStatusBadgeColor('Load.status', r.status) ?? 'neutral'}
                 />
-              ) : null,
-          },
-          { key: 'carrier', header: 'Carrier', render: (r) => carrierName(r.assignedCarrierId) },
-          {
-            key: 'dispatcher',
-            header: 'Dispatcher',
-            render: (r) => dispatcherName(r.assignedDispatcherId),
-          },
-          {
-            key: 'lane',
-            header: 'Origin → Destination',
-            render: (r) => originDestination(r.stops),
-          },
-          {
-            key: 'pickup',
-            header: 'Pickup',
-            render: (r) => formatDateShort(firstPickupDate(r.stops)),
-          },
-          {
-            key: 'delivery',
-            header: 'Delivery',
-            render: (r) => formatDateShort(lastDeliveryDate(r.stops)),
-          },
-          {
-            key: 'equipment',
-            header: 'Equipment',
-            render: (r) => r.equipmentType.replace('_', ' '),
-          },
-          {
-            key: 'customerRate',
-            header: 'Customer Rate',
-            numeric: true,
-            render: (r) => (r.customerRate != null ? `$${r.customerRate}` : '—'),
-          },
-          {
-            key: 'carrierRate',
-            header: 'Carrier Rate',
-            numeric: true,
-            render: (r) => (r.carrierRate != null ? `$${r.carrierRate}` : '—'),
-          },
-        ]}
-        rowActions={
-          canManage
-            ? (r) => (
-                <RowActionsMenu>
-                  <button
-                    className="data-table-row-action"
-                    onClick={() => navigate(`/loads/${r.id}`)}
-                  >
-                    Open Full Detail
-                  </button>
-                  <button
-                    className="data-table-row-action"
-                    onClick={() => setAssigningDispatcherFor(r.id)}
-                  >
-                    {r.assignedDispatcherId ? 'Reassign Dispatcher' : 'Assign Dispatcher'}
-                  </button>
-                </RowActionsMenu>
-              )
-            : undefined
-        }
-      />
+              ),
+            },
+            {
+              key: 'risk',
+              header: 'Risk',
+              render: (r) =>
+                r.riskStatus !== 'NORMAL' ? (
+                  <Badge
+                    label={r.riskStatus}
+                    color={getStatusBadgeColor('Load.riskStatus', r.riskStatus) ?? 'warning'}
+                  />
+                ) : null,
+            },
+            { key: 'carrier', header: 'Carrier', render: (r) => carrierName(r.assignedCarrierId) },
+            {
+              key: 'dispatcher',
+              header: 'Dispatcher',
+              render: (r) => dispatcherName(r.assignedDispatcherId),
+            },
+            {
+              key: 'lane',
+              header: 'Origin → Destination',
+              render: (r) => originDestination(r.stops),
+            },
+            {
+              key: 'pickup',
+              header: 'Pickup',
+              render: (r) => formatDateShort(firstPickupDate(r.stops)),
+            },
+            {
+              key: 'delivery',
+              header: 'Delivery',
+              render: (r) => formatDateShort(lastDeliveryDate(r.stops)),
+            },
+            {
+              key: 'equipment',
+              header: 'Equipment',
+              render: (r) => r.equipmentType.replace('_', ' '),
+            },
+            {
+              key: 'customerRate',
+              header: 'Customer Rate',
+              numeric: true,
+              render: (r) => (r.customerRate != null ? `$${r.customerRate}` : '—'),
+            },
+            {
+              key: 'carrierRate',
+              header: 'Carrier Rate',
+              numeric: true,
+              render: (r) => (r.carrierRate != null ? `$${r.carrierRate}` : '—'),
+            },
+          ]}
+          rowActions={
+            canManage
+              ? (r) => (
+                  <RowActionsMenu>
+                    <button
+                      className="data-table-row-action"
+                      onClick={() => navigate(`/loads/${r.id}`)}
+                    >
+                      Open Full Detail
+                    </button>
+                    <button
+                      className="data-table-row-action"
+                      onClick={() => setAssigningDispatcherFor(r.id)}
+                    >
+                      {r.assignedDispatcherId ? 'Reassign Dispatcher' : 'Assign Dispatcher'}
+                    </button>
+                  </RowActionsMenu>
+                )
+              : undefined
+          }
+        />
+      ) : null}
 
       <NewLoadChoiceModal open={newLoadModalOpen} onClose={() => setNewLoadModalOpen(false)} />
 

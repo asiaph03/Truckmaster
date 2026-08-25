@@ -1,0 +1,37 @@
+.aging-bucket-cards {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+
+.aging-bucket-card {
+  background: var(--neutral-0);
+  border: 1px solid var(--neutral-200);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+  padding: var(--space-3);
+}
+
+.aging-bucket-card-label {
+  font-size: var(--text-caption-size);
+  color: var(--neutral-500);
+  margin-bottom: var(--space-2);
+}
+
+.aging-bucket-card-total {
+  font-size: var(--text-h2-size);
+  font-weight: var(--text-h2-weight);
+  color: var(--neutral-900);
+}
+
+.aging-bucket-card-count {
+  font-size: var(--text-caption-size);
+  color: var(--neutral-500);
+  margin-top: 2px;
+}
+
+.aging-bucket-card-grand-total {
+  background: var(--brand-50);
+  border-color: var(--brand-100);
+}

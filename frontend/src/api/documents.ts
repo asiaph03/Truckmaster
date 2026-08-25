@@ -1,4 +1,5 @@
 import { apiRequest } from './client';
+import type { DocumentTypeDefinition } from './documentTypes';
 
 export type DocumentEntityType =
   | 'LOAD'
@@ -78,9 +79,24 @@ export interface ReviewDocumentRequest {
   rejectionReason?: string;
 }
 
+/**
+ * Frontend Phase 5 — Carrier Compliance Review Queue. `entityId` is
+ * always a Carrier id on this endpoint (the backend gap-fix scopes
+ * `GET /documents/pending-review` to `entityType: 'CARRIER'` only).
+ * `carrierLegalName` is resolved server-side since `entityId` has no
+ * native FK to join through.
+ */
+export interface PendingReviewDocument extends AppDocument {
+  documentType: DocumentTypeDefinition;
+  carrierLegalName: string | null;
+}
+
 export const documentsApi = {
   list: (entityType: DocumentEntityType, entityId: string) =>
     apiRequest<AppDocument[]>('/documents', { query: { entityType, entityId } }),
+
+  /** Compliance-Reviewer-only, matching `review()`'s own role restriction. */
+  listPendingReview: () => apiRequest<PendingReviewDocument[]>('/documents/pending-review'),
 
   uploadCarrierDocument: (carrierId: string, body: UploadCarrierDocumentRequest) =>
     apiRequest<InitiateUploadResponse>(`/carriers/${carrierId}/documents`, {

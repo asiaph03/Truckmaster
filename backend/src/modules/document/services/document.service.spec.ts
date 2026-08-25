@@ -138,6 +138,122 @@ describe('DocumentService.review — Workflow 3 §3.4 self-review prevention', (
   });
 });
 
+describe('DocumentService.listPendingReview — Frontend Phase 5 gap-fix (Compliance Review Queue)', () => {
+  const ORG_ID = 'org-1';
+
+  function buildService(opts: {
+    documents?: Record<string, unknown>[];
+    carriers?: Record<string, unknown>[];
+  }) {
+    const documents = opts.documents ?? [];
+    const carriers = opts.carriers ?? [];
+
+    const tx = {
+      document: { findMany: jest.fn().mockResolvedValue(documents) },
+      carrier: { findMany: jest.fn().mockResolvedValue(carriers) },
+    };
+    const prisma = {
+      withTenantTransaction: jest
+        .fn()
+        .mockImplementation((_orgId: string, fn: (tx: unknown) => unknown) => fn(tx)),
+    };
+    const audit = {};
+    const storage = {};
+    const carrierEligibility = {};
+    const loadPodStatus = {};
+    const scanQueue = {};
+
+    const service = new DocumentService(
+      prisma as never,
+      audit as never,
+      storage as never,
+      carrierEligibility as never,
+      loadPodStatus as never,
+      scanQueue as never,
+    );
+
+    return { service, tx };
+  }
+
+  it('queries entityType CARRIER + reviewStatus PENDING_REVIEW + isCurrentVersion, scoped to the org', async () => {
+    const { service, tx } = buildService({});
+
+    await service.listPendingReview(ORG_ID);
+
+    expect(tx.document.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          organizationId: ORG_ID,
+          entityType: 'CARRIER',
+          reviewStatus: 'PENDING_REVIEW',
+          isCurrentVersion: true,
+        },
+      }),
+    );
+  });
+
+  it('returns an empty array without querying carriers when nothing is pending review', async () => {
+    const { service, tx } = buildService({ documents: [] });
+
+    const result = await service.listPendingReview(ORG_ID);
+
+    expect(result).toEqual([]);
+    expect(tx.carrier.findMany).not.toHaveBeenCalled();
+  });
+
+  it('attaches carrierLegalName by resolving the polymorphic entityId against Carrier', async () => {
+    const { service, tx } = buildService({
+      documents: [
+        { id: 'doc-1', entityId: 'carrier-1' },
+        { id: 'doc-2', entityId: 'carrier-2' },
+      ],
+      carriers: [
+        { id: 'carrier-1', legalName: 'Big Rig Trucking LLC' },
+        { id: 'carrier-2', legalName: 'Speedy Freight Inc' },
+      ],
+    });
+
+    const result = await service.listPendingReview(ORG_ID);
+
+    expect(result).toEqual([
+      expect.objectContaining({ id: 'doc-1', carrierLegalName: 'Big Rig Trucking LLC' }),
+      expect.objectContaining({ id: 'doc-2', carrierLegalName: 'Speedy Freight Inc' }),
+    ]);
+    expect(tx.carrier.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: { in: ['carrier-1', 'carrier-2'] }, organizationId: ORG_ID },
+      }),
+    );
+  });
+
+  it('deduplicates carrierIds before the follow-up query when multiple documents share a carrier', async () => {
+    const { service, tx } = buildService({
+      documents: [
+        { id: 'doc-1', entityId: 'carrier-1' },
+        { id: 'doc-2', entityId: 'carrier-1' },
+      ],
+      carriers: [{ id: 'carrier-1', legalName: 'Big Rig Trucking LLC' }],
+    });
+
+    await service.listPendingReview(ORG_ID);
+
+    expect(tx.carrier.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: { in: ['carrier-1'] }, organizationId: ORG_ID } }),
+    );
+  });
+
+  it('sets carrierLegalName null for a document whose carrier lookup somehow misses (defensive)', async () => {
+    const { service } = buildService({
+      documents: [{ id: 'doc-1', entityId: 'carrier-1' }],
+      carriers: [],
+    });
+
+    const result = await service.listPendingReview(ORG_ID);
+
+    expect(result[0]).toEqual(expect.objectContaining({ carrierLegalName: null }));
+  });
+});
+
 describe('DocumentService.applyScanResult — malware scan / quarantine (Decision 10)', () => {
   const ORG_ID = 'org-1';
   const DOC_ID = 'doc-1';

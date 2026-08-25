@@ -10,6 +10,7 @@ import { CustomerDetailPage } from './routes/customers/CustomerDetailPage';
 import { CarrierListPage } from './routes/carriers/CarrierListPage';
 import { CarrierCreatePage } from './routes/carriers/CarrierCreatePage';
 import { CarrierDetailPage } from './routes/carriers/CarrierDetailPage';
+import { ComplianceQueuePage } from './routes/carriers/ComplianceQueuePage';
 import { DispatchBoardPage } from './routes/loads/DispatchBoardPage';
 import { LoadCreatePage } from './routes/loads/LoadCreatePage';
 import { LoadDetailPage } from './routes/loads/LoadDetailPage';
@@ -22,6 +23,9 @@ import { InvoiceBuilderPage } from './routes/billing/InvoiceBuilderPage';
 import { InvoiceDetailPage } from './routes/billing/InvoiceDetailPage';
 import { CarrierPaymentListPage } from './routes/billing/CarrierPaymentListPage';
 import { CarrierPaymentDetailPage } from './routes/billing/CarrierPaymentDetailPage';
+import { ArAgingPage } from './routes/billing/ArAgingPage';
+import { ApAgingPage } from './routes/billing/ApAgingPage';
+import { UsersRolesPage } from './routes/settings/UsersRolesPage';
 import { AppShell } from './shell/AppShell';
 import { ToastViewport } from './components/ui';
 
@@ -29,11 +33,15 @@ import { ToastViewport } from './components/ui';
  * §8/§9 of the approved Phase 1 plan: GET /auth/me on boot is the sole
  * point session state is "trusted"; every screen after that reads the
  * store. Phase 2 added Customers/Carriers; Phase 3 added the Load
- * lifecycle; Phase 4 adds Financials & Load Closing (Invoice Builder/
- * List/Detail, Carrier Payment List/Detail, Load Closing). AR/AP Aging
- * are deferred (approved Phase 4 plan §8 decision 5) — no route for
- * them exists yet. Dashboard/Documents/Reports/Settings remain
- * ComingSoonPage per the approved scope.
+ * lifecycle; Phase 4 added Financials & Load Closing. Phase 5 adds AR/AP
+ * Aging, the Compliance Review Queue, Settings → Users & Roles (invite/
+ * resend/cancel/deactivate only — no role-edit endpoint exists), the
+ * Dispatch Board's Kanban view (a `?view=kanban` query param on
+ * `/loads/board`, matching the locked sitemap — not a separate route),
+ * and finishes the Global Search palette. Dashboard, Document Center, the
+ * broader Reports
+ * library, Load Search, and Dispatch Board Calendar remain ComingSoonPage
+ * or unbuilt — explicitly deferred per the approved Phase 5 scope.
  */
 function App() {
   const status = useSessionStore((s) => s.status);
@@ -78,6 +86,7 @@ function App() {
         <Route path="/customers/:id" element={<CustomerDetailPage />} />
         <Route path="/carriers" element={<CarrierListPage />} />
         <Route path="/carriers/new" element={<CarrierCreatePage />} />
+        <Route path="/carriers/compliance-queue" element={<ComplianceQueuePage />} />
         <Route path="/carriers/:id" element={<CarrierDetailPage />} />
         <Route path="/billing" element={<Navigate to="/billing/invoices" replace />} />
         <Route path="/billing/invoices" element={<InvoiceListPage />} />
@@ -85,9 +94,11 @@ function App() {
         <Route path="/billing/invoices/:id" element={<InvoiceDetailPage />} />
         <Route path="/billing/carrier-pay" element={<CarrierPaymentListPage />} />
         <Route path="/billing/carrier-pay/:id" element={<CarrierPaymentDetailPage />} />
+        <Route path="/billing/ar-aging" element={<ArAgingPage />} />
+        <Route path="/billing/ap-aging" element={<ApAgingPage />} />
         <Route path="/documents" element={<ComingSoonPage title="Document Center" />} />
         <Route path="/reports" element={<ComingSoonPage title="Reports" />} />
-        <Route path="/settings" element={<ComingSoonPage title="Settings" />} />
+        <Route path="/settings" element={<UsersRolesPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>

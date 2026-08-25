@@ -511,6 +511,59 @@ describe('Core Master Data (e2e)', () => {
     });
   });
 
+  describe('Compliance Review Queue — Frontend Phase 5 gap-fix (GET /documents/pending-review)', () => {
+    it('lists a pending-review Carrier document with its carrierLegalName, excludes it once reviewed, and is Compliance-Reviewer-only', async () => {
+      const carrier = await adminAgent
+        .post(`${API}/carriers`)
+        .send({
+          legalName: 'Compliance Queue Test Carrier',
+          mcNumber: 'MC-900003',
+          dotNumber: 'DOT-900003',
+          addressLine1: '1 Queue Rd',
+          city: 'Memphis',
+          state: 'TN',
+          zip: '38103',
+          primaryContactName: 'Dispatch',
+          primaryContactPhone: '555-0500',
+          primaryContactEmail: 'dispatch@queue-test.test',
+        })
+        .expect(201);
+      const queueCarrierId: string = carrier.body.id;
+
+      // A non-reviewer role (Admin alone, no COMPLIANCE_REVIEWER) must be
+      // blocked — this endpoint reuses the exact same role restriction as
+      // POST /documents/:id/review, not a broader "anyone who can view a
+      // Carrier" rule.
+      await adminAgent.get(`${API}/documents/pending-review`).expect(403);
+
+      const beforeUpload = await reviewerAgent.get(`${API}/documents/pending-review`).expect(200);
+      expect(
+        (beforeUpload.body as { id: string; entityId: string }[]).some(
+          (d) => d.entityId === queueCarrierId,
+        ),
+      ).toBe(false);
+
+      const w9Id = await uploadAndConfirm(adminAgent, queueCarrierId, w9TypeId, 'w9.pdf');
+      await waitForScanStatus(w9Id);
+
+      const afterUpload = await reviewerAgent.get(`${API}/documents/pending-review`).expect(200);
+      const queued = (
+        afterUpload.body as { id: string; entityId: string; carrierLegalName: string }[]
+      ).find((d) => d.id === w9Id);
+      expect(queued).toBeDefined();
+      expect(queued?.entityId).toBe(queueCarrierId);
+      expect(queued?.carrierLegalName).toBe('Compliance Queue Test Carrier');
+
+      await reviewerAgent
+        .post(`${API}/carriers/${queueCarrierId}/documents/${w9Id}/review`)
+        .send({ decision: 'APPROVED' })
+        .expect(200);
+
+      const afterReview = await reviewerAgent.get(`${API}/documents/pending-review`).expect(200);
+      expect((afterReview.body as { id: string }[]).some((d) => d.id === w9Id)).toBe(false);
+    });
+  });
+
   describe('Document malware scan — quarantine (Decision 10)', () => {
     it('quarantines an infected upload and refuses to issue a download URL for it', async () => {
       const carrier = await adminAgent

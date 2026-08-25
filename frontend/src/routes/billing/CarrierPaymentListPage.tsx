@@ -1,9 +1,10 @@
 import { useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { carrierPayApi, type CarrierPaymentStatus } from '../../api';
 import { Badge, DataTable } from '../../components/ui';
 import { getStatusBadgeColor } from '../../components/ui/statusBadgeMap';
+import { usePermissions } from '../../hooks/usePermissions';
 import '../shared/ListPage.css';
 
 const STATUS_OPTIONS: { value: CarrierPaymentStatus | ''; label: string }[] = [
@@ -27,6 +28,7 @@ const PAGE_SIZE_DEFAULT = 25;
  */
 export function CarrierPaymentListPage() {
   const navigate = useNavigate();
+  const { can } = usePermissions();
   const [status, setStatus] = useState<CarrierPaymentStatus | ''>('');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(PAGE_SIZE_DEFAULT);
@@ -45,6 +47,7 @@ export function CarrierPaymentListPage() {
     <div>
       <div className="list-page-header">
         <h1 className="list-page-title">Carrier Payments</h1>
+        {can('viewArApAging') ? <Link to="/billing/ap-aging">AP Aging →</Link> : null}
       </div>
 
       <div className="list-page-toolbar">

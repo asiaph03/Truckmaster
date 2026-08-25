@@ -1,0 +1,145 @@
+/*
+ * UI_UX_DESIGN.md §5.4.2 — the column track is an intentionally
+ * horizontally-scrolling region distinct from page-level scroll (not a
+ * narrow-viewport fallback, unlike Table View).
+ */
+.kanban-board {
+  display: flex;
+  gap: var(--space-3);
+  overflow-x: auto;
+  padding-bottom: var(--space-3);
+  align-items: flex-start;
+}
+
+.kanban-column {
+  flex: 0 0 280px;
+  width: 280px;
+  background: var(--neutral-50);
+  border: 1px solid var(--neutral-200);
+  border-radius: var(--radius-md);
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 320px);
+  transition: background-color 0.15s ease;
+}
+
+.kanban-column-valid-target {
+  background: var(--brand-50);
+}
+
+.kanban-column-dragover {
+  background: var(--brand-100);
+}
+
+.kanban-column-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-3);
+  font-size: var(--text-small-size);
+  font-weight: 600;
+  border-bottom: 1px solid var(--neutral-200);
+}
+
+.kanban-column-count {
+  background: var(--neutral-100);
+  color: var(--neutral-500);
+  border-radius: 999px;
+  padding: 0 var(--space-2);
+  font-size: var(--text-caption-size);
+}
+
+.kanban-column-body {
+  overflow-y: auto;
+  padding: var(--space-2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.kanban-empty {
+  color: var(--neutral-400);
+  font-size: var(--text-caption-size);
+  text-align: center;
+  padding: var(--space-3);
+}
+
+.kanban-card {
+  background: var(--neutral-0);
+  border: 1px solid var(--neutral-200);
+  border-left: 3px solid transparent;
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-3);
+  cursor: pointer;
+}
+
+.kanban-card-draggable:hover {
+  cursor: grab;
+}
+
+.kanban-card-dragging {
+  box-shadow: var(--shadow-lg);
+  opacity: 0.85;
+}
+
+.kanban-card-risk-at_risk {
+  border-left-color: var(--warning-600);
+}
+
+.kanban-card-risk-delayed {
+  border-left-color: var(--danger-600);
+}
+
+.kanban-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.kanban-card-load-number {
+  font-size: var(--text-body-size);
+  font-weight: 600;
+}
+
+.kanban-card-customer {
+  font-size: var(--text-small-size);
+  color: var(--neutral-500);
+  margin-top: 2px;
+}
+
+.kanban-card-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.kanban-card-equipment {
+  color: var(--neutral-400);
+  display: inline-flex;
+}
+
+.kanban-card-dispatcher {
+  margin-left: auto;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--brand-100);
+  color: var(--brand-700);
+  font-size: 10px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.kanban-card-date {
+  font-size: var(--text-caption-size);
+  color: var(--neutral-500);
+  margin-top: var(--space-2);
+}
+
+.kanban-card-date-urgent {
+  color: var(--warning-600);
+  font-weight: 600;
+}

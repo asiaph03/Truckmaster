@@ -35,6 +35,20 @@ export class DocumentController {
     return this.documentService.list(organizationId, entityType, entityId);
   }
 
+  /**
+   * Frontend Phase 5 approved gap-fix — Carrier Compliance Review Queue.
+   * Restricted to the same role that can actually act on the results
+   * (`review()` below), matching the approved instruction to reuse
+   * existing compliance review rules rather than opening this up more
+   * broadly.
+   */
+  @Get('pending-review')
+  @Roles('COMPLIANCE_REVIEWER')
+  listPendingReview() {
+    const organizationId = RequestContextStore.requireOrganizationId();
+    return this.documentService.listPendingReview(organizationId);
+  }
+
   @Post()
   create(@Body() dto: CreateDocumentDto) {
     const organizationId = RequestContextStore.requireOrganizationId();

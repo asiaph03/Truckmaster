@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { Search } from 'lucide-react';
 import { carriersApi, type CarrierStatus } from '../../api';
@@ -48,9 +48,14 @@ export function CarrierListPage() {
     <div>
       <div className="list-page-header">
         <h1 className="list-page-title">Carriers</h1>
-        {can('manageCarriers') ? (
-          <Button onClick={() => navigate('/carriers/new')}>+ New Carrier</Button>
-        ) : null}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-4)' }}>
+          {can('reviewComplianceDocuments') ? (
+            <Link to="/carriers/compliance-queue">Compliance Queue →</Link>
+          ) : null}
+          {can('manageCarriers') ? (
+            <Button onClick={() => navigate('/carriers/new')}>+ New Carrier</Button>
+          ) : null}
+        </div>
       </div>
 
       <div className="list-page-toolbar">
