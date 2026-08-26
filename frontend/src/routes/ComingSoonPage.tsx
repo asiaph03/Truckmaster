@@ -3,11 +3,11 @@ import { EmptyState } from '../components/ui';
 /**
  * Placeholder for nav destinations with no locked screen-level design yet
  * (Document Center, Reports) — of the remaining undesigned items (Document
- * Center, Reports Library, Organization Settings), none has an approved
- * scope to build against (Dashboard, membership role-editing, and Load
- * Search were the exceptions, built in Frontend Phases 10, 11, and 13
- * respectively). This placeholder exists only so the always-visible shell
- * nav doesn't link to a blank/broken route.
+ * Center, Reports Library), neither has an approved scope to build
+ * against (Dashboard, membership role-editing, Load Search, and
+ * Organization Settings were the exceptions, built in Frontend Phases 10,
+ * 11, 13, and 14 respectively). This placeholder exists only so the
+ * always-visible shell nav doesn't link to a blank/broken route.
  */
 export function ComingSoonPage({ title }: { title: string }) {
   return (
