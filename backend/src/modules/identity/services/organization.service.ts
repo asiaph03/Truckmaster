@@ -6,10 +6,29 @@ import { AuditService } from '../../../common/audit/audit.service';
 import { TokenService } from './token.service';
 import { UserService } from './user.service';
 import { CreateOrganizationDto } from '../dto/create-organization.dto';
+import { UpdateOrganizationDto } from '../dto/update-organization.dto';
 import { PermissionError } from '../../../common/errors/app-error';
 import { EMAIL_SENDER, IEmailSender } from '../../../common/email/email-sender.interface';
 
 const INVITATION_EXPIRY_DAYS = 7;
+
+/**
+ * Frontend Phase 14 — the exact, explicitly-approved editable field set.
+ * `id`/`createdByUserId`/`createdAt`/`status` are deliberately absent —
+ * see OrganizationService.update's doc comment.
+ */
+const UPDATABLE_ORGANIZATION_FIELDS = [
+  'legalName',
+  'addressLine1',
+  'city',
+  'state',
+  'zip',
+  'country',
+  'primaryContactName',
+  'primaryContactEmail',
+  'primaryContactPhone',
+  'defaultPaymentTerms',
+] as const satisfies readonly (keyof UpdateOrganizationDto)[];
 
 /**
  * Workflow 1 §1.1 (Organization Creation) + §1.2 (Initial Admin Account
@@ -164,5 +183,68 @@ export class OrganizationService {
 
   findById(id: string): Promise<Organization | null> {
     return this.prisma.organization.findUnique({ where: { id } });
+  }
+
+  /**
+   * Frontend Phase 14 (Organization Settings). `organizationId` must
+   * always come from the caller deriving it via
+   * RequestContextStore.requireOrganizationId() — never from a
+   * client-supplied id — this method has no other guard of its own,
+   * unlike `findById` above (kept as-is for the platform-console path,
+   * which never resolves an id from an authenticated org session).
+   */
+  getCurrent(organizationId: string): Promise<Organization> {
+    return this.prisma.organization.findUniqueOrThrow({ where: { id: organizationId } });
+  }
+
+  /**
+   * Same field-change-diff + conditional-audit pattern as
+   * LoadService.updateReferenceNumbers — no audit entry for a no-op
+   * update, one "field_changes" entry per actually-changed field.
+   * `defaultPaymentTerms` changes only affect future/default usage
+   * (Workflow 2 §2.3) — nothing here touches existing Customer rows.
+   *
+   * Builds `data` from an explicit allowlist (UPDATABLE_ORGANIZATION_FIELDS)
+   * rather than spreading `dto` directly — defense-in-depth alongside the
+   * global ValidationPipe's `forbidNonWhitelisted`, so this service can
+   * never forward `id`/`status`/`createdByUserId`/`createdAt` even if
+   * called with an object that isn't a real, pipe-validated
+   * UpdateOrganizationDto instance (e.g. a future internal caller).
+   */
+  async update(
+    organizationId: string,
+    dto: UpdateOrganizationDto,
+    actingUserId: string,
+  ): Promise<Organization> {
+    return this.prisma.withTenantTransaction(organizationId, async (tx) => {
+      const existing = await tx.organization.findUniqueOrThrow({ where: { id: organizationId } });
+
+      const fieldChanges: { field: string; previous: unknown; new: unknown }[] = [];
+      const data: Record<string, unknown> = {};
+      for (const field of UPDATABLE_ORGANIZATION_FIELDS) {
+        const newValue = dto[field];
+        if (newValue === undefined) continue;
+        data[field] = newValue;
+        const previousValue = (existing as unknown as Record<string, unknown>)[field];
+        if (previousValue !== newValue) {
+          fieldChanges.push({ field, previous: previousValue, new: newValue });
+        }
+      }
+
+      const updated = await tx.organization.update({ where: { id: organizationId }, data });
+
+      if (fieldChanges.length > 0) {
+        await this.audit.record(tx, {
+          organizationId,
+          action: 'Organization Settings Updated',
+          entityType: 'Organization',
+          entityId: organizationId,
+          previousValue: { field_changes: fieldChanges },
+          actorUserId: actingUserId,
+        });
+      }
+
+      return updated;
+    });
   }
 }

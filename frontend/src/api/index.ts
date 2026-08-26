@@ -13,3 +13,4 @@ export * from './carrierPay';
 export * from './notifications';
 export * from './reporting';
 export * from './activity';
+export * from './organizations';

@@ -11,6 +11,7 @@ import { PasswordService } from './services/password.service';
 import { SessionRegistryService } from './services/session-registry.service';
 import { AuthController } from './controllers/auth.controller';
 import { OrganizationsController } from './controllers/organizations.controller';
+import { OrganizationSettingsController } from './controllers/organization-settings.controller';
 import { MembershipsController } from './controllers/memberships.controller';
 import { PlatformSuperAdminGuard } from './guards/platform-super-admin.guard';
 
@@ -24,7 +25,12 @@ import { PlatformSuperAdminGuard } from './guards/platform-super-admin.guard';
  * level even though they share one NestJS module wrapper.
  */
 @Module({
-  controllers: [AuthController, OrganizationsController, MembershipsController],
+  controllers: [
+    AuthController,
+    OrganizationsController,
+    OrganizationSettingsController,
+    MembershipsController,
+  ],
   providers: [
     UserService,
     OrganizationService,

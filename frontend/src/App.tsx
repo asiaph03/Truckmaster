@@ -28,6 +28,7 @@ import { CarrierPaymentDetailPage } from './routes/billing/CarrierPaymentDetailP
 import { ArAgingPage } from './routes/billing/ArAgingPage';
 import { ApAgingPage } from './routes/billing/ApAgingPage';
 import { UsersRolesPage } from './routes/settings/UsersRolesPage';
+import { OrganizationSettingsPage } from './routes/settings/OrganizationSettingsPage';
 import { AppShell } from './shell/AppShell';
 import { ToastViewport } from './components/ui';
 
@@ -50,9 +51,13 @@ import { ToastViewport } from './components/ui';
  * Closed), filterable/searchable/sortable/paginated/CSV-exportable
  * screen backed by its own `GET /loads/search` and
  * `GET /loads/search/export` endpoints, deliberately independent of
- * `GET /loads` so Dispatch Board's behavior is unaffected. Document
- * Center, the broader Reports library, and Organization Settings remain
- * ComingSoonPage or unbuilt — none has a locked screen-level design yet.
+ * `GET /loads` so Dispatch Board's behavior is unaffected. Phase 14 added
+ * Organization Settings (`/settings/organization`) — legal
+ * name/address/primary contact/default payment terms, backed by
+ * `GET`/`PATCH /organizations/current` (Admin-only, org-scoped, distinct
+ * from the platform-console `/platform/organizations` route). Document
+ * Center and the broader Reports library remain ComingSoonPage or
+ * unbuilt — neither has a locked screen-level design yet.
  */
 function App() {
   const status = useSessionStore((s) => s.status);
@@ -111,6 +116,7 @@ function App() {
         <Route path="/documents" element={<ComingSoonPage title="Document Center" />} />
         <Route path="/reports" element={<ComingSoonPage title="Reports" />} />
         <Route path="/settings" element={<UsersRolesPage />} />
+        <Route path="/settings/organization" element={<OrganizationSettingsPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>

@@ -8,7 +8,7 @@ import './GlobalSearch.css';
 /**
  * UI_UX_DESIGN.md §5.3.6 — ⌘K/Ctrl+K command-palette overlay, results
  * grouped by entity type. Distinct from the Load Search screen (§5.1.5,
- * deferred — Frontend Phase 5 plan §8) — this is a fast jump-to tool,
+ * built in Frontend Phase 13 at `/loads/search`) — this is a fast jump-to tool,
  * capped at 5 results per group by the backend (`SEARCH_RESULT_LIMIT`),
  * which exposes no total count, so no "See all results" link is
  * rendered — that would require a count the API doesn't return, not a

@@ -24,6 +24,7 @@ import {
 import type { BadgeColor } from '../../components/ui/statusBadgeMap';
 import { useToast } from '../../components/ui/toastStore';
 import { usePermissions } from '../../hooks/usePermissions';
+import { SettingsTabs } from './SettingsTabs';
 import '../shared/ListPage.css';
 
 const ROLE_LABELS: Record<MembershipRoleName, string> = {
@@ -179,6 +180,7 @@ export function UsersRolesPage() {
 
   return (
     <div>
+      <SettingsTabs />
       <div className="list-page-header">
         <div>
           <h1 className="list-page-title">Users & Roles</h1>
