@@ -6,6 +6,7 @@ import { configureApp } from '../src/configure-app';
 import { PrismaService } from '../src/common/prisma/prisma.service';
 import { PasswordService } from '../src/modules/identity/services/password.service';
 import { EMAIL_SENDER, IEmailSender } from '../src/common/email/email-sender.interface';
+import { MALWARE_SCANNER } from '../src/common/malware-scan/malware-scanner.interface';
 
 type SuperAgentTest = ReturnType<typeof request.agent>;
 
@@ -88,6 +89,13 @@ describe('Financials (e2e)', () => {
     })
       .overrideProvider(EMAIL_SENDER)
       .useValue(captureEmailSender)
+      // Phase 16 — the real CloudmersiveMalwareScanner needs a live API key
+      // (never present in local/CI test runs); every uploaded document in
+      // this suite is expected to resolve CLEAN, so it's overridden with
+      // an always-CLEAN test double, matching pod-documents.e2e-spec.ts's
+      // and core-master-data.e2e-spec.ts's precedent.
+      .overrideProvider(MALWARE_SCANNER)
+      .useValue({ scan: async () => ({ status: 'CLEAN', provider: 'test-double' }) })
       .compile();
 
     app = moduleFixture.createNestApplication();
@@ -146,14 +154,26 @@ describe('Financials (e2e)', () => {
     return match[1];
   }
 
-  function lastEmailTo(to: string) {
-    const email = [...sentEmails].reverse().find((m) => m.to === to);
-    if (!email) throw new Error(`No email captured for ${to}`);
-    return email;
+  /**
+   * Frontend Phase 16 — email is now async (EMAIL_QUEUE + EmailSendWorker),
+   * so the overridden EMAIL_SENDER mock may not have captured the message
+   * yet the instant the triggering HTTP call returns. Polls briefly.
+   */
+  async function lastEmailTo(
+    to: string,
+    timeoutMs = 5000,
+  ): Promise<{ to: string; subject: string; body: string }> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const email = [...sentEmails].reverse().find((m) => m.to === to);
+      if (email) return email;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    throw new Error(`No email captured for ${to}`);
   }
 
   async function activateAndLogin(email: string, password: string): Promise<SuperAgentTest> {
-    const token = extractToken(lastEmailTo(email).body);
+    const token = extractToken((await lastEmailTo(email)).body);
     await request(app.getHttpServer())
       .post(`${API}/auth/activate`)
       .send({ token, password })
@@ -573,7 +593,7 @@ describe('Financials (e2e)', () => {
       expect(detail.body.status).toBe('SENT');
       expect(detail.body.dueDate).toBeTruthy();
 
-      const email = lastEmailTo('ap@customer.test');
+      const email = await lastEmailTo('ap@customer.test');
       expect(email.subject).toBe('Invoice');
     });
 

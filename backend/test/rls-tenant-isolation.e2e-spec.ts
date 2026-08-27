@@ -136,10 +136,22 @@ describe('RLS tenant-isolation regression suite (e2e)', () => {
     await app.close();
   });
 
-  function lastEmailTo(to: string) {
-    const email = [...sentEmails].reverse().find((m) => m.to === to);
-    if (!email) throw new Error(`No email captured for ${to}`);
-    return email;
+  /**
+   * Frontend Phase 16 — email is now async (EMAIL_QUEUE + EmailSendWorker),
+   * so the overridden EMAIL_SENDER mock may not have captured the message
+   * yet the instant the triggering HTTP call returns. Polls briefly.
+   */
+  async function lastEmailTo(
+    to: string,
+    timeoutMs = 5000,
+  ): Promise<{ to: string; subject: string; body: string }> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const email = [...sentEmails].reverse().find((m) => m.to === to);
+      if (email) return email;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    throw new Error(`No email captured for ${to}`);
   }
 
   function extractToken(body: string): string {
@@ -169,7 +181,7 @@ describe('RLS tenant-isolation regression suite (e2e)', () => {
       .expect(201);
 
     const organizationId: string = createRes.body.organization.id;
-    const token = extractToken(lastEmailTo(opts.adminEmail).body);
+    const token = extractToken((await lastEmailTo(opts.adminEmail)).body);
 
     await request(app.getHttpServer())
       .post(`${API}/auth/activate`)
@@ -371,7 +383,10 @@ describe('RLS tenant-isolation regression suite (e2e)', () => {
       .expect(201);
     await request(app.getHttpServer())
       .post(`${API}/auth/activate`)
-      .send({ token: extractToken(lastEmailTo(sharedEmail).body), password: sharedPassword })
+      .send({
+        token: extractToken((await lastEmailTo(sharedEmail)).body),
+        password: sharedPassword,
+      })
       .expect(200);
 
     await orgB.agent
@@ -380,7 +395,7 @@ describe('RLS tenant-isolation regression suite (e2e)', () => {
       .expect(201);
     await request(app.getHttpServer())
       .post(`${API}/auth/activate`)
-      .send({ token: extractToken(lastEmailTo(sharedEmail).body) })
+      .send({ token: extractToken((await lastEmailTo(sharedEmail)).body) })
       .expect(200);
 
     const sharedAgent = request.agent(app.getHttpServer());
@@ -499,7 +514,7 @@ describe('RLS tenant-isolation regression suite (e2e)', () => {
         .post(`${API}/memberships/invite`)
         .send({ email: 'token-scope-check@rls-suite.test', roles: ['DISPATCHER'] })
         .expect(201);
-      const realToken = extractToken(lastEmailTo('token-scope-check@rls-suite.test').body);
+      const realToken = extractToken((await lastEmailTo('token-scope-check@rls-suite.test')).body);
       const realHash = createHash('sha256').update(realToken).digest('hex');
 
       const withWrongHash = await solo.$transaction((tx) =>

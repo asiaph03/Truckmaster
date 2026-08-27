@@ -7,7 +7,11 @@ import { StorageService } from '../../../common/storage/storage.service';
 import { CreateCarrierPaymentDto } from '../dto/create-carrier-payment.dto';
 import { RejectCarrierPaymentDto } from '../dto/reject-carrier-payment.dto';
 import { MarkPaidDto } from '../dto/mark-paid.dto';
-import { SETTLEMENT_QUEUE, SettlementJobData } from './settlement.constants';
+import {
+  SETTLEMENT_QUEUE,
+  SETTLEMENT_JOB_OPTIONS,
+  SettlementJobData,
+} from './settlement.constants';
 import {
   BusinessRuleError,
   InvalidTransitionError,
@@ -231,6 +235,7 @@ export class CarrierPaymentService {
             scannedAt: new Date(),
             scanProvider: 'system-generated',
             reviewStatus: 'NOT_APPLICABLE',
+            generationStatus: 'PENDING',
             uploadedByUserId: actingUserId,
           },
         });
@@ -266,7 +271,7 @@ export class CarrierPaymentService {
       organizationId,
       carrierPaymentId: id,
     };
-    await this.settlementQueue.add('generate', jobData);
+    await this.settlementQueue.add('generate', jobData, SETTLEMENT_JOB_OPTIONS);
 
     return carrierPayment;
   }

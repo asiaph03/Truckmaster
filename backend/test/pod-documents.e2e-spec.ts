@@ -154,14 +154,26 @@ describe('POD Receipt & Documentation (e2e)', () => {
     return match[1];
   }
 
-  function lastEmailTo(to: string) {
-    const email = [...sentEmails].reverse().find((m) => m.to === to);
-    if (!email) throw new Error(`No email captured for ${to}`);
-    return email;
+  /**
+   * Frontend Phase 16 — email is now async (EMAIL_QUEUE + EmailSendWorker),
+   * so the overridden EMAIL_SENDER mock may not have captured the message
+   * yet the instant the triggering HTTP call returns. Polls briefly.
+   */
+  async function lastEmailTo(
+    to: string,
+    timeoutMs = 5000,
+  ): Promise<{ to: string; subject: string; body: string }> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const email = [...sentEmails].reverse().find((m) => m.to === to);
+      if (email) return email;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    throw new Error(`No email captured for ${to}`);
   }
 
   async function activateAndLogin(email: string, password: string): Promise<SuperAgentTest> {
-    const token = extractToken(lastEmailTo(email).body);
+    const token = extractToken((await lastEmailTo(email)).body);
     await request(app.getHttpServer())
       .post(`${API}/auth/activate`)
       .send({ token, password })

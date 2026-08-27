@@ -48,7 +48,9 @@ export function InvoiceDetailPage() {
   // Approved decision 4: after Send succeeds, poll for the async-generated
   // PDF's readiness (documentsApi.waitForDocumentReady) rather than
   // exposing any backend readiness endpoint.
-  const [pdfStatus, setPdfStatus] = useState<'idle' | 'generating' | 'ready' | 'timeout'>('idle');
+  const [pdfStatus, setPdfStatus] = useState<
+    'idle' | 'generating' | 'ready' | 'failed' | 'timeout'
+  >('idle');
   const [pdfDocument, setPdfDocument] = useState<AppDocument | null>(null);
 
   const {
@@ -85,7 +87,7 @@ export function InvoiceDetailPage() {
       refetchAll();
       setPdfStatus('generating');
       const doc = await documentsApi.waitForDocumentReady('INVOICE', id);
-      setPdfStatus(doc ? 'ready' : 'timeout');
+      setPdfStatus(doc?.generationStatus === 'FAILED' ? 'failed' : doc ? 'ready' : 'timeout');
       setPdfDocument(doc);
     } catch (error) {
       toast.danger(error instanceof ApiError ? error.message : 'Something went wrong.');
@@ -165,6 +167,11 @@ export function InvoiceDetailPage() {
           />
           {pdfStatus === 'generating' ? (
             <Badge label="Generating PDF…" color="neutral" />
+          ) : pdfStatus === 'failed' ? (
+            <Badge
+              label="Generation Failed"
+              color={getStatusBadgeColor('Document.generationStatus', 'FAILED') ?? 'danger'}
+            />
           ) : pdfStatus === 'ready' ? (
             <Button variant="tertiary" size="sm" onClick={onDownloadPdf}>
               Download PDF

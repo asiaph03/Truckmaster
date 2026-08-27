@@ -78,6 +78,25 @@ export class StorageService {
   }
 
   /**
+   * Frontend Phase 16 addition — fetches an object's raw bytes directly
+   * (never via a signed URL) for server-side processing that needs the
+   * actual content. First caller: CloudmersiveMalwareScanner, which must
+   * submit file bytes to the scan API — going through getDownloadUrl
+   * would issue a public-ish signed URL before the scan/CLEAN check has
+   * even run, contradicting §8.4's "no download before CLEAN" rule.
+   */
+  async getObject(key: string): Promise<Buffer> {
+    const response = await this.client.send(
+      new GetObjectCommand({ Bucket: this.bucket, Key: key }),
+    );
+    const chunks: Uint8Array[] = [];
+    for await (const chunk of response.Body as AsyncIterable<Uint8Array>) {
+      chunks.push(chunk);
+    }
+    return Buffer.concat(chunks);
+  }
+
+  /**
    * Moves an object from the documents prefix to the quarantine prefix
    * (Decision 10, §8.1 step 5) — S3 has no native move, so this is a
    * copy-then-delete. A bucket policy denying signed-URL generation

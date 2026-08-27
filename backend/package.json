@@ -41,6 +41,7 @@
     "express-session": "^1.18.0",
     "helmet": "^7.1.0",
     "ioredis": "^5.4.1",
+    "pdfkit": "^0.20.1",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1"
   },
@@ -54,6 +55,7 @@
     "@types/express-session": "^1.18.0",
     "@types/jest": "^29.5.13",
     "@types/node": "^20.16.5",
+    "@types/pdfkit": "^0.17.6",
     "@types/s3rver": "^3.7.4",
     "@types/supertest": "^6.0.2",
     "@typescript-eslint/eslint-plugin": "^7.18.0",

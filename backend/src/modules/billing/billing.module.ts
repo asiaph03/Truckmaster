@@ -2,10 +2,9 @@ import { Inject, Module, OnModuleDestroy } from '@nestjs/common';
 import { Queue } from 'bullmq';
 import Redis from 'ioredis';
 import { REDIS_CLIENT } from '../../common/redis/redis.module';
-import { EMAIL_SENDER } from '../../common/email/email-sender.interface';
-import { ConsoleEmailSender } from '../../common/email/console-email-sender';
+import { EmailModule } from '../../common/email/email.module';
 import { PDF_GENERATOR } from '../../common/pdf/pdf-generator.interface';
-import { StubPdfGenerator } from '../../common/pdf/stub-pdf-generator';
+import { PdfkitPdfGenerator } from '../../common/pdf/pdfkit-pdf-generator';
 import { IdentityModule } from '../identity/identity.module';
 import { InvoiceController } from './controllers/invoice.controller';
 import { ChargeTypeController } from './controllers/charge-type.controller';
@@ -17,22 +16,22 @@ import { INVOICE_QUEUE, INVOICE_QUEUE_NAME } from './services/invoice.constants'
 /**
  * Phase 6 — genuinely new module (TECHNICAL_ARCHITECTURE.md §1.2's
  * module-ownership table), unlike Phase 4/5 which purely extended
- * QuoteLoadModule. EMAIL_SENDER/PDF_GENERATOR are registered locally here
- * too (mirroring QuoteLoadModule's own local registration) rather than
- * shared across modules — no cross-module DI wiring exists for these
- * tokens today, and introducing one is out of Phase 6's approved scope.
+ * QuoteLoadModule. PDF_GENERATOR is registered locally here too
+ * (mirroring QuoteLoadModule's own local registration) — no cross-module
+ * DI wiring exists for that token, unlike EMAIL_SENDER, which Frontend
+ * Phase 16 consolidated into the single shared EmailModule (imported
+ * below) instead of a third local registration.
  */
 const INVOICE_QUEUE_CONNECTION = 'INVOICE_QUEUE_CONNECTION';
 
 @Module({
-  imports: [IdentityModule],
+  imports: [IdentityModule, EmailModule],
   controllers: [InvoiceController, ChargeTypeController],
   providers: [
     InvoiceService,
     ChargeTypeService,
     InvoiceDocumentGenerationWorker,
-    { provide: EMAIL_SENDER, useClass: ConsoleEmailSender },
-    { provide: PDF_GENERATOR, useClass: StubPdfGenerator },
+    { provide: PDF_GENERATOR, useClass: PdfkitPdfGenerator },
     {
       provide: INVOICE_QUEUE_CONNECTION,
       useFactory: (redis: Redis) => redis.duplicate(),

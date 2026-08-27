@@ -16,7 +16,7 @@ import {
 } from '../../../common/errors/app-error';
 import { CarrierEligibilityService } from '../../carrier/services/carrier-eligibility.service';
 import { LoadPodStatusService } from '../../quote-load/services/load-pod-status.service';
-import { MALWARE_SCAN_QUEUE } from './malware-scan.constants';
+import { MALWARE_SCAN_JOB_OPTIONS, MALWARE_SCAN_QUEUE } from './malware-scan.constants';
 
 /**
  * Document-upload permission is entity-type-aware (TECHNICAL_ARCHITECTURE.md
@@ -292,11 +292,15 @@ export class DocumentService {
       throw new BusinessRuleError('This document has already been confirmed.');
     }
 
-    await this.scanQueue.add('scan', {
-      documentId: document.id,
-      organizationId,
-      storageKey: document.fileStorageKey,
-    });
+    await this.scanQueue.add(
+      'scan',
+      {
+        documentId: document.id,
+        organizationId,
+        storageKey: document.fileStorageKey,
+      },
+      MALWARE_SCAN_JOB_OPTIONS,
+    );
 
     await this.prisma.withTenantTransaction(organizationId, (tx) =>
       this.audit.record(tx, {

@@ -2,10 +2,9 @@ import { Inject, Module, OnModuleDestroy } from '@nestjs/common';
 import { Queue } from 'bullmq';
 import Redis from 'ioredis';
 import { REDIS_CLIENT } from '../../common/redis/redis.module';
-import { EMAIL_SENDER } from '../../common/email/email-sender.interface';
-import { ConsoleEmailSender } from '../../common/email/console-email-sender';
+import { EmailModule } from '../../common/email/email.module';
 import { PDF_GENERATOR } from '../../common/pdf/pdf-generator.interface';
-import { StubPdfGenerator } from '../../common/pdf/stub-pdf-generator';
+import { PdfkitPdfGenerator } from '../../common/pdf/pdfkit-pdf-generator';
 import { IdentityModule } from '../identity/identity.module';
 import { CarrierModule } from '../carrier/carrier.module';
 import { QuoteController } from './controllers/quote.controller';
@@ -36,9 +35,10 @@ import {
  * Phase 4 (Sourcing & Dispatch) extends this same module rather than
  * introducing a new one (approved plan §5) — CarrierModule is imported for
  * CarrierEligibilityService's live re-check (reused, never duplicated).
- * EMAIL_SENDER/PDF_GENERATOR are registered locally here rather than
- * exported from IdentityModule/elsewhere, keeping this module
- * self-contained and Phase 1-3 modules untouched.
+ * PDF_GENERATOR is registered locally here. EMAIL_SENDER is not — Frontend
+ * Phase 16 consolidated every EMAIL_SENDER registration into the single
+ * shared EmailModule (imported below); this module's services inject
+ * EMAIL_QUEUE from it instead of calling a provider directly.
  *
  * Phase 5 (POD Receipt & Documentation) adds `LoadPodStatusService`,
  * exported so DocumentModule can inject it (mirroring how DocumentService
@@ -49,7 +49,7 @@ import {
 const RATE_CONFIRMATION_QUEUE_CONNECTION = 'RATE_CONFIRMATION_QUEUE_CONNECTION';
 
 @Module({
-  imports: [IdentityModule, CarrierModule],
+  imports: [IdentityModule, CarrierModule, EmailModule],
   controllers: [QuoteController, LoadController],
   providers: [
     QuoteService,
@@ -62,8 +62,7 @@ const RATE_CONFIRMATION_QUEUE_CONNECTION = 'RATE_CONFIRMATION_QUEUE_CONNECTION';
     ActivityHistoryService,
     LoadSearchService,
     RateConfirmationGenerationWorker,
-    { provide: EMAIL_SENDER, useClass: ConsoleEmailSender },
-    { provide: PDF_GENERATOR, useClass: StubPdfGenerator },
+    { provide: PDF_GENERATOR, useClass: PdfkitPdfGenerator },
     {
       provide: RATE_CONFIRMATION_QUEUE_CONNECTION,
       useFactory: (redis: Redis) => redis.duplicate(),

@@ -6,6 +6,7 @@ import { configureApp } from '../src/configure-app';
 import { PrismaService } from '../src/common/prisma/prisma.service';
 import { PasswordService } from '../src/modules/identity/services/password.service';
 import { EMAIL_SENDER, IEmailSender } from '../src/common/email/email-sender.interface';
+import { MALWARE_SCANNER } from '../src/common/malware-scan/malware-scanner.interface';
 
 /** Every route except /health sits behind the global prefix (main.ts / configure-app.ts). */
 const API = '/api/v1';
@@ -55,6 +56,9 @@ describe('Identity & Tenancy (e2e)', () => {
     })
       .overrideProvider(EMAIL_SENDER)
       .useValue(captureEmailSender)
+      // Phase 16 — see financials.e2e-spec.ts's identical override comment.
+      .overrideProvider(MALWARE_SCANNER)
+      .useValue({ scan: async () => ({ status: 'CLEAN', provider: 'test-double' }) })
       .compile();
 
     app = moduleFixture.createNestApplication();
@@ -88,10 +92,25 @@ describe('Identity & Tenancy (e2e)', () => {
     return match[1];
   }
 
-  function lastEmailTo(to: string) {
-    const email = [...sentEmails].reverse().find((m) => m.to === to);
-    if (!email) throw new Error(`No email captured for ${to}`);
-    return email;
+  /**
+   * Frontend Phase 16 — email sending is now async (enqueued to
+   * EMAIL_QUEUE, delivered by EmailSendWorker), so the overridden
+   * EMAIL_SENDER mock may not have captured the message yet at the
+   * instant the triggering HTTP call returns. Polls briefly, mirroring
+   * the same wait-for-async-BullMQ-side-effect pattern already used for
+   * waitForScanStatus (financials.e2e-spec.ts) — not a new idiom.
+   */
+  async function lastEmailTo(
+    to: string,
+    timeoutMs = 5000,
+  ): Promise<{ to: string; subject: string; body: string }> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const email = [...sentEmails].reverse().find((m) => m.to === to);
+      if (email) return email;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    throw new Error(`No email captured for ${to}`);
   }
 
   async function createAndActivateOrg(opts: {
@@ -115,7 +134,7 @@ describe('Identity & Tenancy (e2e)', () => {
       .expect(201);
 
     const organizationId: string = createRes.body.organization.id;
-    const token = extractToken(lastEmailTo(opts.adminEmail).body);
+    const token = extractToken((await lastEmailTo(opts.adminEmail)).body);
 
     const activateRes = await request(app.getHttpServer())
       .post(`${API}/auth/activate`)
@@ -158,7 +177,7 @@ describe('Identity & Tenancy (e2e)', () => {
     const dispatcherMembershipId: string = inviteRes.body.id;
 
     // §1.5 — invitee activates via the same mechanical operation as §1.3.
-    const dispatcherToken = extractToken(lastEmailTo('dispatcher@acme-freight.test').body);
+    const dispatcherToken = extractToken((await lastEmailTo('dispatcher@acme-freight.test')).body);
     await request(app.getHttpServer())
       .post(`${API}/auth/activate`)
       .send({ token: dispatcherToken, password: 'DispatcherPass123' })
@@ -229,7 +248,7 @@ describe('Identity & Tenancy (e2e)', () => {
       .expect(201);
     const orgTwoId: string = createSecondRes.body.organization.id;
 
-    const reuseEmail = lastEmailTo(sharedEmail);
+    const reuseEmail = await lastEmailTo(sharedEmail);
     expect(reuseEmail.subject).toContain('Admin of a new organization');
 
     // Activation for the reused identity requires no password — the
@@ -281,7 +300,7 @@ describe('Identity & Tenancy (e2e)', () => {
       .post(`${API}/memberships/invite`)
       .send({ email: 'target@revocation-test.test', roles: ['DISPATCHER'] })
       .expect(201);
-    const targetToken = extractToken(lastEmailTo('target@revocation-test.test').body);
+    const targetToken = extractToken((await lastEmailTo('target@revocation-test.test')).body);
     await request(app.getHttpServer())
       .post(`${API}/auth/activate`)
       .send({ token: targetToken, password: 'TargetPass123' })
@@ -337,7 +356,7 @@ describe('Identity & Tenancy (e2e)', () => {
       .post(`${API}/memberships/invite`)
       .send({ email: sharedEmail, roles: ['DISPATCHER'] })
       .expect(201);
-    const orgAInviteToken = extractToken(lastEmailTo(sharedEmail).body);
+    const orgAInviteToken = extractToken((await lastEmailTo(sharedEmail)).body);
     await request(app.getHttpServer())
       .post(`${API}/auth/activate`)
       .send({ token: orgAInviteToken, password: sharedPassword })
@@ -349,7 +368,7 @@ describe('Identity & Tenancy (e2e)', () => {
       .expect(201);
     // Already-verified identity — activation needs no password (mirrors
     // the "reuses an existing global User" test's second activation call).
-    const orgBInviteToken = extractToken(lastEmailTo(sharedEmail).body);
+    const orgBInviteToken = extractToken((await lastEmailTo(sharedEmail)).body);
     await request(app.getHttpServer())
       .post(`${API}/auth/activate`)
       .send({ token: orgBInviteToken })
@@ -470,7 +489,9 @@ describe('Identity & Tenancy (e2e)', () => {
         .expect(201);
       const dispatcherMembershipId: string = inviteRes.body.id;
 
-      const token = extractToken(lastEmailTo(`dispatcher-${seed}@role-edit-test.test`).body);
+      const token = extractToken(
+        (await lastEmailTo(`dispatcher-${seed}@role-edit-test.test`)).body,
+      );
       await request(app.getHttpServer())
         .post(`${API}/auth/activate`)
         .send({ token, password: 'DispatcherPass123' })

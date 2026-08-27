@@ -436,6 +436,18 @@ enum DocumentReviewStatus {
   EXPIRED
 }
 
+/// Frontend Phase 16 — tracks system-generated PDF documents (Rate
+/// Confirmation, Invoice, Settlement) through their async render job,
+/// independent of scanStatus (malware scanning and PDF generation are
+/// separate concepts). Left null for every document that was never
+/// system-generated (i.e. every user upload) — null already expresses
+/// "not applicable," no separate NOT_APPLICABLE value.
+enum DocumentGenerationStatus {
+  PENDING
+  COMPLETE
+  FAILED
+}
+
 /// Matches the two groupings in PRD §9 (Decision Log D13).
 enum DocumentTypeCategory {
   LOAD
@@ -895,6 +907,11 @@ model Document {
   scanProvider String?            @map("scan_provider")
 
   reviewStatus DocumentReviewStatus? @map("review_status")
+
+  /// Frontend Phase 16 — set only by the three system-generation call
+  /// sites (Rate Confirmation/Invoice/Settlement); left null for every
+  /// user-uploaded document.
+  generationStatus DocumentGenerationStatus? @map("generation_status")
 
   reviewedByUserId String?   @map("reviewed_by_user_id") @db.Uuid
   reviewedBy       User?     @relation("DocumentReviewedBy", fields: [reviewedByUserId], references: [id])

@@ -3,7 +3,7 @@ import { Queue } from 'bullmq';
 import Redis from 'ioredis';
 import { REDIS_CLIENT } from '../../common/redis/redis.module';
 import { PDF_GENERATOR } from '../../common/pdf/pdf-generator.interface';
-import { StubPdfGenerator } from '../../common/pdf/stub-pdf-generator';
+import { PdfkitPdfGenerator } from '../../common/pdf/pdfkit-pdf-generator';
 import { IdentityModule } from '../identity/identity.module';
 import { CarrierPaymentController } from './controllers/carrier-payment.controller';
 import { CarrierPaymentService } from './services/carrier-payment.service';
@@ -19,7 +19,7 @@ const SETTLEMENT_QUEUE_CONNECTION = 'SETTLEMENT_QUEUE_CONNECTION';
   providers: [
     CarrierPaymentService,
     SettlementDocumentGenerationWorker,
-    { provide: PDF_GENERATOR, useClass: StubPdfGenerator },
+    { provide: PDF_GENERATOR, useClass: PdfkitPdfGenerator },
     {
       provide: SETTLEMENT_QUEUE_CONNECTION,
       useFactory: (redis: Redis) => redis.duplicate(),

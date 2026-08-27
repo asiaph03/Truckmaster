@@ -32,6 +32,15 @@ export interface AppConfig {
    * change, per Stage 7 rule #10.
    */
   checkCallReminderHours: number;
+  /** Frontend Phase 16 — hosted malware-scanning provider (behind IMalwareScanner). */
+  cloudmersive: {
+    apiKey: string;
+  };
+  /** Frontend Phase 16 — hosted transactional email provider (behind IEmailSender). */
+  postmark: {
+    apiKey: string;
+    fromAddress: string;
+  };
 }
 
 export default (): AppConfig => ({
@@ -55,4 +64,11 @@ export default (): AppConfig => ({
     secret: process.env.SESSION_SECRET || '',
   },
   checkCallReminderHours: parseInt(process.env.CHECK_CALL_REMINDER_HOURS || '4', 10),
+  cloudmersive: {
+    apiKey: process.env.CLOUDMERSIVE_API_KEY || '',
+  },
+  postmark: {
+    apiKey: process.env.POSTMARK_API_KEY || '',
+    fromAddress: process.env.POSTMARK_FROM_ADDRESS || '',
+  },
 });

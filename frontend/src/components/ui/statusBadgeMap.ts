@@ -59,6 +59,11 @@ export const STATUS_BADGE_MAP: Record<string, BadgeColor> = {
   'Document.scanStatus:INFECTED': 'danger',
   'Document.scanStatus:SCAN_FAILED': 'danger',
 
+  // Document.generationStatus (Phase 16 — system-generated PDFs only)
+  'Document.generationStatus:PENDING': 'neutral',
+  'Document.generationStatus:COMPLETE': 'success',
+  'Document.generationStatus:FAILED': 'danger',
+
   // Invoice.status ('OVERDUE' is computed at read time, never stored)
   'Invoice.status:DRAFT': 'neutral',
   'Invoice.status:SENT': 'brand',

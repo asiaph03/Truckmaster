@@ -47,7 +47,9 @@ export function CarrierPaymentDetailPage() {
   // Approved decision 4: after Mark Paid succeeds, poll for the
   // async-generated settlement PDF's readiness rather than exposing any
   // backend readiness endpoint.
-  const [pdfStatus, setPdfStatus] = useState<'idle' | 'generating' | 'ready' | 'timeout'>('idle');
+  const [pdfStatus, setPdfStatus] = useState<
+    'idle' | 'generating' | 'ready' | 'failed' | 'timeout'
+  >('idle');
   const [pdfDocument, setPdfDocument] = useState<AppDocument | null>(null);
 
   const {
@@ -113,7 +115,7 @@ export function CarrierPaymentDetailPage() {
       refetch();
       setPdfStatus('generating');
       const doc = await documentsApi.waitForDocumentReady('CARRIER_PAYMENT', id);
-      setPdfStatus(doc ? 'ready' : 'timeout');
+      setPdfStatus(doc?.generationStatus === 'FAILED' ? 'failed' : doc ? 'ready' : 'timeout');
       setPdfDocument(doc);
     } catch (error) {
       toast.danger(error instanceof ApiError ? error.message : 'Something went wrong.');
@@ -160,6 +162,11 @@ export function CarrierPaymentDetailPage() {
           />
           {pdfStatus === 'generating' ? (
             <Badge label="Generating PDF…" color="neutral" />
+          ) : pdfStatus === 'failed' ? (
+            <Badge
+              label="Generation Failed"
+              color={getStatusBadgeColor('Document.generationStatus', 'FAILED') ?? 'danger'}
+            />
           ) : pdfStatus === 'ready' ? (
             <Button variant="tertiary" size="sm" onClick={onDownloadPdf}>
               Download PDF

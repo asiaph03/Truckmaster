@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { Inject } from '@nestjs/common';
 import { Organization } from '@prisma/client';
+import { Queue } from 'bullmq';
 import { PrismaService } from '../../../common/prisma/prisma.service';
 import { AuditService } from '../../../common/audit/audit.service';
 import { TokenService } from './token.service';
@@ -8,7 +9,11 @@ import { UserService } from './user.service';
 import { CreateOrganizationDto } from '../dto/create-organization.dto';
 import { UpdateOrganizationDto } from '../dto/update-organization.dto';
 import { PermissionError } from '../../../common/errors/app-error';
-import { EMAIL_SENDER, IEmailSender } from '../../../common/email/email-sender.interface';
+import {
+  EMAIL_QUEUE,
+  EmailJobData,
+  EMAIL_JOB_OPTIONS,
+} from '../../../common/email/email-queue.constants';
 
 const INVITATION_EXPIRY_DAYS = 7;
 
@@ -49,7 +54,7 @@ export class OrganizationService {
     private readonly userService: UserService,
     private readonly tokenService: TokenService,
     private readonly audit: AuditService,
-    @Inject(EMAIL_SENDER) private readonly emailSender: IEmailSender,
+    @Inject(EMAIL_QUEUE) private readonly emailQueue: Queue,
   ) {}
 
   async createOrganization(
@@ -164,18 +169,27 @@ export class OrganizationService {
       return { organization, rawToken };
     });
 
-    await this.emailSender.send(
-      existingUser
-        ? {
-            to: dto.primaryContactEmail,
-            subject: "You've been made the Admin of a new organization — Truck Master TMS",
-            body: `You've been made the initial Admin of a new organization on Truck Master TMS. Accept: /accept-invitation?token=${result.rawToken}\nThis link expires in ${INVITATION_EXPIRY_DAYS} days.`,
-          }
-        : {
-            to: dto.primaryContactEmail,
-            subject: 'Verify your account — Truck Master TMS',
-            body: `Welcome to Truck Master TMS. Verify your account: /verify?token=${result.rawToken}\nThis link expires in ${INVITATION_EXPIRY_DAYS} days.`,
-          },
+    const emailContent = existingUser
+      ? {
+          subject: "You've been made the Admin of a new organization — Truck Master TMS",
+          body: `You've been made the initial Admin of a new organization on Truck Master TMS. Accept: /accept-invitation?token=${result.rawToken}\nThis link expires in ${INVITATION_EXPIRY_DAYS} days.`,
+        }
+      : {
+          subject: 'Verify your account — Truck Master TMS',
+          body: `Welcome to Truck Master TMS. Verify your account: /verify?token=${result.rawToken}\nThis link expires in ${INVITATION_EXPIRY_DAYS} days.`,
+        };
+
+    await this.emailQueue.add(
+      'send',
+      {
+        to: dto.primaryContactEmail,
+        subject: emailContent.subject,
+        body: emailContent.body,
+        organizationId: result.organization.id,
+        entityType: 'Organization',
+        entityId: result.organization.id,
+      } satisfies EmailJobData,
+      EMAIL_JOB_OPTIONS,
     );
 
     return { organization: result.organization, verificationTokenIssued: true };

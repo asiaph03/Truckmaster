@@ -11,6 +11,7 @@ import {
 } from '../../../api';
 import { ApiError } from '../../../api/errors';
 import { Badge, Button, ConfirmDialog, DataTable } from '../../../components/ui';
+import { getStatusBadgeColor } from '../../../components/ui/statusBadgeMap';
 import { useToast } from '../../../components/ui/toastStore';
 import { usePermissions } from '../../../hooks/usePermissions';
 import { formatDateShort } from '../loadDerived';
@@ -151,10 +152,19 @@ export function CarrierDispatchTab({ load, onChanged }: { load: Load; onChanged:
       <div className="detail-card">
         <h2 className="detail-card-title">Rate Confirmation</h2>
         {rateConfDoc ? (
-          <p style={{ margin: 0 }}>
-            {rateConfDoc.fileName} (v{rateConfDoc.versionNumber}) — uploaded{' '}
-            {formatDateShort(rateConfDoc.uploadedAt)}
-          </p>
+          rateConfDoc.generationStatus === 'PENDING' ? (
+            <Badge label="Generating…" color="neutral" />
+          ) : rateConfDoc.generationStatus === 'FAILED' ? (
+            <Badge
+              label="Generation Failed"
+              color={getStatusBadgeColor('Document.generationStatus', 'FAILED') ?? 'danger'}
+            />
+          ) : (
+            <p style={{ margin: 0 }}>
+              {rateConfDoc.fileName} (v{rateConfDoc.versionNumber}) — uploaded{' '}
+              {formatDateShort(rateConfDoc.uploadedAt)}
+            </p>
+          )
         ) : (
           <span className="detail-field-value">Not yet generated.</span>
         )}

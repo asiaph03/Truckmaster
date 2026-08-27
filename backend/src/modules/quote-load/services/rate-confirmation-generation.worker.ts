@@ -40,7 +40,29 @@ export class RateConfirmationGenerationWorker implements OnModuleInit, OnModuleD
     this.workerConnection = this.redis.duplicate();
     this.worker = new Worker<RateConfirmationJobData>(
       RATE_CONFIRMATION_QUEUE_NAME,
-      async (job) => this.processJob(job.data),
+      async (job) => {
+        try {
+          await this.processJob(job.data);
+        } catch (error) {
+          // Frontend Phase 16 — same retry-then-terminal-status pattern as
+          // MalwareScanWorker: only the final configured attempt resolves
+          // to a terminal FAILED status; every earlier attempt rethrows so
+          // BullMQ's attempts/backoff (RATE_CONFIRMATION_JOB_OPTIONS)
+          // retries the job. The original transaction (inside processJob)
+          // already rolled back on throw, so recording FAILED is a
+          // separate, fresh transaction here.
+          const maxAttempts = job.opts.attempts ?? 1;
+          if (job.attemptsMade + 1 >= maxAttempts) {
+            this.logger.error(
+              `Rate Confirmation PDF generation for document ${job.data.documentId} failed after ${maxAttempts} attempts — recording FAILED.`,
+              error instanceof Error ? error.stack : String(error),
+            );
+            await this.markFailed(job.data);
+            return;
+          }
+          throw error;
+        }
+      },
       { connection: this.workerConnection },
     );
 
@@ -50,6 +72,15 @@ export class RateConfirmationGenerationWorker implements OnModuleInit, OnModuleD
         error.stack,
       );
     });
+  }
+
+  private async markFailed(data: RateConfirmationJobData): Promise<void> {
+    await this.prisma.withTenantTransaction(data.organizationId, (tx) =>
+      tx.document.updateMany({
+        where: { id: data.documentId, organizationId: data.organizationId },
+        data: { generationStatus: 'FAILED' },
+      }),
+    );
   }
 
   private async processJob(data: RateConfirmationJobData): Promise<void> {
@@ -83,7 +114,7 @@ export class RateConfirmationGenerationWorker implements OnModuleInit, OnModuleD
 
       await tx.document.update({
         where: { id: document.id },
-        data: { fileSizeBytes: BigInt(pdfBytes.length) },
+        data: { fileSizeBytes: BigInt(pdfBytes.length), generationStatus: 'COMPLETE' },
       });
 
       await this.audit.record(tx, {

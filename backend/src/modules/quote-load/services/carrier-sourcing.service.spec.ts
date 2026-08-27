@@ -66,7 +66,7 @@ function buildService(opts: {
   const carrierEligibility = {
     recalculate: jest.fn().mockResolvedValue(opts.eligibility ?? { eligible: true, reasons: [] }),
   };
-  const emailSender = { send: jest.fn().mockResolvedValue(undefined) };
+  const emailQueue = { add: jest.fn().mockResolvedValue(undefined) };
   const rateConfirmationQueue = { add: jest.fn().mockResolvedValue(undefined) };
 
   const service = new CarrierSourcingService(
@@ -74,11 +74,11 @@ function buildService(opts: {
     audit as never,
     storage as never,
     carrierEligibility as never,
-    emailSender as never,
+    emailQueue as never,
     rateConfirmationQueue as never,
   );
 
-  return { service, tx, audit, storage, carrierEligibility, emailSender, rateConfirmationQueue };
+  return { service, tx, audit, storage, carrierEligibility, emailQueue, rateConfirmationQueue };
 }
 
 describe('CarrierSourcingService.beginSourcing — Workflow 5 §5.1', () => {
@@ -332,6 +332,7 @@ describe('CarrierSourcingService.generateRateConfirmation — Workflow 5 §5.7',
     expect(rateConfirmationQueue.add).toHaveBeenCalledWith(
       'generate',
       expect.objectContaining({ documentId: 'doc-1', loadId: LOAD_ID, organizationId: ORG_ID }),
+      expect.anything(),
     );
     expect(audit.record).toHaveBeenCalledWith(
       expect.anything(),
@@ -340,12 +341,14 @@ describe('CarrierSourcingService.generateRateConfirmation — Workflow 5 §5.7',
   });
 
   it('sends and audits an email when sendEmail is requested', async () => {
-    const { service, audit, emailSender } = buildService({ load: assignedLoad() });
+    const { service, audit, emailQueue } = buildService({ load: assignedLoad() });
 
     await service.generateRateConfirmation(ORG_ID, LOAD_ID, { sendEmail: true }, USER_ID);
 
-    expect(emailSender.send).toHaveBeenCalledWith(
+    expect(emailQueue.add).toHaveBeenCalledWith(
+      'send',
       expect.objectContaining({ to: 'dispatch@carrier.test' }),
+      expect.anything(),
     );
     expect(audit.record).toHaveBeenCalledWith(
       expect.anything(),

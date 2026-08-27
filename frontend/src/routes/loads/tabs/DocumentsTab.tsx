@@ -17,6 +17,19 @@ async function download(documentId: string, toast: ReturnType<typeof useToast>) 
 }
 
 function ScanStatusCell({ doc, toast }: { doc: AppDocument; toast: ReturnType<typeof useToast> }) {
+  // Phase 16 — system-generated documents (Rate Confirmation) carry their
+  // own generationStatus; a PENDING/FAILED generation always takes
+  // precedence over scanStatus (which is CLEAN from the moment the row is
+  // created, since generated PDFs skip malware scanning entirely).
+  if (doc.generationStatus === 'PENDING') return <Badge label="Generating…" color="neutral" />;
+  if (doc.generationStatus === 'FAILED') {
+    return (
+      <Badge
+        label="Generation Failed"
+        color={getStatusBadgeColor('Document.generationStatus', 'FAILED') ?? 'danger'}
+      />
+    );
+  }
   if (doc.scanStatus === 'CLEAN') {
     return (
       <Button variant="tertiary" size="sm" onClick={() => download(doc.id, toast)}>

@@ -134,10 +134,24 @@ describe('Core Master Data (e2e)', () => {
     return match[1];
   }
 
-  function lastEmailTo(to: string) {
-    const email = [...sentEmails].reverse().find((m) => m.to === to);
-    if (!email) throw new Error(`No email captured for ${to}`);
-    return email;
+  /**
+   * Frontend Phase 16 — email is now async (EMAIL_QUEUE + EmailSendWorker),
+   * so the overridden EMAIL_SENDER mock may not have captured the message
+   * yet the instant the triggering HTTP call returns. Polls briefly,
+   * mirroring the existing wait-for-async-BullMQ-side-effect pattern
+   * (waitForScanStatus below).
+   */
+  async function lastEmailTo(
+    to: string,
+    timeoutMs = 5000,
+  ): Promise<{ to: string; subject: string; body: string }> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const email = [...sentEmails].reverse().find((m) => m.to === to);
+      if (email) return email;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    throw new Error(`No email captured for ${to}`);
   }
 
   /**
@@ -174,7 +188,7 @@ describe('Core Master Data (e2e)', () => {
       .expect(201);
     const newOrgId: string = createRes.body.organization.id;
 
-    const adminToken = extractToken(lastEmailTo(adminEmail).body);
+    const adminToken = extractToken((await lastEmailTo(adminEmail)).body);
     await request(app.getHttpServer())
       .post(`${API}/auth/activate`)
       .send({ token: adminToken, password: 'OrgAdminPass123' })
@@ -193,7 +207,7 @@ describe('Core Master Data (e2e)', () => {
       .post(`${API}/memberships/invite`)
       .send({ email: reviewerEmail, roles: ['COMPLIANCE_REVIEWER'] })
       .expect(201);
-    const reviewerToken = extractToken(lastEmailTo(reviewerEmail).body);
+    const reviewerToken = extractToken((await lastEmailTo(reviewerEmail)).body);
     await request(app.getHttpServer())
       .post(`${API}/auth/activate`)
       .send({ token: reviewerToken, password: 'ReviewerPass123' })
@@ -422,7 +436,7 @@ describe('Core Master Data (e2e)', () => {
         .post(`${API}/memberships/invite`)
         .send({ email: dualRoleEmail, roles: ['ADMIN', 'COMPLIANCE_REVIEWER'] })
         .expect(201);
-      const dualRoleToken = extractToken(lastEmailTo(dualRoleEmail).body);
+      const dualRoleToken = extractToken((await lastEmailTo(dualRoleEmail)).body);
       await request(app.getHttpServer())
         .post(`${API}/auth/activate`)
         .send({ token: dualRoleToken, password: 'DualRolePass123' })

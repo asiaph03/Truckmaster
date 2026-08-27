@@ -32,13 +32,39 @@ export class SettlementDocumentGenerationWorker implements OnModuleInit, OnModul
     this.workerConnection = this.redis.duplicate();
     this.worker = new Worker<SettlementJobData>(
       SETTLEMENT_QUEUE_NAME,
-      async (job) => this.processJob(job.data),
+      async (job) => {
+        try {
+          await this.processJob(job.data);
+        } catch (error) {
+          // Frontend Phase 16 — same retry-then-terminal-status pattern as
+          // MalwareScanWorker/RateConfirmationGenerationWorker.
+          const maxAttempts = job.opts.attempts ?? 1;
+          if (job.attemptsMade + 1 >= maxAttempts) {
+            this.logger.error(
+              `Settlement PDF generation for document ${job.data.documentId} failed after ${maxAttempts} attempts — recording FAILED.`,
+              error instanceof Error ? error.stack : String(error),
+            );
+            await this.markFailed(job.data);
+            return;
+          }
+          throw error;
+        }
+      },
       { connection: this.workerConnection },
     );
 
     this.worker.on('failed', (job, error) => {
       this.logger.error(`Settlement PDF job ${job?.id} failed: ${error.message}`, error.stack);
     });
+  }
+
+  private async markFailed(data: SettlementJobData): Promise<void> {
+    await this.prisma.withTenantTransaction(data.organizationId, (tx) =>
+      tx.document.updateMany({
+        where: { id: data.documentId, organizationId: data.organizationId },
+        data: { generationStatus: 'FAILED' },
+      }),
+    );
   }
 
   private async processJob(data: SettlementJobData): Promise<void> {
@@ -68,7 +94,7 @@ export class SettlementDocumentGenerationWorker implements OnModuleInit, OnModul
 
       await tx.document.update({
         where: { id: document.id },
-        data: { fileSizeBytes: BigInt(pdfBytes.length) },
+        data: { fileSizeBytes: BigInt(pdfBytes.length), generationStatus: 'COMPLETE' },
       });
 
       await this.audit.record(tx, {

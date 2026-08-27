@@ -1,15 +1,20 @@
 import { useState } from 'react';
 import { useForm, Controller } from 'react-hook-form';
 import { useQuery } from '@tanstack/react-query';
-import { carriersApi, loadsApi, type AssignCarrierRequest } from '../../../api';
+import {
+  carriersApi,
+  loadsApi,
+  type AssignCarrierRequest,
+  type EligibilityErrorDetails,
+} from '../../../api';
 import { ApiError } from '../../../api/errors';
 import { CurrencyInput, Modal, ModalFooter, SearchableCombobox } from '../../../components/ui';
 import { useToast } from '../../../components/ui/toastStore';
 
 /**
  * Shared assisted-transition flow — used from Load Detail's header
- * primary action (this phase) and, once built, Kanban's assisted drag
- * (deferred, Phase 4): "one implementation, two entry points" per the
+ * primary action and Kanban's assisted drag (KanbanBoard.tsx, both
+ * open this same modal): "one implementation, two entry points" per the
  * locked spec. Deliberately does not pre-filter to only eligible
  * carriers — surfaces the real `EligibilityError.details.reasons` list
  * from the backend instead of re-implementing the 7-condition check
@@ -51,7 +56,7 @@ export function AssignCarrierModal({
       onAssigned();
     } catch (error) {
       if (error instanceof ApiError && error.code === 'ELIGIBILITY_ERROR') {
-        const reasons = (error.details as { reasons?: string[] } | undefined)?.reasons ?? [];
+        const reasons = (error.details as EligibilityErrorDetails | undefined)?.reasons ?? [];
         setEligibilityReasons(reasons.length > 0 ? reasons : [error.message]);
         return;
       }

@@ -15,6 +15,8 @@ export type DocumentEntityType =
 export type DocumentScanStatus = 'PENDING' | 'CLEAN' | 'INFECTED' | 'SCAN_FAILED';
 export type DocumentReviewStatus =
   'NOT_APPLICABLE' | 'PENDING_REVIEW' | 'APPROVED' | 'REJECTED' | 'EXPIRED';
+/** Nullable — only Rate Confirmation/Invoice/Settlement documents are system-generated (Phase 16). */
+export type DocumentGenerationStatus = 'PENDING' | 'COMPLETE' | 'FAILED';
 
 export interface AppDocument {
   id: string;
@@ -32,6 +34,7 @@ export interface AppDocument {
   isCurrentVersion: boolean;
   scanStatus: DocumentScanStatus;
   reviewStatus: DocumentReviewStatus;
+  generationStatus?: DocumentGenerationStatus | null;
   rejectionReason?: string;
   uploadedByUserId: string;
   uploadedAt: string;
@@ -220,6 +223,10 @@ export const documentsApi = {
    * attempts, resolving once a document for this entity has
    * `fileSizeBytes > 0`. Returns `null` on timeout — the document keeps
    * generating server-side and will show correctly on next reload.
+   *
+   * Phase 16 — also resolves early on `generationStatus === 'FAILED'`
+   * (terminal, after 3 retries) so callers don't poll the full 30
+   * attempts for a document that will never gain bytes.
    */
   waitForDocumentReady: async (
     entityType: DocumentEntityType,
@@ -228,7 +235,9 @@ export const documentsApi = {
     for (let i = 0; i < MAX_POLLS; i++) {
       await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
       const docs = await documentsApi.list(entityType, entityId);
-      const ready = docs.find((d) => Number(d.fileSizeBytes) > 0);
+      const ready = docs.find(
+        (d) => Number(d.fileSizeBytes) > 0 || d.generationStatus === 'FAILED',
+      );
       if (ready) return ready;
     }
     return null;

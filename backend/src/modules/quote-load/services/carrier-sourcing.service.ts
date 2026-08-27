@@ -5,7 +5,11 @@ import { PrismaService } from '../../../common/prisma/prisma.service';
 import { AuditService } from '../../../common/audit/audit.service';
 import { StorageService } from '../../../common/storage/storage.service';
 import { CarrierEligibilityService } from '../../carrier/services/carrier-eligibility.service';
-import { IEmailSender, EMAIL_SENDER } from '../../../common/email/email-sender.interface';
+import {
+  EMAIL_QUEUE,
+  EmailJobData,
+  EMAIL_JOB_OPTIONS,
+} from '../../../common/email/email-queue.constants';
 import { LogSourcingAttemptDto } from '../dto/log-sourcing-attempt.dto';
 import { AssignCarrierDto } from '../dto/assign-carrier.dto';
 import { CarrierRejectedDto } from '../dto/carrier-rejected.dto';
@@ -16,7 +20,11 @@ import {
   InvalidTransitionError,
   NotFoundError,
 } from '../../../common/errors/app-error';
-import { RATE_CONFIRMATION_QUEUE, RateConfirmationJobData } from './rate-confirmation.constants';
+import {
+  RATE_CONFIRMATION_QUEUE,
+  RATE_CONFIRMATION_JOB_OPTIONS,
+  RateConfirmationJobData,
+} from './rate-confirmation.constants';
 
 @Injectable()
 export class CarrierSourcingService {
@@ -25,7 +33,7 @@ export class CarrierSourcingService {
     private readonly audit: AuditService,
     private readonly storage: StorageService,
     private readonly carrierEligibility: CarrierEligibilityService,
-    @Inject(EMAIL_SENDER) private readonly emailSender: IEmailSender,
+    @Inject(EMAIL_QUEUE) private readonly emailQueue: Queue,
     @Inject(RATE_CONFIRMATION_QUEUE) private readonly rateConfirmationQueue: Queue,
   ) {}
 
@@ -339,6 +347,7 @@ export class CarrierSourcingService {
             scannedAt: new Date(),
             scanProvider: 'system-generated',
             reviewStatus: 'NOT_APPLICABLE',
+            generationStatus: 'PENDING',
             uploadedByUserId: actingUserId,
           },
         });
@@ -374,14 +383,21 @@ export class CarrierSourcingService {
       organizationId,
       loadId,
     };
-    await this.rateConfirmationQueue.add('generate', jobData);
+    await this.rateConfirmationQueue.add('generate', jobData, RATE_CONFIRMATION_JOB_OPTIONS);
 
     if (dto.sendEmail && carrierEmail) {
-      await this.emailSender.send({
-        to: carrierEmail,
-        subject: `Rate Confirmation — Load ${load.loadNumber}`,
-        body: `A Rate Confirmation for Load ${load.loadNumber} has been generated and is attached.`,
-      });
+      await this.emailQueue.add(
+        'send',
+        {
+          to: carrierEmail,
+          subject: `Rate Confirmation — Load ${load.loadNumber}`,
+          body: `A Rate Confirmation for Load ${load.loadNumber} has been generated and is attached.`,
+          organizationId,
+          entityType: 'Load',
+          entityId: loadId,
+        } satisfies EmailJobData,
+        EMAIL_JOB_OPTIONS,
+      );
       await this.prisma.withTenantTransaction(organizationId, (tx) =>
         this.audit.record(tx, {
           organizationId,

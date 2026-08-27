@@ -48,17 +48,17 @@ describe('OrganizationService.createOrganization', () => {
     };
 
     const audit = { record: jest.fn().mockResolvedValue(undefined) };
-    const emailSender = { send: jest.fn().mockResolvedValue(undefined) };
+    const emailQueue = { add: jest.fn().mockResolvedValue(undefined) };
 
     const service = new OrganizationService(
       prisma as never,
       userService as never,
       tokenService as never,
       audit as never,
-      emailSender as never,
+      emailQueue as never,
     );
 
-    return { service, tx, userService, audit, emailSender, createdOrganization, createdUser };
+    return { service, tx, userService, audit, emailQueue, createdOrganization, createdUser };
   }
 
   it('rejects a non-Super-Admin acting user', async () => {
@@ -69,7 +69,7 @@ describe('OrganizationService.createOrganization', () => {
   });
 
   it('creates a brand-new User with PENDING_VERIFICATION membership when no identity exists for the email', async () => {
-    const { service, tx, userService, emailSender } = buildService({ existingUser: null });
+    const { service, tx, userService, emailQueue } = buildService({ existingUser: null });
 
     await service.createOrganization(DTO, SUPER_ADMIN_ID);
 
@@ -82,14 +82,16 @@ describe('OrganizationService.createOrganization', () => {
         data: expect.objectContaining({ status: 'PENDING_VERIFICATION' }),
       }),
     );
-    expect(emailSender.send).toHaveBeenCalledWith(
+    expect(emailQueue.add).toHaveBeenCalledWith(
+      'send',
       expect.objectContaining({ subject: expect.stringContaining('Verify your account') }),
+      expect.anything(),
     );
   });
 
   it('reuses an existing global User and creates an INVITED membership instead of a duplicate User', async () => {
     const existingUser = { id: 'existing-user-1', email: DTO.primaryContactEmail };
-    const { service, tx, userService, emailSender } = buildService({ existingUser });
+    const { service, tx, userService, emailQueue } = buildService({ existingUser });
 
     await service.createOrganization(DTO, SUPER_ADMIN_ID);
 
@@ -99,8 +101,10 @@ describe('OrganizationService.createOrganization', () => {
         data: expect.objectContaining({ userId: existingUser.id, status: 'INVITED' }),
       }),
     );
-    expect(emailSender.send).toHaveBeenCalledWith(
+    expect(emailQueue.add).toHaveBeenCalledWith(
+      'send',
       expect.objectContaining({ subject: expect.stringContaining('Admin of a new organization') }),
+      expect.anything(),
     );
   });
 

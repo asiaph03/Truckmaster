@@ -3,7 +3,7 @@ import { Queue } from 'bullmq';
 import Redis from 'ioredis';
 import { REDIS_CLIENT } from '../../common/redis/redis.module';
 import { MALWARE_SCANNER } from '../../common/malware-scan/malware-scanner.interface';
-import { StubMalwareScanner } from '../../common/malware-scan/stub-malware-scanner';
+import { CloudmersiveMalwareScanner } from '../../common/malware-scan/cloudmersive-malware-scanner';
 import { CarrierModule } from '../carrier/carrier.module';
 import { QuoteLoadModule } from '../quote-load/quote-load.module';
 import { DocumentController } from './controllers/document.controller';
@@ -36,7 +36,7 @@ const MALWARE_SCAN_QUEUE_CONNECTION = 'MALWARE_SCAN_QUEUE_CONNECTION';
     DocumentService,
     DocumentTypeService,
     MalwareScanWorker,
-    { provide: MALWARE_SCANNER, useClass: StubMalwareScanner },
+    { provide: MALWARE_SCANNER, useClass: CloudmersiveMalwareScanner },
     {
       provide: MALWARE_SCAN_QUEUE_CONNECTION,
       useFactory: (redis: Redis) => redis.duplicate(),

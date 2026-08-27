@@ -4,13 +4,17 @@ import { Queue } from 'bullmq';
 import { PrismaService } from '../../../common/prisma/prisma.service';
 import { AuditService } from '../../../common/audit/audit.service';
 import { OrganizationSequenceService } from '../../identity/services/organization-sequence.service';
-import { EMAIL_SENDER, IEmailSender } from '../../../common/email/email-sender.interface';
+import {
+  EMAIL_QUEUE,
+  EmailJobData,
+  EMAIL_JOB_OPTIONS,
+} from '../../../common/email/email-queue.constants';
 import { StorageService } from '../../../common/storage/storage.service';
 import { CreateInvoiceDto } from '../dto/create-invoice.dto';
 import { SendInvoiceDto } from '../dto/send-invoice.dto';
 import { RecordPaymentDto } from '../dto/record-payment.dto';
 import { AddAdjustmentDto } from '../dto/add-adjustment.dto';
-import { INVOICE_QUEUE, InvoiceJobData } from './invoice.constants';
+import { INVOICE_QUEUE, INVOICE_JOB_OPTIONS, InvoiceJobData } from './invoice.constants';
 import {
   BusinessRuleError,
   InvalidTransitionError,
@@ -36,7 +40,7 @@ export class InvoiceService {
     private readonly audit: AuditService,
     private readonly sequences: OrganizationSequenceService,
     private readonly storage: StorageService,
-    @Inject(EMAIL_SENDER) private readonly emailSender: IEmailSender,
+    @Inject(EMAIL_QUEUE) private readonly emailQueue: Queue,
     @Inject(INVOICE_QUEUE) private readonly invoiceQueue: Queue,
   ) {}
 
@@ -212,6 +216,7 @@ export class InvoiceService {
             scannedAt: new Date(),
             scanProvider: 'system-generated',
             reviewStatus: 'NOT_APPLICABLE',
+            generationStatus: 'PENDING',
             uploadedByUserId: actingUserId,
           },
         });
@@ -239,13 +244,20 @@ export class InvoiceService {
     );
 
     const jobData: InvoiceJobData = { documentId: document.id, organizationId, invoiceId: id };
-    await this.invoiceQueue.add('generate', jobData);
+    await this.invoiceQueue.add('generate', jobData, INVOICE_JOB_OPTIONS);
 
-    await this.emailSender.send({
-      to: dto.recipientEmail,
-      subject: dto.subject,
-      body: dto.message,
-    });
+    await this.emailQueue.add(
+      'send',
+      {
+        to: dto.recipientEmail,
+        subject: dto.subject,
+        body: dto.message,
+        organizationId,
+        entityType: 'Invoice',
+        entityId: id,
+      } satisfies EmailJobData,
+      EMAIL_JOB_OPTIONS,
+    );
 
     return invoice;
   }

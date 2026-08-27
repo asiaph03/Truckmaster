@@ -138,7 +138,7 @@ function buildService(
     format: jest.fn().mockReturnValue('INV-000001'),
   };
   const storage = { buildDocumentKey: jest.fn().mockReturnValue('org_org-1/documents/doc-1') };
-  const emailSender = { send: jest.fn().mockResolvedValue(undefined) };
+  const emailQueue = { add: jest.fn().mockResolvedValue(undefined) };
   const invoiceQueue = { add: jest.fn().mockResolvedValue(undefined) };
 
   const service = new InvoiceService(
@@ -146,11 +146,11 @@ function buildService(
     audit as never,
     sequences as never,
     storage as never,
-    emailSender as never,
+    emailQueue as never,
     invoiceQueue as never,
   );
 
-  return { service, tx, audit, sequences, storage, emailSender, invoiceQueue };
+  return { service, tx, audit, sequences, storage, emailQueue, invoiceQueue };
 }
 
 describe('InvoiceService.create — Workflow 8 §8.1-8.5', () => {
@@ -230,8 +230,8 @@ describe('InvoiceService.create — Workflow 8 §8.1-8.5', () => {
 });
 
 describe('InvoiceService.send — Workflow 8 §8.6/§8.8', () => {
-  it('transitions DRAFT -> SENT, computes due_date from payment terms, and emails synchronously', async () => {
-    const { service, tx, emailSender, invoiceQueue } = buildService({
+  it('transitions DRAFT -> SENT, computes due_date from payment terms, and enqueues the email', async () => {
+    const { service, tx, emailQueue, invoiceQueue } = buildService({
       invoice: {
         id: INVOICE_ID,
         status: 'DRAFT',
@@ -251,8 +251,10 @@ describe('InvoiceService.send — Workflow 8 §8.6/§8.8', () => {
 
     expect(invoice.status).toBe('SENT');
     expect(invoice.dueDate).toBeInstanceOf(Date);
-    expect(emailSender.send).toHaveBeenCalledWith(
+    expect(emailQueue.add).toHaveBeenCalledWith(
+      'send',
       expect.objectContaining({ to: 'ap@customer.com' }),
+      expect.anything(),
     );
     expect(invoiceQueue.add).toHaveBeenCalledTimes(1);
     expect(tx.document.create).toHaveBeenCalledTimes(1);

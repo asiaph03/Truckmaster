@@ -1,5 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { MembershipRoleName, OrganizationMembership, Prisma } from '@prisma/client';
+import { Queue } from 'bullmq';
 import { PrismaService } from '../../../common/prisma/prisma.service';
 import { AuditService } from '../../../common/audit/audit.service';
 import { TokenService } from './token.service';
@@ -7,7 +8,11 @@ import { UserService } from './user.service';
 import { PasswordService } from './password.service';
 import { InviteMemberDto } from '../dto/invite-member.dto';
 import { UpdateMembershipRolesDto } from '../dto/update-membership-roles.dto';
-import { EMAIL_SENDER, IEmailSender } from '../../../common/email/email-sender.interface';
+import {
+  EMAIL_QUEUE,
+  EmailJobData,
+  EMAIL_JOB_OPTIONS,
+} from '../../../common/email/email-queue.constants';
 import { SessionRegistryService } from './session-registry.service';
 import {
   BusinessRuleError,
@@ -27,7 +32,7 @@ export class MembershipService {
     private readonly passwordService: PasswordService,
     private readonly audit: AuditService,
     private readonly sessionRegistry: SessionRegistryService,
-    @Inject(EMAIL_SENDER) private readonly emailSender: IEmailSender,
+    @Inject(EMAIL_QUEUE) private readonly emailQueue: Queue,
   ) {}
 
   // ---------------------------------------------------------------------
@@ -144,11 +149,18 @@ export class MembershipService {
       return created;
     });
 
-    await this.emailSender.send({
-      to: dto.email,
-      subject: "You've been invited to join Truck Master TMS",
-      body: `You've been invited to join an organization on Truck Master TMS. Accept: /accept-invitation?token=${rawToken}\nThis link expires in ${INVITATION_EXPIRY_DAYS} days.`,
-    });
+    await this.emailQueue.add(
+      'send',
+      {
+        to: dto.email,
+        subject: "You've been invited to join Truck Master TMS",
+        body: `You've been invited to join an organization on Truck Master TMS. Accept: /accept-invitation?token=${rawToken}\nThis link expires in ${INVITATION_EXPIRY_DAYS} days.`,
+        organizationId,
+        entityType: 'OrganizationMembership',
+        entityId: membership.id,
+      } satisfies EmailJobData,
+      EMAIL_JOB_OPTIONS,
+    );
 
     return membership;
   }
@@ -195,11 +207,18 @@ export class MembershipService {
     );
 
     if (recipientEmail) {
-      await this.emailSender.send({
-        to: recipientEmail,
-        subject: "You've been invited to join Truck Master TMS",
-        body: `Accept: /accept-invitation?token=${rawToken}\nThis link expires in ${INVITATION_EXPIRY_DAYS} days.`,
-      });
+      await this.emailQueue.add(
+        'send',
+        {
+          to: recipientEmail,
+          subject: "You've been invited to join Truck Master TMS",
+          body: `Accept: /accept-invitation?token=${rawToken}\nThis link expires in ${INVITATION_EXPIRY_DAYS} days.`,
+          organizationId,
+          entityType: 'OrganizationMembership',
+          entityId: membershipId,
+        } satisfies EmailJobData,
+        EMAIL_JOB_OPTIONS,
+      );
     }
 
     return updated;
