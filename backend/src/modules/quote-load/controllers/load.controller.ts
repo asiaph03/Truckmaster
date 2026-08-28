@@ -119,6 +119,8 @@ function buildLoadSearchFilters(raw: {
   q?: string;
   sort?: string;
   sortDirection?: string;
+  ids?: string[];
+  excludeClosed?: boolean;
 }): LoadSearchFilters {
   const sort = LOAD_SEARCH_SORT_KEYS.includes(raw.sort as LoadSearchSort)
     ? (raw.sort as LoadSearchSort)
@@ -140,7 +142,22 @@ function buildLoadSearchFilters(raw: {
     q: raw.q,
     sort,
     sortDirection,
+    ids: raw.ids,
+    excludeClosed: raw.excludeClosed,
   };
+}
+
+/**
+ * Frontend Phase 18 — Express's default `qs` query parser returns a bare
+ * string for a single repeated-key occurrence (`ids=a` → `"a"`) and only
+ * returns an array once the key repeats (`ids=a&ids=b` → `["a","b"]`).
+ * Verified directly against the `qs` package before writing this, rather
+ * than assumed. Normalizes both shapes (plus the not-present case) to a
+ * single consistent `string[] | undefined`.
+ */
+function normalizeIds(raw: string | string[] | undefined): string[] | undefined {
+  if (raw === undefined) return undefined;
+  return Array.isArray(raw) ? raw : [raw];
 }
 
 function parsePagination(
@@ -259,6 +276,9 @@ export class LoadController {
     @Query('q') q?: string,
     @Query('sort') sort?: string,
     @Query('sortDirection') sortDirection?: string,
+    // Frontend Phase 18 — Dispatch Board "Export Selected"/"Export" additions.
+    @Query('ids') ids?: string | string[],
+    @Query('excludeClosed') excludeClosed?: string,
   ) {
     const organizationId = RequestContextStore.requireOrganizationId();
     const actingUserId = RequestContextStore.requireUserId();
@@ -281,6 +301,8 @@ export class LoadController {
         q,
         sort,
         sortDirection,
+        ids: normalizeIds(ids),
+        excludeClosed: excludeClosed === 'true',
       }),
     );
   }

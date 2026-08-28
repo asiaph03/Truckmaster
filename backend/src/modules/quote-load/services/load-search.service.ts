@@ -28,6 +28,23 @@ export interface LoadSearchFilters {
   q?: string;
   sort?: LoadSearchSort;
   sortDirection?: LoadSearchSortDirection;
+  /**
+   * Frontend Phase 18 — export-only: when present, scopes the export to
+   * exactly this explicit set of Load ids (Dispatch Board's "Export
+   * Selected"). Combines with `organizationId` in `buildWhere` the same
+   * as every other filter — RLS/tenant isolation is never bypassed by
+   * an id list, it only narrows an already-tenant-scoped query.
+   */
+  ids?: string[];
+  /**
+   * Frontend Phase 18 — export-only: mirrors Dispatch Board Table View's
+   * own default client-side rule (`status !== 'CLOSED'`) for the
+   * page-level filtered Export button, which has no other way to
+   * express "not CLOSED" through the single-value `status` filter above.
+   * Ignored whenever `status` is explicitly set — an explicit status
+   * always wins, never combined with this.
+   */
+  excludeClosed?: boolean;
 }
 
 export interface LoadSearchPagination {
@@ -108,12 +125,17 @@ export class LoadSearchService {
 
     return {
       organizationId,
-      ...(filters.status ? { status: filters.status as Load['status'] } : {}),
+      ...(filters.status
+        ? { status: filters.status as Load['status'] }
+        : filters.excludeClosed
+          ? { status: { notIn: ['CLOSED'] as Load['status'][] } }
+          : {}),
       ...(filters.customerId ? { customerId: filters.customerId } : {}),
       ...(filters.carrierId ? { assignedCarrierId: filters.carrierId } : {}),
       ...(filters.dispatcherId ? { assignedDispatcherId: filters.dispatcherId } : {}),
       ...(filters.equipmentType ? { equipmentType: filters.equipmentType as EquipmentType } : {}),
       ...(filters.riskStatus ? { riskStatus: filters.riskStatus as RiskStatus } : {}),
+      ...(filters.ids && filters.ids.length > 0 ? { id: { in: filters.ids } } : {}),
       ...(stopFilters.length ? { AND: stopFilters.map((sf) => ({ stops: { some: sf } })) } : {}),
       ...(q
         ? {

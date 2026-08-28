@@ -3,17 +3,28 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Search } from 'lucide-react';
 import { EQUIPMENT_TYPES } from '@tms/shared-constants';
-import { carriersApi, customersApi, loadsApi, membershipsApi, type LoadSummary } from '../../api';
+import {
+  carriersApi,
+  customersApi,
+  loadsApi,
+  membershipsApi,
+  type EligibilityErrorDetails,
+  type LoadSearchFilters,
+  type LoadSummary,
+} from '../../api';
+import { ApiError } from '../../api/errors';
 import {
   Badge,
   BulkActionBar,
   Button,
+  CurrencyInput,
   DataTable,
   Drawer,
   FilterChip,
   Modal,
   ModalFooter,
   RowActionsMenu,
+  SearchableCombobox,
   Select,
   Toggle,
 } from '../../components/ui';
@@ -69,14 +80,25 @@ function isToday(dateStr: string | null): boolean {
  * Drawer intentionally shows a summary + "Open Full Detail" only (no
  * duplicated context-sensitive action button) — Load Detail is the
  * authoritative place for lifecycle actions, keeping the state-machine
- * logic in one place. Bulk actions scoped to "Assign Dispatcher" only
- * this phase (bulk Assign Carrier and Export are deferred — Export
- * needs backend CSV support, a known gap from Phase 2).
+ * logic in one place.
+ *
+ * Frontend Phase 18 — bulk Assign Carrier and page/selection Export
+ * (§5.4.1's full bulk action bar: "Assign Dispatcher", "Assign Carrier",
+ * "Export Selected", plus a page-level filtered `Export`). Page-level
+ * Export is Table-View-only (matches this phase's approved scope; Kanban
+ * has no selection/bulk-bar UI at all). It's disabled while the "Today"
+ * or "Overdue" quick filter is active — both compose an OR across
+ * pickup/delivery-date ranges plus a status exclusion that
+ * `/loads/search/export`'s filter shape cannot faithfully express today
+ * (AND-only between pickup/delivery ranges, no "status not in" support
+ * beyond the one added `excludeClosed` flag) — rather than silently
+ * exporting a superset of what's on screen.
  */
 export function DispatchBoardPage() {
   const navigate = useNavigate();
   const { can } = usePermissions();
   const queryClient = useQueryClient();
+  const toast = useToast();
 
   // UI_UX_DESIGN.md §5.1.4 sitemap — Table/Kanban/Calendar are one screen
   // at `/loads/board?view=`, not separate URL-level identities.
@@ -108,8 +130,70 @@ export function DispatchBoardPage() {
   const [newLoadModalOpen, setNewLoadModalOpen] = useState(false);
   const [assigningDispatcherFor, setAssigningDispatcherFor] = useState<string | null>(null);
   const [bulkAssigning, setBulkAssigning] = useState(false);
+  const [bulkAssigningCarrier, setBulkAssigningCarrier] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [exportingSelected, setExportingSelected] = useState(false);
 
   const canManage = can('sourceAndDispatchLoads');
+
+  // Frontend Phase 18 — "Today"/"Overdue" compose an OR across
+  // pickup-range and delivery-range plus a status exclusion that the
+  // export endpoint's filter shape can't faithfully express (see the
+  // component doc comment above) — Export is disabled rather than
+  // silently exporting a superset of what's on screen.
+  const exportUnavailableReason =
+    quickFilter === 'today' || quickFilter === 'overdue'
+      ? `Export isn't available while "${quickFilter === 'today' ? 'Today' : 'Overdue'}" is active — clear the quick filter to export.`
+      : null;
+
+  /** Maps Table View's current filters onto /loads/search/export's params, per Decision #3. */
+  function buildPageExportFilters(): LoadSearchFilters {
+    const filters: LoadSearchFilters = {
+      equipmentType: equipmentType || undefined,
+      carrierId: carrierId || undefined,
+      dispatcherId: dispatcherId || undefined,
+      q: search.trim() || undefined,
+    };
+    if (status) {
+      filters.status = status;
+    } else {
+      filters.excludeClosed = true;
+    }
+    if (quickFilter === 'pickups4h' || quickFilter === 'deliveries4h') {
+      const now = new Date();
+      const in4h = new Date(now.getTime() + 4 * 60 * 60 * 1000);
+      if (quickFilter === 'pickups4h') {
+        filters.pickupFrom = now.toISOString();
+        filters.pickupTo = in4h.toISOString();
+      } else {
+        filters.deliveryFrom = now.toISOString();
+        filters.deliveryTo = in4h.toISOString();
+      }
+    }
+    return filters;
+  }
+
+  async function handleExportPage() {
+    setExporting(true);
+    try {
+      await loadsApi.exportSearchCsv(buildPageExportFilters());
+    } catch {
+      toast.danger('Export failed. Please try again.');
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  async function handleExportSelected() {
+    setExportingSelected(true);
+    try {
+      await loadsApi.exportSearchCsv({ ids: Array.from(selected) });
+    } catch {
+      toast.danger('Export failed. Please try again.');
+    } finally {
+      setExportingSelected(false);
+    }
+  }
 
   // Kanban shows every status as its own column (§5.4.2) and Calendar
   // organizes by date, not status (§5.4.3) — the Status dropdown is
@@ -254,11 +338,24 @@ export function DispatchBoardPage() {
           <Button variant="secondary" onClick={() => navigate('/loads/search')}>
             Load Search
           </Button>
+          {view === 'table' ? (
+            <Button
+              variant="secondary"
+              onClick={handleExportPage}
+              disabled={exporting || exportUnavailableReason !== null}
+              title={exportUnavailableReason ?? undefined}
+            >
+              {exporting ? 'Exporting…' : 'Export'}
+            </Button>
+          ) : null}
           {can('createQuoteOrLoad') ? (
             <Button onClick={() => setNewLoadModalOpen(true)}>+ New Load</Button>
           ) : null}
         </div>
       </div>
+      {view === 'table' && exportUnavailableReason ? (
+        <p className="dispatch-board-export-note">{exportUnavailableReason}</p>
+      ) : null}
 
       <div className="list-page-toolbar">
         <div className="list-page-search">
@@ -334,6 +431,19 @@ export function DispatchBoardPage() {
               Assign Dispatcher
             </Button>
           ) : null}
+          {canManage ? (
+            <Button size="sm" variant="secondary" onClick={() => setBulkAssigningCarrier(true)}>
+              Assign Carrier
+            </Button>
+          ) : null}
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={handleExportSelected}
+            disabled={exportingSelected}
+          >
+            {exportingSelected ? 'Exporting…' : 'Export Selected'}
+          </Button>
         </BulkActionBar>
       ) : view === 'table' ? (
         <div className="dispatch-board-chips">
@@ -531,6 +641,18 @@ export function DispatchBoardPage() {
           }}
         />
       ) : null}
+
+      {bulkAssigningCarrier ? (
+        <BulkAssignCarrierFlow
+          loadIds={Array.from(selected)}
+          resolveLoadNumber={(id) => loads.find((l) => l.id === id)?.loadNumber ?? id}
+          onAssigned={afterMutation}
+          onClose={() => {
+            setBulkAssigningCarrier(false);
+            setSelected(new Set());
+          }}
+        />
+      ) : null}
     </div>
   );
 }
@@ -588,6 +710,140 @@ function BulkAssignDispatcherFlow({
         onChange={(e) => setDispatcherUserId(e.target.value)}
         options={memberships.map((m) => ({ value: m.userId, label: m.user.name }))}
       />
+    </Modal>
+  );
+}
+
+interface BulkCarrierAssignResult {
+  loadId: string;
+  status: 'success' | 'error';
+  message?: string;
+}
+
+function extractAssignCarrierError(error: unknown): string {
+  if (error instanceof ApiError && error.code === 'ELIGIBILITY_ERROR') {
+    const reasons = (error.details as EligibilityErrorDetails | undefined)?.reasons ?? [];
+    return reasons.length > 0 ? reasons.join('; ') : error.message;
+  }
+  return error instanceof ApiError ? error.message : 'Something went wrong.';
+}
+
+/**
+ * Applies one Carrier + one Carrier Rate to every selected Load — same
+ * shared-value shape as BulkAssignDispatcherFlow, and same "no bulk
+ * backend endpoint, loop the existing single-load call" approach
+ * (Frontend Phase 18 decision). Unlike the dispatcher flow, this uses
+ * `Promise.allSettled` and shows a per-load result: Carrier assignment
+ * is gated by a real per-load eligibility check (unlike dispatcher
+ * assignment, which essentially never fails), so collapsing a mixed
+ * outcome into one generic toast would hide real, actionable
+ * information — the locked spec's own "each selected Load is still
+ * individually validated... at confirmation" is exactly what this
+ * surfaces, reusing AssignCarrierModal's existing eligibility-reason
+ * extraction per load instead of inventing new business logic.
+ */
+function BulkAssignCarrierFlow({
+  loadIds,
+  resolveLoadNumber,
+  onClose,
+  onAssigned,
+}: {
+  loadIds: string[];
+  resolveLoadNumber: (id: string) => string;
+  onClose: () => void;
+  onAssigned: () => void;
+}) {
+  const { data: carriers = [] } = useQuery({
+    queryKey: ['carriers', {}],
+    queryFn: () => carriersApi.list(),
+  });
+  const [carrierId, setCarrierId] = useState('');
+  const [carrierRate, setCarrierRate] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [results, setResults] = useState<BulkCarrierAssignResult[] | null>(null);
+  const toast = useToast();
+
+  async function apply() {
+    if (!carrierId || !carrierRate) return;
+    setSubmitting(true);
+    try {
+      const settled = await Promise.allSettled(
+        loadIds.map((id) => loadsApi.assignCarrier(id, { carrierId, carrierRate })),
+      );
+      const nextResults: BulkCarrierAssignResult[] = settled.map((outcome, i) => ({
+        loadId: loadIds[i],
+        status: outcome.status === 'fulfilled' ? 'success' : 'error',
+        message:
+          outcome.status === 'rejected' ? extractAssignCarrierError(outcome.reason) : undefined,
+      }));
+      setResults(nextResults);
+      const successCount = nextResults.filter((r) => r.status === 'success').length;
+      if (successCount === loadIds.length) {
+        toast.success(`Carrier assigned to ${successCount} load(s).`);
+      } else if (successCount > 0) {
+        toast.danger(
+          `Carrier assigned to ${successCount} of ${loadIds.length} load(s) — see details.`,
+        );
+      } else {
+        toast.danger('No loads could be assigned — see details.');
+      }
+      onAssigned();
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <Modal
+      open
+      title={results ? `Assign Carrier — Results` : `Assign Carrier to ${loadIds.length} Load(s)`}
+      onClose={onClose}
+      footer={
+        results ? (
+          <Button onClick={onClose}>Close</Button>
+        ) : (
+          <ModalFooter
+            onCancel={onClose}
+            onConfirm={apply}
+            confirmLabel="Assign"
+            loading={submitting}
+          />
+        )
+      }
+    >
+      {results ? (
+        <ul style={{ margin: 0, paddingLeft: 'var(--space-4)' }}>
+          {results.map((r) => (
+            <li key={r.loadId}>
+              {resolveLoadNumber(r.loadId)} —{' '}
+              {r.status === 'success' ? (
+                <span style={{ color: 'var(--success-700)' }}>Assigned</span>
+              ) : (
+                <span style={{ color: 'var(--danger-700)' }}>Failed: {r.message}</span>
+              )}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <>
+          <SearchableCombobox
+            label="Carrier"
+            required
+            value={carrierId || null}
+            onChange={(value) => setCarrierId(value ?? '')}
+            options={carriers.map((c) => ({
+              value: c.id,
+              label: `${c.legalName} (${c.assignmentEligible ? 'Eligible' : 'Ineligible'})`,
+            }))}
+          />
+          <CurrencyInput
+            label="Carrier Rate"
+            required
+            value={carrierRate}
+            onChange={(e) => setCarrierRate(e.target.value)}
+          />
+        </>
+      )}
     </Modal>
   );
 }

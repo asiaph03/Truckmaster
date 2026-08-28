@@ -3,6 +3,12 @@
   gap: var(--space-2);
 }
 
+.dispatch-board-export-note {
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-small-size);
+  color: var(--neutral-500);
+}
+
 .dispatch-board-chips {
   display: flex;
   gap: var(--space-2);

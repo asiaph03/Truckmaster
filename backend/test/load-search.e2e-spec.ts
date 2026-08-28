@@ -740,6 +740,63 @@ describe('Load Search (e2e)', () => {
         expect(line.endsWith(',,')).toBe(true);
       }
     });
+
+    // Frontend Phase 18 — Dispatch Board "Export Selected" / page-level "Export".
+    // The CSV's "Load #" column is the human loadNumber, never the raw
+    // database id, so every assertion below resolves the real loadNumber
+    // first via GET /loads/:id rather than searching for a UUID that the
+    // CSV would never actually contain.
+    it('ids= scopes the export to exactly the given Loads ("Export Selected")', async () => {
+      const alpha = await adminAgent.get(`${API}/loads/${loadAlphaId}`).expect(200);
+      const beta = await adminAgent.get(`${API}/loads/${loadBetaId}`).expect(200);
+      const withCarrier = await adminAgent.get(`${API}/loads/${loadWithCarrierId}`).expect(200);
+
+      const res = await adminAgent
+        .get(`${API}/loads/search/export?ids=${loadAlphaId}&ids=${loadBetaId}`)
+        .expect(200);
+      const lines = (res.text as string).trim().split('\r\n');
+
+      expect(lines.length - 1).toBe(2);
+      expect(res.text).toContain(alpha.body.loadNumber);
+      expect(res.text).toContain(beta.body.loadNumber);
+      expect(res.text).not.toContain(withCarrier.body.loadNumber);
+    });
+
+    it('excludeClosed=true drops Closed loads from the export when no explicit status is given', async () => {
+      const closed = await adminAgent.get(`${API}/loads/${loadClosedId}`).expect(200);
+
+      const withClosed = await adminAgent.get(`${API}/loads/search/export`).expect(200);
+      expect(withClosed.text).toContain(closed.body.loadNumber);
+
+      const withoutClosed = await adminAgent
+        .get(`${API}/loads/search/export`)
+        .query({ excludeClosed: 'true' })
+        .expect(200);
+      expect(withoutClosed.text).not.toContain(closed.body.loadNumber);
+    });
+
+    it('an explicit status wins over excludeClosed — CLOSED still returned when status=CLOSED is passed alongside excludeClosed=true', async () => {
+      const closed = await adminAgent.get(`${API}/loads/${loadClosedId}`).expect(200);
+
+      const res = await adminAgent
+        .get(`${API}/loads/search/export`)
+        .query({ status: 'CLOSED', excludeClosed: 'true' })
+        .expect(200);
+      expect(res.text).toContain(closed.body.loadNumber);
+    });
+
+    it("ids= never returns another organization's Loads, even when explicitly requested by id", async () => {
+      const orgB = await setUpOrganization('ids-cross-tenant');
+      const alpha = await adminAgent.get(`${API}/loads/${loadAlphaId}`).expect(200);
+
+      const res = await orgB.adminAgent
+        .get(`${API}/loads/search/export?ids=${loadAlphaId}`)
+        .expect(200);
+      const lines = (res.text as string).trim().split('\r\n');
+
+      expect(lines.length - 1).toBe(0);
+      expect(res.text).not.toContain(alpha.body.loadNumber);
+    });
   });
 
   describe('GET /loads is unaffected by this phase', () => {

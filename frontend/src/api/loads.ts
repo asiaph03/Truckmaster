@@ -213,6 +213,10 @@ export interface LoadSearchFilters {
   sortDirection?: LoadSearchSortDirection;
   page?: number;
   pageSize?: number;
+  /** Frontend Phase 18 — export-only, Dispatch Board's "Export Selected." */
+  ids?: string[];
+  /** Frontend Phase 18 — export-only, Dispatch Board's default "excl. Closed" state. */
+  excludeClosed?: boolean;
 }
 
 /** Row shape is identical to `GET /loads`'s `LoadSummary` — same bare-Load-plus-stops shape, same redaction. */
@@ -362,10 +366,24 @@ export interface EligibilityErrorDetails {
   reasons: string[];
 }
 
+/**
+ * Frontend Phase 18 — `ids` needs array-aware serialization (repeated
+ * `ids=a&ids=b` keys, verified directly against the backend's `qs` query
+ * parser — a comma-joined single value would NOT be parsed as an array).
+ * `excludeClosed` is an optional flag: only ever sent when `true`, never
+ * as a literal `excludeClosed=false`.
+ */
 function buildSearchQueryString(filters: LoadSearchFilters): string {
   const params = new URLSearchParams();
   for (const [key, value] of Object.entries(filters)) {
-    if (value !== undefined && value !== '') params.set(key, String(value));
+    if (value === undefined || value === '') continue;
+    if (Array.isArray(value)) {
+      for (const item of value) params.append(key, String(item));
+    } else if (typeof value === 'boolean') {
+      if (value) params.set(key, 'true');
+    } else {
+      params.set(key, String(value));
+    }
   }
   return params.toString();
 }

@@ -323,3 +323,68 @@ describe('LoadSearchService.exportCsv', () => {
     expect(lines[1].endsWith(',,')).toBe(true);
   });
 });
+
+describe('LoadSearchService.exportCsv — Dispatch Board Phase 18 additions', () => {
+  it('scopes the export to exactly the given ids ("Export Selected")', async () => {
+    const loadFindMany = jest.fn().mockResolvedValue([]);
+    const { service, tx } = buildService({ loadFindMany });
+
+    await service.exportCsv(ORG_ID, USER_ID, ['ADMIN'], { ids: ['load-a', 'load-b'] });
+
+    expect(tx.load.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          organizationId: ORG_ID,
+          id: { in: ['load-a', 'load-b'] },
+        }),
+      }),
+    );
+  });
+
+  it('does not add an id filter when ids is an empty array', async () => {
+    const loadFindMany = jest.fn().mockResolvedValue([]);
+    const { service, tx } = buildService({ loadFindMany });
+
+    await service.exportCsv(ORG_ID, USER_ID, ['ADMIN'], { ids: [] });
+
+    const where = (tx.load.findMany as jest.Mock).mock.calls[0][0].where;
+    expect(where).not.toHaveProperty('id');
+  });
+
+  it('excludes CLOSED loads when excludeClosed is true and no explicit status is given', async () => {
+    const loadFindMany = jest.fn().mockResolvedValue([]);
+    const { service, tx } = buildService({ loadFindMany });
+
+    await service.exportCsv(ORG_ID, USER_ID, ['ADMIN'], { excludeClosed: true });
+
+    expect(tx.load.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ status: { notIn: ['CLOSED'] } }),
+      }),
+    );
+  });
+
+  it('lets an explicit status win over excludeClosed — never combines the two', async () => {
+    const loadFindMany = jest.fn().mockResolvedValue([]);
+    const { service, tx } = buildService({ loadFindMany });
+
+    await service.exportCsv(ORG_ID, USER_ID, ['ADMIN'], {
+      status: 'DISPATCHED',
+      excludeClosed: true,
+    });
+
+    const where = (tx.load.findMany as jest.Mock).mock.calls[0][0].where;
+    expect(where.status).toBe('DISPATCHED');
+  });
+
+  it('adds neither an id nor a status-exclusion filter when ids/excludeClosed are both absent', async () => {
+    const loadFindMany = jest.fn().mockResolvedValue([]);
+    const { service, tx } = buildService({ loadFindMany });
+
+    await service.exportCsv(ORG_ID, USER_ID, ['ADMIN'], {});
+
+    const where = (tx.load.findMany as jest.Mock).mock.calls[0][0].where;
+    expect(where).not.toHaveProperty('id');
+    expect(where).not.toHaveProperty('status');
+  });
+});
