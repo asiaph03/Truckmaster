@@ -1,0 +1,24 @@
+.report-detail-date-filter {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-small-size);
+  color: var(--neutral-500);
+}
+
+.report-detail-date-filter input {
+  border: 1px solid var(--neutral-300);
+  border-radius: var(--radius-sm);
+  height: 36px;
+  padding: 0 var(--space-2);
+  font-size: var(--text-body-size);
+  color: var(--neutral-900);
+}
+
+.report-detail-compare-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-body-size);
+  color: var(--neutral-700);
+}

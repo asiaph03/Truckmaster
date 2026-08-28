@@ -1,4 +1,4 @@
-import { Controller, Get, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, Header, Query, UseGuards } from '@nestjs/common';
 import { MembershipRoleName } from '@prisma/client';
 import { ReportingService } from '../services/reporting.service';
 import { RolesGuard } from '../../identity/guards/roles.guard';
@@ -35,11 +35,32 @@ export class ReportingController {
     return this.reportingService.arAging(organizationId);
   }
 
+  // Phase 21 (Reports Library) — identical data/authorization as
+  // `arAging` above, as CSV, so AR Aging participates in the library's
+  // export behavior without a second implementation.
+  @Get('reports/ar-aging/export')
+  @Roles(...FINANCIAL_VIEW_ROLES)
+  @Header('Content-Type', 'text/csv')
+  @Header('Content-Disposition', 'attachment; filename="ar-aging.csv"')
+  arAgingExport() {
+    const organizationId = RequestContextStore.requireOrganizationId();
+    return this.reportingService.arAgingCsv(organizationId);
+  }
+
   @Get('reports/ap-aging')
   @Roles(...FINANCIAL_VIEW_ROLES)
   apAging() {
     const organizationId = RequestContextStore.requireOrganizationId();
     return this.reportingService.apAging(organizationId);
+  }
+
+  @Get('reports/ap-aging/export')
+  @Roles(...FINANCIAL_VIEW_ROLES)
+  @Header('Content-Type', 'text/csv')
+  @Header('Content-Disposition', 'attachment; filename="ap-aging.csv"')
+  apAgingExport() {
+    const organizationId = RequestContextStore.requireOrganizationId();
+    return this.reportingService.apAgingCsv(organizationId);
   }
 
   @Get('dashboard')

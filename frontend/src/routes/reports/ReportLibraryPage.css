@@ -1,0 +1,34 @@
+.report-library-category {
+  margin-bottom: var(--space-6);
+}
+
+.report-library-category-title {
+  font-size: var(--text-h3-size, 18px);
+  margin: 0 0 var(--space-3) 0;
+}
+
+.report-library-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: var(--space-3);
+}
+
+.report-library-card {
+  display: block;
+  border: 1px solid var(--neutral-200);
+  border-radius: var(--radius-md, 8px);
+  padding: var(--space-4);
+  background: var(--neutral-0, #fff);
+  text-decoration: none;
+  color: inherit;
+  transition: border-color 0.15s ease;
+}
+
+.report-library-card:hover {
+  border-color: var(--brand-600);
+}
+
+.report-library-card-title {
+  font-weight: 600;
+  color: var(--neutral-900);
+}

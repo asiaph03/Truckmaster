@@ -15,6 +15,7 @@ export function ApAgingPage() {
       basisNote="Outstanding carrier balances, aged by the oldest unresolved payment submission date (Decision Log D14)."
       data={data}
       isLoading={isLoading}
+      onExport={reportingApi.apAgingExportCsv}
     />
   );
 }

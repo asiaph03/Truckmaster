@@ -1,4 +1,5 @@
 import { apiRequest } from './client';
+import { ApiError } from './errors';
 
 export interface SearchResultLoad {
   id: string;
@@ -94,7 +95,35 @@ export const reportingApi = {
 
   /** PRD §9 role-aware Dashboard — open to any authenticated session; role-filtering happens entirely server-side. */
   dashboard: () => apiRequest<DashboardResponse>('/dashboard'),
-  // NOTE: the broader Operations/Financial/Carrier-Performance/Sales
-  // report library, CSV/Excel export, and saved views have no backend
-  // endpoints — deferred to a later phase per the approved gap analysis.
+
+  /** Phase 21 (Reports Library) — identical bucket data as `arAging`, as a CSV download. */
+  arAgingExportCsv: () => downloadCsv('/reports/ar-aging/export', 'ar-aging.csv'),
+
+  /** Phase 21 (Reports Library) — identical bucket data as `apAging`, as a CSV download. */
+  apAgingExportCsv: () => downloadCsv('/reports/ap-aging/export', 'ap-aging.csv'),
 };
+
+/**
+ * Not routed through `apiRequest` — these endpoints return a raw CSV file,
+ * not JSON. Mirrors `loadsApi.exportSearchCsv`/`documentsApi.exportSearchCsv`'s
+ * exact approach: a normal browser file download via a throwaway object URL.
+ */
+async function downloadCsv(path: string, filename: string): Promise<void> {
+  const response = await fetch(`/api/v1${path}`, { credentials: 'include' });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => undefined);
+    throw new ApiError(
+      response.status,
+      payload?.error ?? { code: 'INTERNAL_ERROR', message: 'Export failed' },
+    );
+  }
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}

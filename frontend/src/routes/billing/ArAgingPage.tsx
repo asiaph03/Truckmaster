@@ -15,6 +15,7 @@ export function ArAgingPage() {
       basisNote="Outstanding customer invoices (Sent / Partially Paid), aged by due date."
       data={data}
       isLoading={isLoading}
+      onExport={reportingApi.arAgingExportCsv}
     />
   );
 }

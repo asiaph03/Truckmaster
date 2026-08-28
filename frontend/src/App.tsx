@@ -3,7 +3,6 @@ import { Navigate, Route, Routes } from 'react-router-dom';
 import { useSessionStore } from './auth/session-store';
 import { LoginPage } from './routes/LoginPage';
 import { SelectOrganizationPage } from './routes/SelectOrganizationPage';
-import { ComingSoonPage } from './routes/ComingSoonPage';
 import { DashboardPage } from './routes/DashboardPage';
 import { CustomerListPage } from './routes/customers/CustomerListPage';
 import { CustomerCreatePage } from './routes/customers/CustomerCreatePage';
@@ -13,6 +12,8 @@ import { CarrierCreatePage } from './routes/carriers/CarrierCreatePage';
 import { CarrierDetailPage } from './routes/carriers/CarrierDetailPage';
 import { ComplianceQueuePage } from './routes/carriers/ComplianceQueuePage';
 import { DocumentCenterPage } from './routes/documents/DocumentCenterPage';
+import { ReportLibraryPage } from './routes/reports/ReportLibraryPage';
+import { ReportDetailPage } from './routes/reports/ReportDetailPage';
 import { DispatchBoardPage } from './routes/loads/DispatchBoardPage';
 import { LoadSearchPage } from './routes/loads/LoadSearchPage';
 import { LoadCreatePage } from './routes/loads/LoadCreatePage';
@@ -60,8 +61,14 @@ import { ToastViewport } from './components/ui';
  * added the Document Center (`/documents`) — a dedicated cross-entity
  * search/export screen backed by `GET /documents/search` and
  * `GET /documents/search/export`, structured on Load Search's own
- * precedent. The broader Reports library remains ComingSoonPage —
- * it has no locked screen-level design yet.
+ * precedent. Phase 21 added the Reports Library (`/reports`,
+ * `/reports/:reportId`) — a role-aware report catalog (`GET
+ * /reports/catalog`) plus one generic report-run screen driven by
+ * `reportDefinitions.tsx`, covering Payment History, Revenue & Margin,
+ * Load Volume, Status Mix, On-Time Performance, Dispatcher Workload,
+ * Carrier Performance, and Sales Performance — AR/AP Aging stay at their
+ * existing `/billing/...` routes, linked from the library rather than
+ * duplicated.
  */
 function App() {
   const status = useSessionStore((s) => s.status);
@@ -118,7 +125,8 @@ function App() {
         <Route path="/billing/ar-aging" element={<ArAgingPage />} />
         <Route path="/billing/ap-aging" element={<ApAgingPage />} />
         <Route path="/documents" element={<DocumentCenterPage />} />
-        <Route path="/reports" element={<ComingSoonPage title="Reports" />} />
+        <Route path="/reports" element={<ReportLibraryPage />} />
+        <Route path="/reports/:reportId" element={<ReportDetailPage />} />
         <Route path="/settings" element={<UsersRolesPage />} />
         <Route path="/settings/organization" element={<OrganizationSettingsPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />

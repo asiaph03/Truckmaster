@@ -196,6 +196,19 @@ describe('ReportingService.arAging — DATABASE_DESIGN.md §21 / Decision 5', ()
 
     expect(result.buckets.current.count).toBe(1);
   });
+
+  it('Phase 21 — arAgingCsv renders the identical buckets as arAging, plus a Grand Total row', async () => {
+    const { service } = buildService({
+      invoicesForAging: [{ id: 'inv-1', remainingBalance: '100.00', dueDate: new Date() }],
+    });
+
+    const csv = await service.arAgingCsv(ORG_ID);
+    const lines = csv.split('\r\n');
+
+    expect(lines[0]).toBe('Bucket,Items,Total');
+    expect(lines).toContain('Current,1,100.00');
+    expect(lines[lines.length - 1]).toBe('Grand Total,,100.00');
+  });
 });
 
 describe('ReportingService.apAging — Decision D14 / disclosed multi-payment interpretation', () => {
@@ -280,6 +293,25 @@ describe('ReportingService.apAging — Decision D14 / disclosed multi-payment in
     const result = await service.apAging(ORG_ID);
 
     expect(result.grandTotal).toBe('0.00');
+  });
+
+  it('Phase 21 — apAgingCsv renders the identical buckets as apAging, plus a Grand Total row', async () => {
+    const { service } = buildService({
+      loadsForAging: [
+        {
+          id: 'load-1',
+          carrierRate: '1500.00',
+          carrierPayments: [{ status: 'PENDING_APPROVAL', amount: '500.00', submittedAt: new Date() }],
+        },
+      ],
+    });
+
+    const csv = await service.apAgingCsv(ORG_ID);
+    const lines = csv.split('\r\n');
+
+    expect(lines[0]).toBe('Bucket,Items,Total');
+    expect(lines).toContain('Current,1,1500.00');
+    expect(lines[lines.length - 1]).toBe('Grand Total,,1500.00');
   });
 });
 

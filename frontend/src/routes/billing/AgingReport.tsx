@@ -1,5 +1,7 @@
+import { useState } from 'react';
 import type { AgingBuckets, AgingReport as AgingReportData } from '../../api';
-import { DataTable } from '../../components/ui';
+import { Button, DataTable } from '../../components/ui';
+import { useToast } from '../../components/ui/toastStore';
 import '../shared/ListPage.css';
 import './AgingReport.css';
 
@@ -32,19 +34,41 @@ function formatMoney(value: string): string {
  * glance cards, not a deeper level of data than the backend provides.
  * Shared by ArAgingPage and ApAgingPage — identical shape, different
  * data source and bucket-basis caption per Decision Log D14.
+ *
+ * Phase 21 (Reports Library) — `onExport` is optional so this component's
+ * existing contract is unchanged for any other caller; both current
+ * callers (ArAgingPage/ApAgingPage) pass it, per the approved decision
+ * that AR/AP Aging participate in the library's CSV export behavior
+ * without a second report implementation.
  */
 export function AgingReport({
   title,
   basisNote,
   data,
   isLoading,
+  onExport,
 }: {
   title: string;
   basisNote: string;
   data: AgingReportData | undefined;
   isLoading: boolean;
+  onExport?: () => Promise<void>;
 }) {
+  const toast = useToast();
+  const [exporting, setExporting] = useState(false);
   const rows = data ? BUCKET_ORDER.map((key) => ({ key, ...data.buckets[key] })) : [];
+
+  async function handleExport() {
+    if (!onExport) return;
+    setExporting(true);
+    try {
+      await onExport();
+    } catch {
+      toast.danger('Export failed. Please try again.');
+    } finally {
+      setExporting(false);
+    }
+  }
 
   return (
     <div>
@@ -55,6 +79,11 @@ export function AgingReport({
             {basisNote}
           </p>
         </div>
+        {onExport ? (
+          <Button variant="secondary" onClick={handleExport} disabled={exporting}>
+            {exporting ? 'Exporting…' : 'Export CSV'}
+          </Button>
+        ) : null}
       </div>
 
       <div className="aging-bucket-cards">

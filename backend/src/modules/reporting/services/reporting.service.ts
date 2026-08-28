@@ -3,6 +3,7 @@ import { MembershipRoleName, Prisma } from '@prisma/client';
 import { PrismaService } from '../../../common/prisma/prisma.service';
 import { shapeFinancialFieldsList } from '../../quote-load/services/financial-field-shaping';
 import { FINANCIAL_VIEW_ROLES } from '../../../common/authorization/financial-view-roles';
+import { toCsv } from '../../quote-load/utils/csv';
 
 const SEARCH_RESULT_LIMIT = 5;
 
@@ -149,6 +150,16 @@ export class ReportingService {
     );
   }
 
+  /**
+   * Phase 21 (Reports Library) — identical data as `arAging` above, as
+   * CSV, so AR Aging participates in the library's export behavior
+   * without a second implementation of the bucket computation.
+   */
+  async arAgingCsv(organizationId: string): Promise<string> {
+    const { buckets, grandTotal } = await this.arAging(organizationId);
+    return this.agingBucketsToCsv(buckets, grandTotal);
+  }
+
   private async computeArAging(tx: Prisma.TransactionClient, organizationId: string) {
     const today = new Date();
     const outstanding = await tx.invoice.findMany({
@@ -188,6 +199,30 @@ export class ReportingService {
     return this.prisma.withTenantTransaction(organizationId, (tx) =>
       this.computeApAging(tx, organizationId),
     );
+  }
+
+  /** Phase 21 (Reports Library) — identical data as `apAging` above, as CSV. */
+  async apAgingCsv(organizationId: string): Promise<string> {
+    const { buckets, grandTotal } = await this.apAging(organizationId);
+    return this.agingBucketsToCsv(buckets, grandTotal);
+  }
+
+  private agingBucketsToCsv(buckets: AgingBuckets, grandTotal: string): string {
+    const labels: Record<AgingBucketKey, string> = {
+      current: 'Current',
+      days1to30: '1-30 Days',
+      days31to60: '31-60 Days',
+      days61to90: '61-90 Days',
+      days90plus: '90+ Days',
+    };
+    const header = ['Bucket', 'Items', 'Total'];
+    const rows = AGING_BUCKET_KEYS.map((key) => [
+      labels[key],
+      String(buckets[key].count),
+      buckets[key].total,
+    ]);
+    rows.push(['Grand Total', '', grandTotal]);
+    return toCsv([header, ...rows]);
   }
 
   private async computeApAging(tx: Prisma.TransactionClient, organizationId: string) {
