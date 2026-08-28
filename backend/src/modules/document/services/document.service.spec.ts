@@ -3,6 +3,7 @@ import { RequestContextStore } from '../../../common/tenant-context/request-cont
 import {
   BusinessRuleError,
   NotFoundError,
+  PermissionError,
   SelfReviewForbiddenError,
 } from '../../../common/errors/app-error';
 
@@ -355,7 +356,14 @@ describe('DocumentService.getDownloadUrl — §8.4 gates on scan_status', () => 
   const DOC_ID = 'doc-1';
 
   function buildService(scanStatus: string) {
-    const document = { id: DOC_ID, organizationId: ORG_ID, scanStatus, fileStorageKey: 'key' };
+    const document = {
+      id: DOC_ID,
+      organizationId: ORG_ID,
+      scanStatus,
+      fileStorageKey: 'key',
+      entityType: 'CARRIER',
+      entityId: 'carrier-1',
+    };
     const tx = { document: { findFirst: jest.fn().mockResolvedValue(document) } };
     const prisma = {
       withTenantTransaction: jest
@@ -380,18 +388,190 @@ describe('DocumentService.getDownloadUrl — §8.4 gates on scan_status', () => 
 
   it('issues a signed URL when scan_status is CLEAN', async () => {
     const service = buildService('CLEAN');
-    const result = await service.getDownloadUrl(ORG_ID, DOC_ID);
+    const result = await service.getDownloadUrl(ORG_ID, DOC_ID, 'user-1', ['DISPATCHER']);
     expect(result.url).toBe('https://signed-url.example');
   });
 
   it('refuses to issue a signed URL while scan_status is PENDING', async () => {
     const service = buildService('PENDING');
-    await expect(service.getDownloadUrl(ORG_ID, DOC_ID)).rejects.toThrow(BusinessRuleError);
+    await expect(service.getDownloadUrl(ORG_ID, DOC_ID, 'user-1', ['DISPATCHER'])).rejects.toThrow(
+      BusinessRuleError,
+    );
   });
 
   it('refuses to issue a signed URL for an INFECTED file', async () => {
     const service = buildService('INFECTED');
-    await expect(service.getDownloadUrl(ORG_ID, DOC_ID)).rejects.toThrow(BusinessRuleError);
+    await expect(service.getDownloadUrl(ORG_ID, DOC_ID, 'user-1', ['DISPATCHER'])).rejects.toThrow(
+      BusinessRuleError,
+    );
+  });
+});
+
+describe('DocumentService — entity-type-aware view authorization (Invoice/Carrier Payment security fix)', () => {
+  const ORG_ID = 'org-1';
+  const DOC_ID = 'doc-1';
+  const ACTING_USER_ID = 'user-1';
+
+  const OWNED_VIA_ACCOUNT_OWNER = {
+    accountOwnerUserId: ACTING_USER_ID,
+    createdByUserId: 'someone-else',
+  };
+  const OWNED_VIA_CREATED_BY_FALLBACK = {
+    accountOwnerUserId: null,
+    createdByUserId: ACTING_USER_ID,
+  };
+  const NON_OWNED = {
+    accountOwnerUserId: 'someone-else',
+    createdByUserId: 'someone-else-again',
+  };
+
+  function buildService(opts: {
+    entityType: string;
+    entityId: string;
+    invoiceCustomer?: Record<string, unknown> | null;
+  }) {
+    const document = {
+      id: DOC_ID,
+      organizationId: ORG_ID,
+      entityType: opts.entityType,
+      entityId: opts.entityId,
+      scanStatus: 'CLEAN',
+      fileStorageKey: 'key',
+    };
+    const tx = {
+      document: {
+        findFirst: jest.fn().mockResolvedValue(document),
+        findMany: jest.fn().mockResolvedValue([document]),
+      },
+      invoice: {
+        findFirst: jest
+          .fn()
+          .mockResolvedValue(
+            opts.invoiceCustomer === undefined
+              ? null
+              : { id: opts.entityId, customer: opts.invoiceCustomer },
+          ),
+      },
+    };
+    const prisma = {
+      withTenantTransaction: jest
+        .fn()
+        .mockImplementation((_orgId: string, fn: (tx: unknown) => unknown) => fn(tx)),
+    };
+    const storage = { getDownloadUrl: jest.fn().mockResolvedValue('https://signed-url.example') };
+    const service = new DocumentService(
+      prisma as never,
+      {} as never,
+      storage as never,
+      {} as never,
+      {} as never,
+      {} as never,
+    );
+    return { service, tx };
+  }
+
+  describe('Invoice documents — mirrors InvoiceService.isOwnDeal exactly', () => {
+    it.each(['ADMIN', 'ACCOUNTING', 'OPERATIONS_MANAGER'])(
+      '%s can download an Invoice document',
+      async (role) => {
+        const { service } = buildService({ entityType: 'INVOICE', entityId: 'invoice-1' });
+        const result = await service.getDownloadUrl(ORG_ID, DOC_ID, ACTING_USER_ID, [
+          role as never,
+        ]);
+        expect(result.url).toBe('https://signed-url.example');
+      },
+    );
+
+    it('Sales/Booking can download their own Invoice document (accountOwnerUserId)', async () => {
+      const { service } = buildService({
+        entityType: 'INVOICE',
+        entityId: 'invoice-1',
+        invoiceCustomer: OWNED_VIA_ACCOUNT_OWNER,
+      });
+      const result = await service.getDownloadUrl(ORG_ID, DOC_ID, ACTING_USER_ID, [
+        'SALES_BOOKING',
+      ]);
+      expect(result.url).toBe('https://signed-url.example');
+    });
+
+    it('Sales/Booking can download their own Invoice document via the createdByUserId fallback', async () => {
+      const { service } = buildService({
+        entityType: 'INVOICE',
+        entityId: 'invoice-1',
+        invoiceCustomer: OWNED_VIA_CREATED_BY_FALLBACK,
+      });
+      const result = await service.getDownloadUrl(ORG_ID, DOC_ID, ACTING_USER_ID, [
+        'SALES_BOOKING',
+      ]);
+      expect(result.url).toBe('https://signed-url.example');
+    });
+
+    it('Sales/Booking is denied a non-owned Invoice document', async () => {
+      const { service } = buildService({
+        entityType: 'INVOICE',
+        entityId: 'invoice-1',
+        invoiceCustomer: NON_OWNED,
+      });
+      await expect(
+        service.getDownloadUrl(ORG_ID, DOC_ID, ACTING_USER_ID, ['SALES_BOOKING']),
+      ).rejects.toThrow(PermissionError);
+    });
+
+    it.each(['DISPATCHER', 'COMPLIANCE_REVIEWER'])(
+      '%s is denied an Invoice document entirely',
+      async (role) => {
+        const { service } = buildService({ entityType: 'INVOICE', entityId: 'invoice-1' });
+        await expect(
+          service.getDownloadUrl(ORG_ID, DOC_ID, ACTING_USER_ID, [role as never]),
+        ).rejects.toThrow(PermissionError);
+      },
+    );
+
+    it('list() applies the identical authorization as getDownloadUrl, before ever querying documents', async () => {
+      const { service, tx } = buildService({
+        entityType: 'INVOICE',
+        entityId: 'invoice-1',
+        invoiceCustomer: NON_OWNED,
+      });
+      await expect(
+        service.list(ORG_ID, 'INVOICE' as never, 'invoice-1', ACTING_USER_ID, ['SALES_BOOKING']),
+      ).rejects.toThrow(PermissionError);
+      expect(tx.document.findMany).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('Carrier Payment documents — FINANCIAL_VIEW_ROLES only, no ownership carve-out', () => {
+    it.each(['ADMIN', 'ACCOUNTING', 'OPERATIONS_MANAGER'])(
+      '%s can download a Carrier Payment document',
+      async (role) => {
+        const { service } = buildService({ entityType: 'CARRIER_PAYMENT', entityId: 'payment-1' });
+        const result = await service.getDownloadUrl(ORG_ID, DOC_ID, ACTING_USER_ID, [
+          role as never,
+        ]);
+        expect(result.url).toBe('https://signed-url.example');
+      },
+    );
+
+    it.each(['SALES_BOOKING', 'DISPATCHER', 'COMPLIANCE_REVIEWER'])(
+      '%s is denied a Carrier Payment document',
+      async (role) => {
+        const { service } = buildService({ entityType: 'CARRIER_PAYMENT', entityId: 'payment-1' });
+        await expect(
+          service.getDownloadUrl(ORG_ID, DOC_ID, ACTING_USER_ID, [role as never]),
+        ).rejects.toThrow(PermissionError);
+      },
+    );
+  });
+
+  describe('The other 7 entity types retain their unrestricted pre-fix behavior', () => {
+    it.each(['CARRIER', 'CUSTOMER', 'DRIVER', 'TRUCK', 'TRAILER', 'LOAD', 'STOP'])(
+      '%s is downloadable by any authenticated role (e.g. Dispatcher)',
+      async (entityType) => {
+        const { service } = buildService({ entityType, entityId: 'entity-1' });
+        const result = await service.getDownloadUrl(ORG_ID, DOC_ID, ACTING_USER_ID, ['DISPATCHER']);
+        expect(result.url).toBe('https://signed-url.example');
+      },
+    );
   });
 });
 

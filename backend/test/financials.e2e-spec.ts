@@ -872,6 +872,212 @@ describe('Financials (e2e)', () => {
     });
   });
 
+  /**
+   * Security fix — `DocumentService.getDownloadUrl`/`list()` previously had
+   * no entity-type-aware authorization at all (only tenant + scan-status),
+   * despite its own doc-comment describing "permission to view the parent
+   * entity" as an intended, never-implemented check. This proves the fix
+   * end-to-end through the real HTTP routes: the exact previously-
+   * exploitable chain (Sales/Booking uses the invoice ids `GET /invoices`
+   * already legitimately hands them to reach a non-owned invoice's
+   * document) now fails at both `GET /documents` and
+   * `GET /documents/:id/download-url`, while every role the upstream
+   * `GET /invoices/:id`/`GET /carrier-payments/:id` endpoints already
+   * allow keeps working identically.
+   */
+  describe('Document download/list authorization — Invoice & Carrier Payment (security fix)', () => {
+    async function createSentInvoiceFor(
+      seed: string,
+      customerId?: string,
+    ): Promise<{ invoiceId: string }> {
+      const { loadId, customerId: usedCustomerId } = await createBookedLoad(seed, customerId);
+      const carrierId = await createEligibleCarrier(seed);
+      await progressToDelivered(loadId, carrierId);
+      const invoiceRes = await accountingAgent
+        .post(`${API}/invoices`)
+        .send({ customerId: usedCustomerId, loadIds: [loadId], podWarningAcknowledged: true })
+        .expect(201);
+      const invoiceId: string = invoiceRes.body.id;
+      await accountingAgent
+        .post(`${API}/invoices/${invoiceId}/send`)
+        .send({ recipientEmail: 'ap@customer.test', subject: 'Invoice', message: 'See attached.' })
+        .expect(200);
+      return { invoiceId };
+    }
+
+    async function createPaidCarrierPaymentFor(seed: string): Promise<{ paymentId: string }> {
+      const { loadId } = await createBookedLoad(seed);
+      const carrierId = await createEligibleCarrier(seed);
+      await progressToDelivered(loadId, carrierId);
+      const draft = await accountingAgent
+        .post(`${API}/loads/${loadId}/carrier-payments`)
+        .send({
+          paymentType: 'BALANCE',
+          amount: '1500.00',
+          method: 'ACH',
+          referenceNumber: `REF-${seed}`,
+        })
+        .expect(201);
+      await accountingAgent.post(`${API}/carrier-payments/${draft.body.id}/submit`).expect(200);
+      await adminAgent.post(`${API}/carrier-payments/${draft.body.id}/approve`).expect(200);
+      await accountingAgent
+        .post(`${API}/carrier-payments/${draft.body.id}/mark-paid`)
+        .send({})
+        .expect(200);
+      return { paymentId: draft.body.id };
+    }
+
+    /** Fetches the document id via an authorized agent only — test furniture, not part of what's being proven. */
+    async function documentIdFor(
+      entityType: 'INVOICE' | 'CARRIER_PAYMENT',
+      entityId: string,
+    ): Promise<string> {
+      const res = await adminAgent
+        .get(`${API}/documents`)
+        .query({ entityType, entityId })
+        .expect(200);
+      return res.body[0].id;
+    }
+
+    it("proves the previously-exploitable path is now blocked: Sales/Booking's own legitimate GET /invoices id no longer unlocks the PDF", async () => {
+      const { invoiceId: nonOwnedInvoiceId } = await createSentInvoiceFor('dl-exploit-path');
+
+      // Step 1 — Sales/Booking's own already-permitted GET /invoices call
+      // legitimately hands them this invoice's id (financial fields
+      // nulled, but the id itself is present — InvoiceService.list's own
+      // existing, correct, lenient-list behavior).
+      const listRes = await salesAgent.get(`${API}/invoices`).expect(200);
+      const nonOwnedRow = listRes.body.find((i: { id: string }) => i.id === nonOwnedInvoiceId);
+      expect(nonOwnedRow).toBeDefined();
+      expect(nonOwnedRow.total).toBeNull();
+
+      // Step 2 — the exploit's next hop, GET /documents?entityType=INVOICE,
+      // must now be blocked rather than handing back the document id.
+      await salesAgent
+        .get(`${API}/documents`)
+        .query({ entityType: 'INVOICE', entityId: nonOwnedInvoiceId })
+        .expect(403);
+
+      // Step 3 — even with the document id obtained through another
+      // channel (defense in depth — this is the exact route the exploit
+      // ultimately needs), the download itself must also be blocked.
+      const documentId = await documentIdFor('INVOICE', nonOwnedInvoiceId);
+      await salesAgent.get(`${API}/documents/${documentId}/download-url`).expect(403);
+    });
+
+    it('Admin and Accounting can still download an Invoice document', async () => {
+      const { invoiceId } = await createSentInvoiceFor('dl-invoice-authorized');
+      const documentId = await documentIdFor('INVOICE', invoiceId);
+
+      for (const agent of [adminAgent, accountingAgent]) {
+        const res = await agent.get(`${API}/documents/${documentId}/download-url`).expect(200);
+        expect(res.body.url).toBeTruthy();
+      }
+    });
+
+    it('Operations Manager can still download an Invoice document', async () => {
+      const { invoiceId } = await createSentInvoiceFor('dl-invoice-opsmgr');
+      const documentId = await documentIdFor('INVOICE', invoiceId);
+
+      const res = await opsManagerAgent
+        .get(`${API}/documents/${documentId}/download-url`)
+        .expect(200);
+      expect(res.body.url).toBeTruthy();
+    });
+
+    it('Sales/Booking can download their own-deal Invoice document (accountOwnerUserId)', async () => {
+      const salesUserId = await currentUserId(salesAgent);
+      const ownedCustomerId = await createActiveCustomer(
+        adminAgent,
+        'dl-invoice-sales-owned',
+        salesUserId,
+      );
+      const { invoiceId } = await createSentInvoiceFor('dl-invoice-sales-owned', ownedCustomerId);
+      const documentId = await documentIdFor('INVOICE', invoiceId);
+
+      const res = await salesAgent.get(`${API}/documents/${documentId}/download-url`).expect(200);
+      expect(res.body.url).toBeTruthy();
+    });
+
+    it('Sales/Booking can download an Invoice document owned via the createdByUserId fallback (no accountOwnerUserId set)', async () => {
+      const ownRes = await salesAgent
+        .post(`${API}/customers`)
+        .send({
+          legalName: 'Download Auth Sales-Created Customer',
+          billingAddressLine1: '1 Commerce St',
+          billingCity: 'Fort Worth',
+          billingState: 'TX',
+          billingZip: '76102',
+          primaryContactName: 'Contact',
+          primaryContactEmail: 'contact-dl-fallback@financials-customer.test',
+          primaryContactPhone: '555-0200',
+          paymentTermsOverride: 'NET_30',
+          acknowledgeDuplicates: true,
+        })
+        .expect(201);
+      const ownCustomerId: string = ownRes.body.id;
+      await adminAgent
+        .post(`${API}/customers/${ownCustomerId}/status`)
+        .send({ status: 'ACTIVE' })
+        .expect(200);
+
+      const { invoiceId } = await createSentInvoiceFor('dl-invoice-fallback', ownCustomerId);
+      const documentId = await documentIdFor('INVOICE', invoiceId);
+
+      const res = await salesAgent.get(`${API}/documents/${documentId}/download-url`).expect(200);
+      expect(res.body.url).toBeTruthy();
+    });
+
+    it('Dispatcher and Compliance Reviewer are denied an Invoice document entirely', async () => {
+      const { invoiceId } = await createSentInvoiceFor('dl-invoice-denied');
+      const documentId = await documentIdFor('INVOICE', invoiceId);
+
+      await dispatcherAgent.get(`${API}/documents/${documentId}/download-url`).expect(403);
+      await reviewerAgent.get(`${API}/documents/${documentId}/download-url`).expect(403);
+      await dispatcherAgent
+        .get(`${API}/documents`)
+        .query({ entityType: 'INVOICE', entityId: invoiceId })
+        .expect(403);
+    });
+
+    it('Admin, Accounting, and Operations Manager can still download a Carrier Payment document', async () => {
+      const { paymentId } = await createPaidCarrierPaymentFor('dl-cp-authorized');
+      const documentId = await documentIdFor('CARRIER_PAYMENT', paymentId);
+
+      for (const agent of [adminAgent, accountingAgent, opsManagerAgent]) {
+        const res = await agent.get(`${API}/documents/${documentId}/download-url`).expect(200);
+        expect(res.body.url).toBeTruthy();
+      }
+    });
+
+    it('Sales/Booking, Dispatcher, and Compliance Reviewer are denied a Carrier Payment document — no ownership carve-out', async () => {
+      const { paymentId } = await createPaidCarrierPaymentFor('dl-cp-denied');
+      const documentId = await documentIdFor('CARRIER_PAYMENT', paymentId);
+
+      for (const agent of [salesAgent, dispatcherAgent, reviewerAgent]) {
+        await agent.get(`${API}/documents/${documentId}/download-url`).expect(403);
+      }
+      await salesAgent
+        .get(`${API}/documents`)
+        .query({ entityType: 'CARRIER_PAYMENT', entityId: paymentId })
+        .expect(403);
+    });
+
+    it('leaves the 7 unrestricted entity types unaffected — Dispatcher can still list and download a Carrier document', async () => {
+      const carrierId = await createEligibleCarrier('dl-carrier-unaffected');
+      const docs = await dispatcherAgent
+        .get(`${API}/documents`)
+        .query({ entityType: 'CARRIER', entityId: carrierId })
+        .expect(200);
+      expect(docs.body.length).toBeGreaterThan(0);
+
+      const res = await dispatcherAgent
+        .get(`${API}/documents/${docs.body[0].id}/download-url`)
+        .expect(200);
+      expect(res.body.url).toBeTruthy();
+    });
+  });
+
   describe('Load Closing — Workflow 10', () => {
     it('closes unconditionally even with an incomplete checklist, and reports a Warning-status checklist item', async () => {
       const { loadId } = await createBookedLoad('close-incomplete');

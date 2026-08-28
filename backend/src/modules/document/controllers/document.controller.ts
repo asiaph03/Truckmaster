@@ -80,7 +80,15 @@ export class DocumentController {
   @Get()
   list(@Query('entityType') entityType: DocumentEntityType, @Query('entityId') entityId: string) {
     const organizationId = RequestContextStore.requireOrganizationId();
-    return this.documentService.list(organizationId, entityType, entityId);
+    const actingUserId = RequestContextStore.requireUserId();
+    const actingRoles = (RequestContextStore.current().roles ?? []) as MembershipRoleName[];
+    return this.documentService.list(
+      organizationId,
+      entityType,
+      entityId,
+      actingUserId,
+      actingRoles,
+    );
   }
 
   // Frontend Phase 20 — Document Center. A dedicated cross-entity search
@@ -201,7 +209,9 @@ export class DocumentController {
   @Get(':id/download-url')
   getDownloadUrl(@Param('id', ParseUUIDPipe) id: string) {
     const organizationId = RequestContextStore.requireOrganizationId();
-    return this.documentService.getDownloadUrl(organizationId, id);
+    const actingUserId = RequestContextStore.requireUserId();
+    const actingRoles = (RequestContextStore.current().roles ?? []) as MembershipRoleName[];
+    return this.documentService.getDownloadUrl(organizationId, id, actingUserId, actingRoles);
   }
 
   @Post(':id/review')

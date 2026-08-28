@@ -17,6 +17,7 @@ import {
 import { CarrierEligibilityService } from '../../carrier/services/carrier-eligibility.service';
 import { LoadPodStatusService } from '../../quote-load/services/load-pod-status.service';
 import { MALWARE_SCAN_JOB_OPTIONS, MALWARE_SCAN_QUEUE } from './malware-scan.constants';
+import { FINANCIAL_VIEW_ROLES } from '../../../common/authorization/financial-view-roles';
 
 /**
  * Document-upload permission is entity-type-aware (TECHNICAL_ARCHITECTURE.md
@@ -315,13 +316,84 @@ export class DocumentService {
     return document;
   }
 
-  list(organizationId: string, entityType: DocumentEntityType, entityId: string) {
-    return this.prisma.withTenantTransaction(organizationId, (tx) =>
-      tx.document.findMany({
+  list(
+    organizationId: string,
+    entityType: DocumentEntityType,
+    entityId: string,
+    actingUserId: string,
+    actingRoles: MembershipRoleName[],
+  ) {
+    return this.prisma.withTenantTransaction(organizationId, async (tx) => {
+      await this.assertViewPermission(
+        tx,
+        organizationId,
+        entityType,
+        entityId,
+        actingUserId,
+        actingRoles,
+      );
+      return tx.document.findMany({
         where: { organizationId, entityType, entityId, isCurrentVersion: true },
         orderBy: { uploadedAt: 'desc' },
-      }),
-    );
+      });
+    });
+  }
+
+  /**
+   * §8.4's own doc-comment on `getDownloadUrl` below always intended
+   * "permission to view the parent entity" to be enforced somewhere —
+   * that never actually happened for the two entity types that have a
+   * real record-level view restriction anywhere else in the app
+   * (Invoice, Carrier Payment). Every other entity type has no such
+   * restriction today (no `@Roles()`, no ownership concept on its own
+   * view routes), so this is intentionally a no-op for them — reusing
+   * the absence of a rule is still reusing the rule, same principle
+   * `DocumentSearchService.buildWhere` already applies.
+   *
+   * Reuses `FINANCIAL_VIEW_ROLES` and replicates `InvoiceService`'s own
+   * `isOwnDeal` rule inline (same reasoning `ReportingService.searchInvoices`
+   * and `DocumentSearchService.resolveInvoiceVisibility` already used: a
+   * small local check rather than a cross-service import of a private
+   * method, or touching `InvoiceService`).
+   */
+  private async assertViewPermission(
+    tx: Prisma.TransactionClient,
+    organizationId: string,
+    entityType: DocumentEntityType,
+    entityId: string,
+    actingUserId: string,
+    actingRoles: MembershipRoleName[],
+  ): Promise<void> {
+    if (entityType === 'CARRIER_PAYMENT') {
+      if (!actingRoles.some((r) => FINANCIAL_VIEW_ROLES.includes(r))) {
+        throw new PermissionError('You do not have permission to view Carrier Payment documents.');
+      }
+      return;
+    }
+
+    if (entityType === 'INVOICE') {
+      if (actingRoles.some((r) => FINANCIAL_VIEW_ROLES.includes(r))) return;
+
+      if (actingRoles.includes('SALES_BOOKING')) {
+        const invoice = await tx.invoice.findFirst({
+          where: { id: entityId, organizationId },
+          include: { customer: true },
+        });
+        if (invoice && this.isOwnDeal(invoice.customer, actingUserId)) return;
+      }
+
+      throw new PermissionError('You do not have permission to view Invoice documents.');
+    }
+  }
+
+  /** Mirrors `InvoiceService.isOwnDeal` exactly — "Account Owner, fallback creator." */
+  private isOwnDeal(
+    customer: { accountOwnerUserId: string | null; createdByUserId: string },
+    actingUserId: string,
+  ): boolean {
+    return customer.accountOwnerUserId
+      ? customer.accountOwnerUserId === actingUserId
+      : customer.createdByUserId === actingUserId;
   }
 
   /**
@@ -363,14 +435,28 @@ export class DocumentService {
     });
   }
 
-  /** §8.4 — permission to view the parent entity (checked by caller/guard) + scan_status === CLEAN. */
-  async getDownloadUrl(organizationId: string, documentId: string): Promise<{ url: string }> {
-    const document = await this.prisma.withTenantTransaction(organizationId, (tx) =>
-      tx.document.findFirst({
+  /** §8.4 — permission to view the parent entity (enforced by `assertViewPermission` below) + scan_status === CLEAN. */
+  async getDownloadUrl(
+    organizationId: string,
+    documentId: string,
+    actingUserId: string,
+    actingRoles: MembershipRoleName[],
+  ): Promise<{ url: string }> {
+    const document = await this.prisma.withTenantTransaction(organizationId, async (tx) => {
+      const doc = await tx.document.findFirst({
         where: { id: documentId, organizationId },
-      }),
-    );
-    if (!document) throw new NotFoundError('Document not found.');
+      });
+      if (!doc) throw new NotFoundError('Document not found.');
+      await this.assertViewPermission(
+        tx,
+        organizationId,
+        doc.entityType,
+        doc.entityId,
+        actingUserId,
+        actingRoles,
+      );
+      return doc;
+    });
     if (document.scanStatus !== 'CLEAN') {
       throw new BusinessRuleError(
         `This document is not available for download (scan status: ${document.scanStatus}).`,
