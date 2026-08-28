@@ -56,9 +56,10 @@ import { ReportingModule } from './modules/reporting/reporting.module';
  *
  * Phase 8 (Reporting Foundation) adds: ReportingModule — Global Search
  * (§5.4), AR/AP Aging (§21, Decision D14), and a role-aware Dashboard
- * (PRD §9's approved minimal KPI set). The Standard Report Library, Load
- * Search/export, and Saved Report Views remain deferred to a separately
- * planned future phase.
+ * (PRD §9's approved minimal KPI set). The Standard Report Library and
+ * Saved Report Views remain deferred to a separately planned future
+ * phase. Load Search/export shipped later (Frontend Phase 13), in
+ * QuoteLoadModule rather than here — see LoadSearchService.
  */
 @Module({
   imports: [

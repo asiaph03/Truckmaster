@@ -77,7 +77,7 @@ One backend deployable (**modular monolith**), one frontend deployable (SPA), co
 | Object storage | S3-compatible | 🔒 Decision 9 |
 | Background queue | BullMQ (Redis-backed) | 🔒 Decision 12 |
 | Malware scanner | Pluggable interface (`IMalwareScanner`) | 🔒 Decision 10 — provider swappable without touching call sites |
-| Email provider | Pluggable interface (`IEmailSender`) | Matches the "replaceable provider" pattern already established for scanning; no provider named yet — 🟡 recommend deferring the specific vendor choice to deployment planning |
+| Email provider | Pluggable interface (`IEmailSender`) | Matches the "replaceable provider" pattern already established for scanning; Frontend Phase 16 wires Postmark as the concrete provider |
 
 ### 1.4 External Integrations
 None in V1 🔒 (PRD §10, Architecture §13). The only "external" surfaces built now are the two provider interfaces above (scanner, email) — both already anticipated as swappable, not integrations in the PRD's sense (accounting/GPS/load-boards/EDI/webhooks/public API all remain explicitly deferred).
@@ -241,7 +241,7 @@ All routes are versioned (`/api/v1/...`), REST/resource-oriented per Decision 2.
 | Carriers | `POST /carriers`, `GET /carriers`, `GET /carriers/:id`, `PATCH /carriers/:id`, `POST /carriers/:id/documents`, `POST /carriers/:id/documents/:docId/review`, `POST /carriers/:id/insurance`, `POST /carriers/:id/fmcsa-verification`, `POST /carriers/:id/activate`, `POST /carriers/:id/service-areas`, `POST /carriers/:id/drivers`, `POST /carriers/:id/trucks`, `POST /carriers/:id/trailers`, `PATCH /carriers/:id/factoring` | Carrier |
 | Quotes | `POST /quotes`, `GET /quotes/:id`, `POST /quotes/:id/mark-lost`, `POST /quotes/:id/convert` | Quote/Load |
 | Loads | `POST /loads` (direct booking), `GET /loads`, `GET /loads/:id`, `PATCH /loads/:id` (reference numbers), `POST /loads/:id/begin-sourcing`, `POST /loads/:id/sourcing-attempts`, `POST /loads/:id/assign-carrier`, `POST /loads/:id/carrier-rejected`, `POST /loads/:id/generate-rate-confirmation`, `POST /loads/:id/dispatch`, `PATCH /loads/:id/dispatch`, `POST /loads/:id/stops/:seq/arrival`, `POST /loads/:id/stops/:seq/departure`, `POST /loads/:id/check-calls`, `PATCH /loads/:id/risk-status`, `POST /loads/:id/charges`, `POST /loads/:id/close`, `POST /loads/:id/notes`, `POST /loads/:id/communication-activity` | Quote/Load, Sourcing, Dispatch |
-| Documents | `POST /documents` (polymorphic upload), `GET /documents?entityType&entityId`, `GET /documents/:id/download-url`, `GET /documents/search` (Document Center) | Document |
+| Documents | `POST /documents` (polymorphic upload), `GET /documents?entityType&entityId`, `GET /documents/:id/download-url` | Document |
 | Invoices | `POST /invoices` (Builder — Draft), `GET /invoices`, `GET /invoices/:id`, `POST /invoices/:id/send`, `POST /invoices/:id/payments`, `POST /invoices/:id/adjustments`, `POST /invoices/:id/void`, `GET /loads/ready-to-invoice?customerId` | Billing |
 | Carrier Pay | `POST /loads/:id/carrier-payments`, `POST /carrier-payments/:id/submit`, `POST /carrier-payments/:id/approve`, `POST /carrier-payments/:id/reject`, `POST /carrier-payments/:id/mark-paid` | CarrierPay |
 | Audit | `GET /audit-log?entityType&entityId`, `GET /audit-log?actorUserId` | Audit |
@@ -533,7 +533,7 @@ interface IMalwareScanner {
   scan(storageKey: string): Promise<{ status: 'CLEAN' | 'INFECTED' | 'SCAN_FAILED'; provider: string }>;
 }
 ```
-No provider selected yet 🟡 (deployment-stage decision) — the interface is the Stage 6 deliverable; any concrete implementation (ClamAV sidecar, a cloud provider's native scanning, a third-party API) satisfies it without touching `DocumentService` or any call site.
+Frontend Phase 16 — Cloudmersive is wired as the concrete provider (`CloudmersiveMalwareScanner`), satisfying this interface without touching `DocumentService` or any call site, exactly as anticipated here.
 
 ### 8.3 Versioning
 `document_family_id` (stable across versions) + `version_number` + `is_current_version` (Decision Log D4). A new upload against an existing family creates a new row, sets the previous `is_current_version=false`, never overwrites or deletes prior rows.
@@ -699,7 +699,7 @@ Focus trapping in modals, Escape-to-close (§5.5.7), visible (not hover-only) ke
 | **Global Search** | Opens an overlay, no live query | Real search endpoint (🔴 not yet specified — see §17) against Load/Customer/Carrier/Invoice, permission-scoped |
 | **Document upload** | Simulated scan delay (`setTimeout`) | Real async scan job against `IMalwareScanner` (§8, §10) |
 | **Email sending** | Toast confirmation only | Real `IEmailSender` provider call, queued as a background job (§10) |
-| **PDF generation** (Rate Con, Invoice, Settlement) | Not generated — referenced as "View PDF" with a toast | Real PDF generation job (🟡 library choice deferred to Stage 7) |
+| **PDF generation** (Rate Con, Invoice, Settlement) | Not generated — referenced as "View PDF" with a toast | Real PDF generation job (Frontend Phase 16 — PDFKit, wired as `PdfkitPdfGenerator`) |
 | **Secondary CRUD** (Edit Customer, Add Contact/Location/Rate Agreement, etc.) | Confirmation toast, no persisted form | Full forms per §13.2, real endpoints per §5.1 |
 | **Payment processing** | N/A — Carrier Pay/Invoicing record payments as data entry only (matches locked scope — PRD never requires actual payment *processing*, only *recording*) | Same as prototype's intent — **no gap here**, since the PRD explicitly scopes this as record-keeping, not a payment gateway integration |
 | **External integrations** (GPS, accounting, load boards, EDI) | Not present | Not present — correctly out of scope for V1 in both (PRD §2, Architecture §13) |
@@ -773,11 +773,11 @@ Frontend component-library work (§13.2 shared primitives) can start in parallel
 Per your instruction, these are ordinary technical defaults, not decisions requiring business sign-off — recorded here for transparency and easily revisited in Stage 7 without reopening any business discussion:
 | # | Item | Default |
 |---|---|---|
-| R1 | Email provider | Not chosen — any provider satisfying `IEmailSender` works; pick during deployment planning |
-| R2 | Malware scanner provider | Not chosen — any provider satisfying `IMalwareScanner` works |
+| R1 | Email provider | Frontend Phase 16 — Postmark, wired behind `IEmailSender` |
+| R2 | Malware scanner provider | Frontend Phase 16 — Cloudmersive, wired behind `IMalwareScanner` |
 | R3 | Login rate limiting | 10 attempts/15min per IP+email (§11) |
 | R4 | Log aggregation / error tracking tool | Deferred to deployment planning (§12.2) |
-| R5 | PDF generation library | Deferred (§14) |
+| R5 | PDF generation library | Frontend Phase 16 — PDFKit, wired behind `IPdfGenerator` |
 | R6 | Dependency vulnerability scanning tool | Deferred (§11) |
 
 ### 🔴 Remaining — one small, explicitly non-blocking business confirmation

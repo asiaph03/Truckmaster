@@ -121,8 +121,7 @@ This keeps the sidebar to 7 items, matching the "fast scanning, minimal decorati
 /reports                          Report library
   /reports/:reportId              Individual report view
 
-/settings                         (Admin only)
-  /settings/users                 Users & Roles
+/settings                         Users & Roles (Admin only)
   /settings/organization          Organization Settings
 ```
 

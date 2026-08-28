@@ -1,12 +1,11 @@
 /**
  * Replaceable PDF-generation provider (Phase 4, mirroring the
  * IMalwareScanner/IEmailSender pattern — Architecture Decision 10 / the
- * §1.3 R1 email precedent). TECHNICAL_ARCHITECTURE.md §14 explicitly
- * defers the PDF library choice to a later deployment decision ("🟡
- * deferred to Stage 7"); this interface is the locked deliverable for now,
- * the concrete renderer (e.g. pdf-lib, Puppeteer, a hosted PDF API) is a
- * deployment-time choice that never touches any call site or the
- * queue/worker around it.
+ * §1.3 R1 email precedent). Frontend Phase 16 — PDFKit (`PdfkitPdfGenerator`,
+ * an in-process library, not a hosted API) is wired behind this interface
+ * in the billing, carrier-pay, and quote-load modules; the interface
+ * itself never changed, so no call site or the queue/worker around it was
+ * touched by that swap.
  *
  * Phase 6 broadens this from its original Phase-4 Rate-Confirmation-only
  * scope to the three document kinds Phase 6 actually needs (Invoice,
