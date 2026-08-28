@@ -11,6 +11,7 @@ import { CarrierDocumentsController } from './controllers/carrier-documents.cont
 import { PodDocumentsController } from './controllers/pod-documents.controller';
 import { DocumentTypeController } from './controllers/document-type.controller';
 import { DocumentService } from './services/document.service';
+import { DocumentSearchService } from './services/document-search.service';
 import { DocumentTypeService } from './services/document-type.service';
 import { MalwareScanWorker } from './services/malware-scan.worker';
 import { MALWARE_SCAN_QUEUE, MALWARE_SCAN_QUEUE_NAME } from './services/malware-scan.constants';
@@ -34,6 +35,7 @@ const MALWARE_SCAN_QUEUE_CONNECTION = 'MALWARE_SCAN_QUEUE_CONNECTION';
   ],
   providers: [
     DocumentService,
+    DocumentSearchService,
     DocumentTypeService,
     MalwareScanWorker,
     { provide: MALWARE_SCANNER, useClass: CloudmersiveMalwareScanner },

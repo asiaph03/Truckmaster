@@ -12,6 +12,7 @@ import { CarrierListPage } from './routes/carriers/CarrierListPage';
 import { CarrierCreatePage } from './routes/carriers/CarrierCreatePage';
 import { CarrierDetailPage } from './routes/carriers/CarrierDetailPage';
 import { ComplianceQueuePage } from './routes/carriers/ComplianceQueuePage';
+import { DocumentCenterPage } from './routes/documents/DocumentCenterPage';
 import { DispatchBoardPage } from './routes/loads/DispatchBoardPage';
 import { LoadSearchPage } from './routes/loads/LoadSearchPage';
 import { LoadCreatePage } from './routes/loads/LoadCreatePage';
@@ -55,9 +56,12 @@ import { ToastViewport } from './components/ui';
  * Organization Settings (`/settings/organization`) — legal
  * name/address/primary contact/default payment terms, backed by
  * `GET`/`PATCH /organizations/current` (Admin-only, org-scoped, distinct
- * from the platform-console `/platform/organizations` route). Document
- * Center and the broader Reports library remain ComingSoonPage or
- * unbuilt — neither has a locked screen-level design yet.
+ * from the platform-console `/platform/organizations` route). Phase 20
+ * added the Document Center (`/documents`) — a dedicated cross-entity
+ * search/export screen backed by `GET /documents/search` and
+ * `GET /documents/search/export`, structured on Load Search's own
+ * precedent. The broader Reports library remains ComingSoonPage —
+ * it has no locked screen-level design yet.
  */
 function App() {
   const status = useSessionStore((s) => s.status);
@@ -113,7 +117,7 @@ function App() {
         <Route path="/billing/carrier-pay/:id" element={<CarrierPaymentDetailPage />} />
         <Route path="/billing/ar-aging" element={<ArAgingPage />} />
         <Route path="/billing/ap-aging" element={<ApAgingPage />} />
-        <Route path="/documents" element={<ComingSoonPage title="Document Center" />} />
+        <Route path="/documents" element={<DocumentCenterPage />} />
         <Route path="/reports" element={<ComingSoonPage title="Reports" />} />
         <Route path="/settings" element={<UsersRolesPage />} />
         <Route path="/settings/organization" element={<OrganizationSettingsPage />} />

@@ -1,4 +1,5 @@
 import { apiRequest } from './client';
+import { ApiError } from './errors';
 import type { DocumentTypeDefinition } from './documentTypes';
 
 export type DocumentEntityType =
@@ -94,7 +95,102 @@ export interface PendingReviewDocument extends AppDocument {
   carrierLegalName: string | null;
 }
 
+export type DocumentSearchSort = 'fileName' | 'documentType' | 'uploadedAt';
+export type DocumentSearchSortDirection = 'asc' | 'desc';
+
+/**
+ * Frontend Phase 20 (Document Center) — a dedicated `GET /documents/search`
+ * request shape, separate from `list()` above (entity-scoped) and from
+ * GlobalSearch (deliberately not extended, per the approved design).
+ */
+export interface DocumentSearchFilters {
+  q?: string;
+  entityType?: DocumentEntityType;
+  documentTypeId?: string;
+  scanStatus?: DocumentScanStatus;
+  reviewStatus?: DocumentReviewStatus;
+  generationStatus?: DocumentGenerationStatus;
+  uploadedFrom?: string;
+  uploadedTo?: string;
+  sort?: DocumentSearchSort;
+  sortDirection?: DocumentSearchSortDirection;
+  page?: number;
+  pageSize?: number;
+}
+
+/**
+ * One row per matching Document, with its owning entity's display
+ * identifier and detail-page link pre-resolved server-side (the entity
+ * link is never the whole row — a single "Owning Entity" column with an
+ * explicit link, per the approved decision).
+ */
+export interface DocumentSearchResultRow {
+  id: string;
+  fileName: string;
+  documentTypeLabel: string;
+  entityType: DocumentEntityType;
+  entityId: string;
+  entityLabel: string;
+  entityLinkPath: string;
+  scanStatus: DocumentScanStatus;
+  reviewStatus: DocumentReviewStatus | null;
+  generationStatus: DocumentGenerationStatus | null;
+  uploadedByUserId: string;
+  uploadedByName: string;
+  uploadedAt: string;
+}
+
+export interface DocumentSearchResult {
+  items: DocumentSearchResultRow[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+/** Mirrors `loadsApi`'s own array-free query serialization — Document Center's filters carry no array-valued params. */
+function buildDocumentSearchQueryString(filters: DocumentSearchFilters): string {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(filters)) {
+    if (value === undefined || value === '') continue;
+    params.set(key, String(value));
+  }
+  return params.toString();
+}
+
 export const documentsApi = {
+  search: (filters: DocumentSearchFilters) =>
+    apiRequest<DocumentSearchResult>('/documents/search', { query: filters }),
+
+  /**
+   * Not routed through `apiRequest` — this endpoint returns a raw CSV
+   * file, not JSON. Mirrors `loadsApi.exportSearchCsv`'s exact approach:
+   * same server-side filters/authorization as the interactive results
+   * (decision — see the approved plan), triggered as a normal browser
+   * file download.
+   */
+  exportSearchCsv: async (filters: DocumentSearchFilters): Promise<void> => {
+    const qs = buildDocumentSearchQueryString(filters);
+    const response = await fetch(`/api/v1/documents/search/export${qs ? `?${qs}` : ''}`, {
+      credentials: 'include',
+    });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => undefined);
+      throw new ApiError(
+        response.status,
+        payload?.error ?? { code: 'INTERNAL_ERROR', message: 'Export failed' },
+      );
+    }
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'document-center-export.csv';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  },
+
   list: (entityType: DocumentEntityType, entityId: string) =>
     apiRequest<AppDocument[]>('/documents', { query: { entityType, entityId } }),
 
