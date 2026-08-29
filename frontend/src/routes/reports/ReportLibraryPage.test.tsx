@@ -75,8 +75,6 @@ describe('ReportLibraryPage — Frontend Phase 21', () => {
 
     renderPage();
 
-    await waitFor(() =>
-      expect(screen.getByText(/no reports are available/i)).toBeInTheDocument(),
-    );
+    await waitFor(() => expect(screen.getByText(/no reports are available/i)).toBeInTheDocument());
   });
 });

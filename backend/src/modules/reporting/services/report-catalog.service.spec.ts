@@ -76,9 +76,9 @@ describe('ReportCatalogService.catalog — role-driven visibility, no client-sid
 describe('ReportCatalogService.paymentHistory', () => {
   it('requires both dateFrom and dateTo', async () => {
     const { service } = buildService();
-    await expect(
-      service.paymentHistory(ORG_ID, {}, { page: 1, pageSize: 50 }),
-    ).rejects.toThrow(ValidationError);
+    await expect(service.paymentHistory(ORG_ID, {}, { page: 1, pageSize: 50 })).rejects.toThrow(
+      ValidationError,
+    );
   });
 
   it('merges Payment and Adjustment rows sorted by date descending', async () => {
@@ -88,7 +88,11 @@ describe('ReportCatalogService.paymentHistory', () => {
           {
             id: 'pay-1',
             invoiceId: 'inv-1',
-            invoice: { invoiceNumber: 'INV-000001', customerId: 'cust-1', customer: { legalName: 'Acme' } },
+            invoice: {
+              invoiceNumber: 'INV-000001',
+              customerId: 'cust-1',
+              customer: { legalName: 'Acme' },
+            },
             amount: '100.00',
             paymentDate: new Date('2026-01-10'),
             method: 'ACH',
@@ -102,7 +106,11 @@ describe('ReportCatalogService.paymentHistory', () => {
           {
             id: 'adj-1',
             invoiceId: 'inv-2',
-            invoice: { invoiceNumber: 'INV-000002', customerId: 'cust-2', customer: { legalName: 'Beta' } },
+            invoice: {
+              invoiceNumber: 'INV-000002',
+              customerId: 'cust-2',
+              customer: { legalName: 'Beta' },
+            },
             amount: '50.00',
             adjustmentDate: new Date('2026-01-15'),
             type: 'CREDIT',
@@ -175,7 +183,13 @@ describe('ReportCatalogService.revenueMargin', () => {
   it('computes Gross Profit and Margin % per DATABASE_DESIGN.md §20 exactly', async () => {
     const { service } = buildService({
       $queryRaw: jest.fn().mockResolvedValue([
-        { group_key: 'cust-1', group_label: 'Acme Freight', load_count: 2, revenue: '2000.00', cost: '1500.00' },
+        {
+          group_key: 'cust-1',
+          group_label: 'Acme Freight',
+          load_count: 2,
+          revenue: '2000.00',
+          cost: '1500.00',
+        },
       ]),
     });
 
@@ -202,10 +216,18 @@ describe('ReportCatalogService.revenueMargin', () => {
     const { service } = buildService({
       $queryRaw: jest
         .fn()
-        .mockResolvedValue([{ group_key: 'cust-1', group_label: 'Acme', load_count: 1, revenue: '0', cost: '0' }]),
+        .mockResolvedValue([
+          { group_key: 'cust-1', group_label: 'Acme', load_count: 1, revenue: '0', cost: '0' },
+        ]),
     });
 
-    const result = await service.revenueMargin(ORG_ID, 'CUSTOMER', {}, { page: 1, pageSize: 50 }, false);
+    const result = await service.revenueMargin(
+      ORG_ID,
+      'CUSTOMER',
+      {},
+      { page: 1, pageSize: 50 },
+      false,
+    );
     expect(result.items[0].marginPercent).toBe('0.00');
   });
 
@@ -213,7 +235,9 @@ describe('ReportCatalogService.revenueMargin', () => {
     const { service, tx } = buildService({
       $queryRaw: jest
         .fn()
-        .mockResolvedValue([{ group_key: 'cust-1', group_label: 'Acme', load_count: 1, revenue: '100', cost: '50' }]),
+        .mockResolvedValue([
+          { group_key: 'cust-1', group_label: 'Acme', load_count: 1, revenue: '100', cost: '50' },
+        ]),
     });
 
     const result = await service.revenueMargin(
@@ -231,7 +255,13 @@ describe('ReportCatalogService.revenueMargin', () => {
 
   it('does not run a second query when compare=true but no date range is given', async () => {
     const { service, tx } = buildService();
-    const result = await service.revenueMargin(ORG_ID, 'CUSTOMER', {}, { page: 1, pageSize: 50 }, true);
+    const result = await service.revenueMargin(
+      ORG_ID,
+      'CUSTOMER',
+      {},
+      { page: 1, pageSize: 50 },
+      true,
+    );
     expect(tx.$queryRaw).toHaveBeenCalledTimes(1);
     expect(result.previousPeriod).toBeUndefined();
   });
@@ -276,12 +306,22 @@ describe('ReportCatalogService.onTimePerformance', () => {
       $queryRaw: jest
         .fn()
         .mockResolvedValueOnce([
-          { group_key: 'carrier-1', group_label: 'Eligible Carrier', deliveries_evaluated: 4, on_time_count: 3 },
+          {
+            group_key: 'carrier-1',
+            group_label: 'Eligible Carrier',
+            deliveries_evaluated: 4,
+            on_time_count: 3,
+          },
         ])
         .mockResolvedValueOnce([{ group_key: 'carrier-1', excluded_count: 2 }]),
     });
 
-    const result = await service.onTimePerformance(ORG_ID, 'CARRIER', {}, { page: 1, pageSize: 50 });
+    const result = await service.onTimePerformance(
+      ORG_ID,
+      'CARRIER',
+      {},
+      { page: 1, pageSize: 50 },
+    );
     expect(result.items[0]).toMatchObject({
       groupKey: 'carrier-1',
       deliveriesEvaluated: 4,
@@ -295,7 +335,9 @@ describe('ReportCatalogService.onTimePerformance', () => {
 describe('ReportCatalogService.carrierPerformance — cost redaction (approved decision)', () => {
   function buildCarrierPerfService() {
     return buildService({
-      load: { groupBy: jest.fn().mockResolvedValue([{ assignedCarrierId: 'carrier-1', _count: 5 }]) },
+      load: {
+        groupBy: jest.fn().mockResolvedValue([{ assignedCarrierId: 'carrier-1', _count: 5 }]),
+      },
       carrierSourcingAttempt: {
         groupBy: jest.fn().mockResolvedValue([
           { carrierId: 'carrier-1', outcome: 'ASSIGNED', _count: 3 },
@@ -309,18 +351,34 @@ describe('ReportCatalogService.carrierPerformance — cost redaction (approved d
       $queryRaw: jest
         .fn()
         .mockResolvedValueOnce([
-          { group_key: 'carrier-1', group_label: 'Eligible Carrier', deliveries_evaluated: 4, on_time_count: 4 },
+          {
+            group_key: 'carrier-1',
+            group_label: 'Eligible Carrier',
+            deliveries_evaluated: 4,
+            on_time_count: 4,
+          },
         ])
         .mockResolvedValueOnce([])
         .mockResolvedValueOnce([
-          { group_key: 'carrier-1', group_label: 'Eligible Carrier', load_count: 5, revenue: '5000', cost: '4000' },
+          {
+            group_key: 'carrier-1',
+            group_label: 'Eligible Carrier',
+            load_count: 5,
+            revenue: '5000',
+            cost: '4000',
+          },
         ]),
     });
   }
 
   it('Admin/Accounting/OpsManager see totalCost and avgCostPerLoad', async () => {
     const { service } = buildCarrierPerfService();
-    const result = await service.carrierPerformance(ORG_ID, ['ADMIN'], {}, { page: 1, pageSize: 50 });
+    const result = await service.carrierPerformance(
+      ORG_ID,
+      ['ADMIN'],
+      {},
+      { page: 1, pageSize: 50 },
+    );
     expect(result.items[0]).toMatchObject({
       carrierId: 'carrier-1',
       carrierLegalName: 'Eligible Carrier',
@@ -334,7 +392,12 @@ describe('ReportCatalogService.carrierPerformance — cost redaction (approved d
 
   it('Dispatcher sees every operational column but null cost columns, never the literal "null" downstream', async () => {
     const { service } = buildCarrierPerfService();
-    const result = await service.carrierPerformance(ORG_ID, ['DISPATCHER'], {}, { page: 1, pageSize: 50 });
+    const result = await service.carrierPerformance(
+      ORG_ID,
+      ['DISPATCHER'],
+      {},
+      { page: 1, pageSize: 50 },
+    );
     expect(result.items[0].loadCount).toBe(5);
     expect(result.items[0].rejectionRatePercent).toBe('40.00');
     expect(result.items[0].totalCost).toBeNull();
@@ -362,8 +425,20 @@ describe('ReportCatalogService.salesPerformance — own-row scoping and GP redac
         ]),
       },
       $queryRaw: jest.fn().mockResolvedValue([
-        { group_key: 'rep-1', group_label: 'Jane Rep', load_count: 3, revenue: '3000', cost: '2000' },
-        { group_key: 'rep-2', group_label: 'John Rep', load_count: 1, revenue: '1000', cost: '900' },
+        {
+          group_key: 'rep-1',
+          group_label: 'Jane Rep',
+          load_count: 3,
+          revenue: '3000',
+          cost: '2000',
+        },
+        {
+          group_key: 'rep-2',
+          group_label: 'John Rep',
+          load_count: 1,
+          revenue: '1000',
+          cost: '900',
+        },
       ]),
       user: {
         findMany: jest.fn().mockResolvedValue([
@@ -376,13 +451,26 @@ describe('ReportCatalogService.salesPerformance — own-row scoping and GP redac
 
   it('Admin sees every rep, including Gross Profit', async () => {
     const { service } = buildSalesService();
-    const result = await service.salesPerformance(ORG_ID, 'admin-1', ['ADMIN'], {}, { page: 1, pageSize: 50 });
+    const result = await service.salesPerformance(
+      ORG_ID,
+      'admin-1',
+      ['ADMIN'],
+      {},
+      { page: 1, pageSize: 50 },
+    );
     expect(result.total).toBe(2);
     const rep1 = result.items.find((r) => r.repUserId === 'rep-1')!;
-    expect(rep1).toMatchObject({ quotesCreated: 4, won: 1, lost: 0, winRatePercent: '100.00', revenue: '3000.00', grossProfit: '1000.00' });
+    expect(rep1).toMatchObject({
+      quotesCreated: 4,
+      won: 1,
+      lost: 0,
+      winRatePercent: '100.00',
+      revenue: '3000.00',
+      grossProfit: '1000.00',
+    });
   });
 
-  it("Sales/Booking sees only their own row, with grossProfit nulled even on it (never enough to derive carrier cost)", async () => {
+  it('Sales/Booking sees only their own row, with grossProfit nulled even on it (never enough to derive carrier cost)', async () => {
     const { service } = buildSalesService();
     const result = await service.salesPerformance(
       ORG_ID,

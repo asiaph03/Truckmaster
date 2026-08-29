@@ -53,6 +53,11 @@ export function CarrierListPage() {
             <Link to="/carriers/compliance-queue">Compliance Queue →</Link>
           ) : null}
           {can('manageCarriers') ? (
+            <Button variant="secondary" onClick={() => navigate('/import?entityType=CARRIER')}>
+              Bulk Import
+            </Button>
+          ) : null}
+          {can('manageCarriers') ? (
             <Button onClick={() => navigate('/carriers/new')}>+ New Carrier</Button>
           ) : null}
         </div>

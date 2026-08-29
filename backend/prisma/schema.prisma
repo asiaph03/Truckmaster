@@ -141,6 +141,9 @@ model User {
   communicationActivitiesLogged CommunicationActivity[] @relation("CommunicationActivityLoggedBy")
   internalNotesAuthored         InternalNote[]          @relation("InternalNoteAuthor")
 
+  // Bulk Import reverse relation
+  importBatchesCreated ImportBatch[] @relation("ImportBatchCreatedBy")
+
   @@map("user")
 }
 
@@ -1442,6 +1445,106 @@ model InternalNote {
 enum CommunicationDirection {
   INBOUND
   OUTBOUND
+}
+
+// ---------------------------------------------------------------------
+// Bulk Import (PRD.md §1.4, §6.9, §10.1, §13). DATABASE_DESIGN.md:794
+// lists ImportBatch as "deferred" citing PRD §2 — that citation does not
+// hold up (PRD §2's Explicitly Deferred Features table has no bulk-import
+// entry); PRD §1.4 locks this as a V1 "Full support" requirement. Treated
+// as a documentation error, tracked separately, not corrected here.
+//
+// Split into ImportBatch (durable batch metadata/counters/mapping) and
+// ImportBatchRow (one row per parsed source row) rather than a single
+// JSON blob on ImportBatch — at the 5,000-row cap, an inline JSON column
+// would force every per-row status update during commit to rewrite a
+// multi-MB TOASTed value under MVCC, and would block the Preview/Summary
+// screens from paginating/filtering at the SQL level.
+// ---------------------------------------------------------------------
+
+enum ImportEntityType {
+  CUSTOMER
+  CUSTOMER_CONTACT
+  CUSTOMER_LOCATION
+  CARRIER
+  CARRIER_CONTACT
+  DRIVER
+  TRUCK
+  TRAILER
+}
+
+enum ImportBatchStatus {
+  UPLOADED
+  MAPPING
+  VALIDATED
+  IMPORTING
+  COMPLETE
+  FAILED
+}
+
+enum ImportRowStatus {
+  VALID
+  INVALID
+  IMPORTED
+  FAILED
+  SKIPPED
+}
+
+model ImportBatch {
+  id             String            @id @default(uuid()) @db.Uuid
+  organizationId String            @map("organization_id") @db.Uuid
+  entityType     ImportEntityType  @map("entity_type")
+  status         ImportBatchStatus @default(UPLOADED)
+
+  fileName   String @map("file_name")
+  storageKey String @map("storage_key")
+  fileFormat String @map("file_format")
+
+  columnMapping Json? @map("column_mapping")
+
+  totalRows        Int? @map("total_rows")
+  validRowCount    Int? @map("valid_row_count")
+  invalidRowCount  Int? @map("invalid_row_count")
+  importedRowCount Int? @map("imported_row_count")
+  failedRowCount   Int? @map("failed_row_count")
+  skippedRowCount  Int? @map("skipped_row_count")
+
+  createdByUserId String @map("created_by_user_id") @db.Uuid
+  createdBy       User   @relation("ImportBatchCreatedBy", fields: [createdByUserId], references: [id])
+
+  createdAt   DateTime  @default(now()) @map("created_at")
+  validatedAt DateTime? @map("validated_at")
+  completedAt DateTime? @map("completed_at")
+
+  rows ImportBatchRow[]
+
+  @@index([organizationId, entityType, createdAt])
+  @@map("import_batch")
+}
+
+model ImportBatchRow {
+  id             String @id @default(uuid()) @db.Uuid
+  organizationId String @map("organization_id") @db.Uuid
+
+  importBatchId String      @map("import_batch_id") @db.Uuid
+  importBatch   ImportBatch @relation(fields: [importBatchId], references: [id])
+
+  rowNumber  Int   @map("row_number")
+  rawData    Json  @map("raw_data")
+  mappedData Json? @map("mapped_data")
+
+  status ImportRowStatus @default(VALID)
+  errors Json?           @map("errors")
+
+  duplicateWarning     Json?   @map("duplicate_warning")
+  acknowledgeDuplicate Boolean @default(false) @map("acknowledge_duplicate")
+
+  createdEntityId String?   @map("created_entity_id") @db.Uuid
+  processedAt     DateTime? @map("processed_at")
+
+  @@unique([importBatchId, rowNumber])
+  @@index([organizationId, importBatchId, status])
+  @@map("import_batch_row")
 }
 
 // ---------------------------------------------------------------------

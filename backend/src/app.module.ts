@@ -20,6 +20,7 @@ import { CarrierPayModule } from './modules/carrier-pay/carrier-pay.module';
 import { NotificationModule } from './modules/notification/notification.module';
 import { BackgroundJobsModule } from './modules/background-jobs/background-jobs.module';
 import { ReportingModule } from './modules/reporting/reporting.module';
+import { ImportModule } from './modules/import/import.module';
 
 /**
  * Root module.
@@ -60,6 +61,15 @@ import { ReportingModule } from './modules/reporting/reporting.module';
  * Saved Report Views remain deferred to a separately planned future
  * phase. Load Search/export shipped later (Frontend Phase 13), in
  * QuoteLoadModule rather than here — see LoadSearchService.
+ *
+ * Bulk Import (PRD.md §1.4, §6.9, §10.1, §13) adds: ImportModule
+ * (ImportBatch/ImportBatchRow, 8 entity-specific adapters behind one
+ * shared pipeline, BullMQ commit worker). DATABASE_DESIGN.md:794 lists
+ * ImportBatch as deferred, citing PRD §2 — that citation does not hold up
+ * (PRD §2's Explicitly Deferred Features table has no bulk-import entry);
+ * treated as a documentation error, tracked separately, not corrected
+ * here. Excel Export, Saved Views, and Scheduled/Emailed Reports remain
+ * separately deferred/not-yet-built.
  */
 @Module({
   imports: [
@@ -82,6 +92,7 @@ import { ReportingModule } from './modules/reporting/reporting.module';
     NotificationModule,
     BackgroundJobsModule,
     ReportingModule,
+    ImportModule,
   ],
   providers: [
     {

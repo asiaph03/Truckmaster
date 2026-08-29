@@ -51,6 +51,16 @@ export class StorageService {
   }
 
   /**
+   * Bulk Import (approved technical design, Decision 8/storage) — import
+   * source files are never reviewable Documents (no versioning, no human
+   * download, read once server-side via getObject()), so they get their
+   * own key prefix rather than going through the Document module.
+   */
+  buildImportKey(organizationId: string, importBatchId: string): string {
+    return `org_${organizationId}/imports/${importBatchId}`;
+  }
+
+  /**
    * Phase 4 addition — direct server-side upload, for content the
    * application itself generates (e.g. a Rate Confirmation PDF rendered by
    * the RateConfirmationWorker) rather than a client-provided file. Every

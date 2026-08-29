@@ -136,7 +136,12 @@ describe('Reports Library (e2e)', () => {
         { code: 'MC_AUTHORITY', label: 'MC Authority', requiresReview: true },
       ].map((t) =>
         prisma.documentTypeDefinition.create({
-          data: { organizationId: null, category: 'CARRIER_COMPLIANCE', isSystemDefault: true, ...t },
+          data: {
+            organizationId: null,
+            category: 'CARRIER_COMPLIANCE',
+            isSystemDefault: true,
+            ...t,
+          },
         }),
       ),
     );
@@ -280,7 +285,10 @@ describe('Reports Library (e2e)', () => {
       })
       .expect(201);
     const customerId: string = res.body.id;
-    await agent.post(`${API}/customers/${customerId}/status`).send({ status: 'ACTIVE' }).expect(200);
+    await agent
+      .post(`${API}/customers/${customerId}/status`)
+      .send({ status: 'ACTIVE' })
+      .expect(200);
     return customerId;
   }
 
@@ -335,7 +343,12 @@ describe('Reports Library (e2e)', () => {
     const carrierId: string = res.body.id;
 
     const w9Id = await uploadAndConfirm(adminAgent, carrierId, w9TypeId, 'w9.pdf');
-    const caId = await uploadAndConfirm(adminAgent, carrierId, carrierAgreementTypeId, 'agreement.pdf');
+    const caId = await uploadAndConfirm(
+      adminAgent,
+      carrierId,
+      carrierAgreementTypeId,
+      'agreement.pdf',
+    );
     const mcId = await uploadAndConfirm(adminAgent, carrierId, mcAuthorityTypeId, 'mc.pdf');
     const coiId = await uploadAndConfirm(adminAgent, carrierId, coiTypeId, 'coi.pdf');
     for (const id of [w9Id, caId, mcId, coiId]) {
@@ -406,7 +419,10 @@ describe('Reports Library (e2e)', () => {
     return new Date(new Date(iso).getTime() + 60 * 60 * 1000).toISOString();
   }
 
-  async function deliverStops(loadId: string, arrivalTimestamps?: { pickup?: string; delivery?: string }) {
+  async function deliverStops(
+    loadId: string,
+    arrivalTimestamps?: { pickup?: string; delivery?: string },
+  ) {
     await adminAgent
       .post(`${API}/loads/${loadId}/stops/1/arrival`)
       .send(arrivalTimestamps?.pickup ? { timestamp: arrivalTimestamps.pickup } : {})
@@ -421,7 +437,9 @@ describe('Reports Library (e2e)', () => {
       .expect(200);
     await adminAgent
       .post(`${API}/loads/${loadId}/stops/2/departure`)
-      .send(arrivalTimestamps?.delivery ? { timestamp: plusOneHour(arrivalTimestamps.delivery) } : {})
+      .send(
+        arrivalTimestamps?.delivery ? { timestamp: plusOneHour(arrivalTimestamps.delivery) } : {},
+      )
       .expect(200);
   }
 
@@ -450,7 +468,13 @@ describe('Reports Library (e2e)', () => {
         const res = await agent.get(`${API}/reports/catalog`).expect(200);
         const keys = res.body.categories.map((c: { key: string }) => c.key);
         expect(keys).toEqual(
-          expect.arrayContaining(['AR_AP', 'FINANCIAL', 'OPERATIONS', 'CARRIER_PERFORMANCE', 'SALES']),
+          expect.arrayContaining([
+            'AR_AP',
+            'FINANCIAL',
+            'OPERATIONS',
+            'CARRIER_PERFORMANCE',
+            'SALES',
+          ]),
         );
       }
     });
@@ -499,8 +523,8 @@ describe('Reports Library (e2e)', () => {
         .post(`${API}/invoices/${invoiceRes.body.id}/send`)
         .send({ recipientEmail: 'ap@customer.test', subject: 'Invoice', message: 'See attached.' })
         .expect(200);
-      const total = (await accountingAgent.get(`${API}/invoices/${invoiceRes.body.id}`).expect(200)).body
-        .total;
+      const total = (await accountingAgent.get(`${API}/invoices/${invoiceRes.body.id}`).expect(200))
+        .body.total;
       await accountingAgent
         .post(`${API}/invoices/${invoiceRes.body.id}/payments`)
         .send({ amount: total, paymentDate: '2026-06-15', method: 'ACH' })
@@ -543,12 +567,21 @@ describe('Reports Library (e2e)', () => {
 
   describe('GET /reports/revenue-margin', () => {
     it('rejects an invalid groupBy with 400', async () => {
-      await accountingAgent.get(`${API}/reports/revenue-margin`).query({ groupBy: 'BOGUS' }).expect(400);
+      await accountingAgent
+        .get(`${API}/reports/revenue-margin`)
+        .query({ groupBy: 'BOGUS' })
+        .expect(400);
     });
 
     it('Dispatcher and Sales/Booking are denied; Admin/OpsManager/Accounting allowed', async () => {
-      await dispatcherAgent.get(`${API}/reports/revenue-margin`).query({ groupBy: 'CUSTOMER' }).expect(403);
-      await salesAgent.get(`${API}/reports/revenue-margin`).query({ groupBy: 'CUSTOMER' }).expect(403);
+      await dispatcherAgent
+        .get(`${API}/reports/revenue-margin`)
+        .query({ groupBy: 'CUSTOMER' })
+        .expect(403);
+      await salesAgent
+        .get(`${API}/reports/revenue-margin`)
+        .query({ groupBy: 'CUSTOMER' })
+        .expect(403);
       for (const agent of [adminAgent, opsManagerAgent, accountingAgent]) {
         await agent.get(`${API}/reports/revenue-margin`).query({ groupBy: 'CUSTOMER' }).expect(200);
       }
@@ -586,7 +619,9 @@ describe('Reports Library (e2e)', () => {
         .get(`${API}/reports/revenue-margin`)
         .query({ groupBy: 'CARRIER', carrierId, pageSize: 100 })
         .expect(200);
-      const carrierRow = carrierRes.body.items.find((r: { groupKey: string }) => r.groupKey === carrierId);
+      const carrierRow = carrierRes.body.items.find(
+        (r: { groupKey: string }) => r.groupKey === carrierId,
+      );
       expect(carrierRow.revenue).toBe('800.00');
       expect(carrierRow.cost).toBe('500.00');
 
@@ -595,7 +630,10 @@ describe('Reports Library (e2e)', () => {
         .query({ groupBy: 'MONTH', customerId, pageSize: 100 })
         .expect(200);
       expect(
-        monthRes.body.items.reduce((sum: number, r: { revenue: string }) => sum + Number(r.revenue), 0),
+        monthRes.body.items.reduce(
+          (sum: number, r: { revenue: string }) => sum + Number(r.revenue),
+          0,
+        ),
       ).toBeGreaterThanOrEqual(800);
 
       const laneRes = await accountingAgent
@@ -651,7 +689,10 @@ describe('Reports Library (e2e)', () => {
     it('status-mix percentages sum to 100 and reflect a real Load', async () => {
       await createBookedLoad('sm-1');
       const res = await dispatcherAgent.get(`${API}/reports/status-mix`).expect(200);
-      const total = res.body.reduce((sum: number, r: { percentOfTotal: string }) => sum + Number(r.percentOfTotal), 0);
+      const total = res.body.reduce(
+        (sum: number, r: { percentOfTotal: string }) => sum + Number(r.percentOfTotal),
+        0,
+      );
       expect(Math.round(total)).toBe(100);
     });
 
@@ -661,8 +702,13 @@ describe('Reports Library (e2e)', () => {
       const carrierId = await createEligibleCarrier('dw-1');
       await assignAndDispatch(loadId, carrierId, dispatcherId);
 
-      const res = await adminAgent.get(`${API}/reports/dispatcher-workload`).query({ pageSize: 100 }).expect(200);
-      const row = res.body.items.find((r: { dispatcherId: string }) => r.dispatcherId === dispatcherId);
+      const res = await adminAgent
+        .get(`${API}/reports/dispatcher-workload`)
+        .query({ pageSize: 100 })
+        .expect(200);
+      const row = res.body.items.find(
+        (r: { dispatcherId: string }) => r.dispatcherId === dispatcherId,
+      );
       expect(row).toBeDefined();
       expect(row.loadsAssigned).toBeGreaterThanOrEqual(1);
     });
@@ -670,7 +716,10 @@ describe('Reports Library (e2e)', () => {
 
   describe('GET /reports/on-time-performance', () => {
     it('rejects an invalid groupBy', async () => {
-      await dispatcherAgent.get(`${API}/reports/on-time-performance`).query({ groupBy: 'LOAD' }).expect(400);
+      await dispatcherAgent
+        .get(`${API}/reports/on-time-performance`)
+        .query({ groupBy: 'LOAD' })
+        .expect(400);
     });
 
     it('computes on-time correctly (arrival <= appointment) and excludes null-appointment deliveries', async () => {
@@ -742,7 +791,9 @@ describe('Reports Library (e2e)', () => {
         .get(`${API}/reports/carrier-performance`)
         .query({ pageSize: 100 })
         .expect(200);
-      const adminRow = adminRes.body.items.find((r: { carrierId: string }) => r.carrierId === carrierId);
+      const adminRow = adminRes.body.items.find(
+        (r: { carrierId: string }) => r.carrierId === carrierId,
+      );
       expect(adminRow.totalCost).toBe('700.00');
       expect(adminRow.avgCostPerLoad).toBe('700.00');
       expect(adminRow.loadCount).toBeGreaterThanOrEqual(1);
@@ -760,7 +811,9 @@ describe('Reports Library (e2e)', () => {
     });
 
     it('export CSV redacts cost for Dispatcher identically to the JSON route', async () => {
-      const res = await dispatcherAgent.get(`${API}/reports/carrier-performance/export`).expect(200);
+      const res = await dispatcherAgent
+        .get(`${API}/reports/carrier-performance/export`)
+        .expect(200);
       const lines = res.text.trim().split('\r\n');
       for (const line of lines.slice(1)) {
         expect(line.endsWith(',,')).toBe(true);
@@ -802,13 +855,21 @@ describe('Reports Library (e2e)', () => {
       const otherCarrierId = await createEligibleCarrier('sp-other');
       await assignAndDispatch(otherLoadId, otherCarrierId, await currentUserId(adminAgent));
 
-      const adminRes = await adminAgent.get(`${API}/reports/sales-performance`).query({ pageSize: 100 }).expect(200);
-      const adminRow = adminRes.body.items.find((r: { repUserId: string }) => r.repUserId === salesUserId);
+      const adminRes = await adminAgent
+        .get(`${API}/reports/sales-performance`)
+        .query({ pageSize: 100 })
+        .expect(200);
+      const adminRow = adminRes.body.items.find(
+        (r: { repUserId: string }) => r.repUserId === salesUserId,
+      );
       expect(adminRow).toBeDefined();
       expect(adminRow.grossProfit).toBe('500.00');
       expect(adminRes.body.items.length).toBeGreaterThanOrEqual(2);
 
-      const salesRes = await salesAgent.get(`${API}/reports/sales-performance`).query({ pageSize: 100 }).expect(200);
+      const salesRes = await salesAgent
+        .get(`${API}/reports/sales-performance`)
+        .query({ pageSize: 100 })
+        .expect(200);
       expect(salesRes.body.items).toHaveLength(1);
       expect(salesRes.body.items[0].repUserId).toBe(salesUserId);
       expect(salesRes.body.items[0].revenue).toBe('900.00');
@@ -837,7 +898,7 @@ describe('Reports Library (e2e)', () => {
   });
 
   describe('Cross-tenant isolation', () => {
-    it('Revenue & Margin, Carrier Performance, and Sales Performance never surface another organization\'s data', async () => {
+    it("Revenue & Margin, Carrier Performance, and Sales Performance never surface another organization's data", async () => {
       const orgB = await setUpOrganization('cross-b');
 
       const revRes = await orgB.accountingAgent

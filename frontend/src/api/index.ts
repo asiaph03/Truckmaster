@@ -15,3 +15,4 @@ export * from './reporting';
 export * from './reportCatalog';
 export * from './activity';
 export * from './organizations';
+export * from './importBatch';

@@ -28,7 +28,15 @@ describe('AgingReport — Phase 21 Export CSV addition', () => {
         }),
     );
 
-    render(<AgingReport title="AR Aging" basisNote="basis" data={DATA} isLoading={false} onExport={onExport} />);
+    render(
+      <AgingReport
+        title="AR Aging"
+        basisNote="basis"
+        data={DATA}
+        isLoading={false}
+        onExport={onExport}
+      />,
+    );
 
     fireEvent.click(screen.getByText('Export CSV'));
     expect(onExport).toHaveBeenCalledTimes(1);
@@ -40,7 +48,15 @@ describe('AgingReport — Phase 21 Export CSV addition', () => {
 
   it('shows a toast on export failure rather than throwing', async () => {
     const onExport = vi.fn().mockRejectedValue(new Error('network error'));
-    render(<AgingReport title="AR Aging" basisNote="basis" data={DATA} isLoading={false} onExport={onExport} />);
+    render(
+      <AgingReport
+        title="AR Aging"
+        basisNote="basis"
+        data={DATA}
+        isLoading={false}
+        onExport={onExport}
+      />,
+    );
 
     fireEvent.click(screen.getByText('Export CSV'));
     await waitFor(() => expect(onExport).toHaveBeenCalledTimes(1));

@@ -16,6 +16,10 @@ export interface DuplicateMatch {
   matchedOn: ('legalName' | 'billingAddress' | 'primaryContactEmail')[];
 }
 
+export type CustomerDuplicateCandidate = Customer & {
+  contacts: { email: string | null }[];
+};
+
 /** Case/punctuation-insensitive comparison (Workflow 2 §2.2). */
 function normalize(value: string): string {
   return value
@@ -69,11 +73,47 @@ export class CustomerService {
     organizationId: string,
     dto: CreateCustomerDto,
   ): Promise<DuplicateMatch[]> {
-    const candidates = await tx.customer.findMany({
-      where: { organizationId },
-      include: { contacts: true },
-    });
+    const candidates = await this.fetchDuplicateCandidates(tx, organizationId);
+    return this.matchDuplicates(dto, candidates);
+  }
 
+  /**
+   * Bulk Import (approved technical design, Decision 9/12) — the candidate
+   * fetch, exposed publicly so a batch-import worker can preload it ONCE
+   * per batch instead of once per row (findDuplicates()'s per-call
+   * `findMany` is a full-table fetch, not an indexed lookup — cheap once,
+   * expensive 5,000 times). Manual create() is untouched: it still calls
+   * the private findDuplicates() above, which composes this fetch with
+   * matchDuplicates() exactly as it always has.
+   */
+  async fetchDuplicateCandidates(
+    tx: Prisma.TransactionClient,
+    organizationId: string,
+  ): Promise<CustomerDuplicateCandidate[]> {
+    return tx.customer.findMany({ where: { organizationId }, include: { contacts: true } });
+  }
+
+  /** Same fetch, in its own transaction — for callers (Bulk Import) outside an existing `withTenantTransaction`. */
+  async fetchDuplicateCandidatesForOrg(
+    organizationId: string,
+  ): Promise<CustomerDuplicateCandidate[]> {
+    return this.prisma.withTenantTransaction(organizationId, (tx) =>
+      this.fetchDuplicateCandidates(tx, organizationId),
+    );
+  }
+
+  /**
+   * Bulk Import (approved technical design, Decision 9/12) — the pure
+   * comparison extracted verbatim from the loop below, so a batch import's
+   * growing in-memory candidate cache (existing DB customers + customers
+   * already committed earlier in the same batch) can be matched against
+   * without re-implementing the algorithm. Identical logic/semantics to
+   * the inline version this replaced.
+   */
+  matchDuplicates(
+    dto: CreateCustomerDto,
+    candidates: CustomerDuplicateCandidate[],
+  ): DuplicateMatch[] {
     const targetName = normalize(dto.legalName);
     const targetAddress = normalize(
       `${dto.billingAddressLine1} ${dto.billingCity} ${dto.billingState} ${dto.billingZip}`,
@@ -107,11 +147,21 @@ export class CustomerService {
   /**
    * Workflow 2 §2.1 (creation) + §2.2 (duplicate warning) + §2.3 (missing
    * org payment-terms hard block).
+   *
+   * `precomputedCandidates` — Bulk Import only (approved technical design,
+   * Decision 9/12): when supplied, skips this method's own full-table
+   * `findDuplicates()` fetch and matches against the caller's already-
+   * fetched, batch-scoped candidate list instead (still via the identical
+   * `matchDuplicates()` comparison). Every manual caller omits this
+   * argument and gets byte-identical behavior to before this change — this
+   * is a pure, opt-in performance hook, not a second duplicate-check
+   * implementation.
    */
   async create(
     organizationId: string,
     dto: CreateCustomerDto,
     actingUserId: string,
+    precomputedCandidates?: CustomerDuplicateCandidate[],
   ): Promise<Customer> {
     return this.prisma.withTenantTransaction(organizationId, async (tx) => {
       // §2.3 — hard precondition, never silently defaulted. Structurally
@@ -136,7 +186,9 @@ export class CustomerService {
         );
       }
 
-      const duplicates = await this.findDuplicates(tx, organizationId, dto);
+      const duplicates = precomputedCandidates
+        ? this.matchDuplicates(dto, precomputedCandidates)
+        : await this.findDuplicates(tx, organizationId, dto);
       if (duplicates.length > 0) {
         await this.audit.record(tx, {
           organizationId,

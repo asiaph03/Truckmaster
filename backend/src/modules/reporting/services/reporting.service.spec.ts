@@ -301,7 +301,9 @@ describe('ReportingService.apAging — Decision D14 / disclosed multi-payment in
         {
           id: 'load-1',
           carrierRate: '1500.00',
-          carrierPayments: [{ status: 'PENDING_APPROVAL', amount: '500.00', submittedAt: new Date() }],
+          carrierPayments: [
+            { status: 'PENDING_APPROVAL', amount: '500.00', submittedAt: new Date() },
+          ],
         },
       ],
     });

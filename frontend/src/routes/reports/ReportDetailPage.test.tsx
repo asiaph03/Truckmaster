@@ -34,7 +34,13 @@ describe('ReportDetailPage — Frontend Phase 21', () => {
       http.get('/api/v1/reports/dispatcher-workload', () =>
         HttpResponse.json({
           items: [
-            { dispatcherId: 'd1', dispatcherName: 'Jane Dispatcher', loadsAssigned: 5, active: 2, deliveredOrClosed: 3 },
+            {
+              dispatcherId: 'd1',
+              dispatcherName: 'Jane Dispatcher',
+              loadsAssigned: 5,
+              active: 2,
+              deliveredOrClosed: 3,
+            },
           ],
           total: 1,
           page: 1,
@@ -147,7 +153,9 @@ describe('ReportDetailPage — Frontend Phase 21', () => {
 
     renderReport('payment-history');
 
-    await waitFor(() => expect(screen.getByText('No data matches your filters.')).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByText('No data matches your filters.')).toBeInTheDocument(),
+    );
 
     fireEvent.click(screen.getByText('Export CSV'));
     await waitFor(() => expect(exportUrl).toBeDefined());

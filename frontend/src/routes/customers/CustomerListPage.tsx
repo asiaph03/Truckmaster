@@ -48,7 +48,12 @@ export function CustomerListPage() {
       <div className="list-page-header">
         <h1 className="list-page-title">Customers</h1>
         {can('manageCustomers') ? (
-          <Button onClick={() => navigate('/customers/new')}>+ New Customer</Button>
+          <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
+            <Button variant="secondary" onClick={() => navigate('/import?entityType=CUSTOMER')}>
+              Bulk Import
+            </Button>
+            <Button onClick={() => navigate('/customers/new')}>+ New Customer</Button>
+          </div>
         ) : null}
       </div>
 
