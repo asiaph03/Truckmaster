@@ -35,7 +35,7 @@ function buildService(
 }
 
 describe('CarrierComplianceExpirationSweepService — Workflow 3 §3.9', () => {
-  it('flips stale MC Authority/Carrier Agreement documents to EXPIRED and audits each', async () => {
+  it('flips stale MC Authority/Notice of Assignment documents to EXPIRED and audits each', async () => {
     const { service, tx, audit } = buildService({
       staleDocs: [{ id: 'doc-1' }, { id: 'doc-2' }],
     });

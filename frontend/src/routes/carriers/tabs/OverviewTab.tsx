@@ -17,7 +17,7 @@ import '../../shared/DetailPage.css';
  */
 const ELIGIBILITY_CHECKLIST: { label: string; reasonMatch: string }[] = [
   { label: 'Carrier status is Active', reasonMatch: 'Carrier status is not Active' },
-  { label: 'Carrier Agreement approved', reasonMatch: 'Carrier Agreement is not approved' },
+  { label: 'Notice of Assignment approved', reasonMatch: 'Notice of Assignment is not approved' },
   { label: 'W9 approved', reasonMatch: 'W9 is not approved' },
   {
     label: 'Auto Liability insurance approved, not expired',

@@ -5,9 +5,9 @@ import { CarrierEligibilityService } from '../../carrier/services/carrier-eligib
 
 /**
  * Workflow 3 §3.9 — the document types Workflow 3 names as having an
- * applicable expiration date ("such as MC Authority, Carrier Agreement").
+ * applicable expiration date ("such as MC Authority, Notice of Assignment").
  * W9 is deliberately excluded — Workflow 3's own text never names it as an
- * expiring document type, unlike MC Authority/Carrier Agreement.
+ * expiring document type, unlike MC Authority/Notice of Assignment.
  */
 export const EXPIRABLE_DOCUMENT_CODES = ['MC_AUTHORITY', 'CARRIER_AGREEMENT'] as const;
 

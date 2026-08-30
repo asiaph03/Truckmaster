@@ -108,7 +108,7 @@ describe('Activity History (e2e)', () => {
       [
         { code: 'W9', label: 'W9', requiresReview: true },
         { code: 'COI', label: 'Certificate of Insurance', requiresReview: true },
-        { code: 'CARRIER_AGREEMENT', label: 'Carrier Agreement', requiresReview: true },
+        { code: 'CARRIER_AGREEMENT', label: 'Notice of Assignment', requiresReview: true },
         { code: 'MC_AUTHORITY', label: 'MC Authority', requiresReview: true },
       ].map((t) =>
         prisma.documentTypeDefinition.create({

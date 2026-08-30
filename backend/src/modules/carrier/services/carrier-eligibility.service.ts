@@ -160,7 +160,7 @@ export class CarrierEligibilityService {
 function labelFor(code: (typeof REQUIRED_COMPLIANCE_CODES)[number]): string {
   switch (code) {
     case 'CARRIER_AGREEMENT':
-      return 'Carrier Agreement';
+      return 'Notice of Assignment';
     case 'W9':
       return 'W9';
     case 'MC_AUTHORITY':

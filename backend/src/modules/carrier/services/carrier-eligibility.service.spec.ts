@@ -99,7 +99,7 @@ describe('CarrierEligibilityService', () => {
     expect(result.reasons).toEqual(['Carrier status is not Active']);
   });
 
-  it('is ineligible when the Carrier Agreement is missing', async () => {
+  it('is ineligible when the Notice of Assignment is missing', async () => {
     const fixture = fullyCompliantFixture();
     fixture.documents = fixture.documents.filter(
       (d) => d.documentType.code !== 'CARRIER_AGREEMENT',
@@ -109,7 +109,7 @@ describe('CarrierEligibilityService', () => {
     const result = await service.recalculate(tx as never, ORG_ID, CARRIER_ID);
 
     expect(result.eligible).toBe(false);
-    expect(result.reasons).toContain('Carrier Agreement is not approved');
+    expect(result.reasons).toContain('Notice of Assignment is not approved');
   });
 
   it('is ineligible when the W9 is pending review rather than approved', async () => {

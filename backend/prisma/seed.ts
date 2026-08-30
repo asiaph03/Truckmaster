@@ -22,7 +22,7 @@ const SYSTEM_DOCUMENT_TYPES = [
   { code: 'COI', label: 'Certificate of Insurance', category: 'CARRIER_COMPLIANCE', requiresReview: true },
   {
     code: 'CARRIER_AGREEMENT',
-    label: 'Carrier Agreement',
+    label: 'Notice of Assignment',
     category: 'CARRIER_COMPLIANCE',
     requiresReview: true,
   },
