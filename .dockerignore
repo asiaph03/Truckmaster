@@ -1,0 +1,34 @@
+# Beta Launch Hardening — minimum deployment configuration. Shared by
+# both backend/Dockerfile and frontend/Dockerfile (both are built with
+# the repo root as build context, since npm workspaces requires the root
+# package.json/package-lock.json to install correctly).
+node_modules
+**/node_modules
+**/dist
+**/dist-ssr
+**/.next
+**/coverage
+
+.git
+.github
+
+# Never send local secrets/credentials into a build context.
+.env
+.env.local
+.env.*.local
+**/.env
+**/.env.local
+
+# Local-dev-only infra, irrelevant inside a container.
+.local-s3-data
+docker-compose.yml
+
+# Editor/OS noise.
+.vscode
+.idea
+*.log
+.DS_Store
+Thumbs.db
+
+# Claude Code / agent workspace artifacts.
+.claude

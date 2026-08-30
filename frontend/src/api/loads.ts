@@ -1,5 +1,5 @@
 import type { EquipmentType } from '@tms/shared-constants';
-import { apiRequest } from './client';
+import { API_BASE, apiRequest } from './client';
 import { ApiError } from './errors';
 
 export type LoadStatus =
@@ -402,7 +402,7 @@ export const loadsApi = {
    */
   exportSearchCsv: async (filters: LoadSearchFilters): Promise<void> => {
     const qs = buildSearchQueryString(filters);
-    const response = await fetch(`/api/v1/loads/search/export${qs ? `?${qs}` : ''}`, {
+    const response = await fetch(`${API_BASE}/loads/search/export${qs ? `?${qs}` : ''}`, {
       credentials: 'include',
     });
     if (!response.ok) {

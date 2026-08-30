@@ -1,7 +1,9 @@
 import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { APP_FILTER, APP_GUARD } from '@nestjs/core';
+import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import configuration from './config/configuration';
+import { CsrfGuard } from './common/security/csrf.guard';
 import { PrismaModule } from './common/prisma/prisma.module';
 import { RedisModule } from './common/redis/redis.module';
 import { StorageModule } from './common/storage/storage.module';
@@ -70,12 +72,33 @@ import { ImportModule } from './modules/import/import.module';
  * treated as a documentation error, tracked separately, not corrected
  * here. Excel Export, Saved Views, and Scheduled/Emailed Reports remain
  * separately deferred/not-yet-built.
+ *
+ * Beta Launch Hardening (TECHNICAL_ARCHITECTURE.md §11) adds:
+ * ThrottlerModule (global default rate limit, tightened per-route via
+ * `@Throttle()` on the two `@Public()` auth routes — see
+ * auth.controller.ts) and CsrfGuard (stateless double-submit cookie,
+ * common/security/). Deliberately per-IP only, not per-IP+email — the
+ * smallest implementation that satisfies the locked requirement without
+ * adding a custom composite-key tracker.
  */
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
       load: [configuration],
+    }),
+    ThrottlerModule.forRoot({
+      throttlers: [{ name: 'default', ttl: 60_000, limit: 100 }],
+      // Every other e2e spec file legitimately logs in many times per
+      // run (one per role per organization per test scenario) as part of
+      // testing unrelated business logic — not the rate limiter itself.
+      // Disabled by default for e2e runs only (test/setup-e2e-env.ts),
+      // and explicitly re-enabled by security.e2e-spec.ts — the one file
+      // that actually needs the real limiter active — around its own
+      // run. Never set anywhere outside the e2e Jest config; unset (and
+      // therefore `undefined !== 'true'`, i.e. rate limiting fully
+      // active) in real dev/production.
+      skipIf: () => process.env.DISABLE_RATE_LIMIT_FOR_TESTS === 'true',
     }),
     PrismaModule,
     RedisModule,
@@ -98,6 +121,14 @@ import { ImportModule } from './modules/import/import.module';
     {
       provide: APP_FILTER,
       useClass: AppExceptionFilter,
+    },
+    {
+      provide: APP_GUARD,
+      useClass: CsrfGuard,
+    },
+    {
+      provide: APP_GUARD,
+      useClass: ThrottlerGuard,
     },
     {
       provide: APP_GUARD,

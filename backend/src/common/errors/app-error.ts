@@ -89,3 +89,9 @@ export class BusinessRuleError extends AppError {
   readonly httpStatus = 422;
   readonly code = 'BUSINESS_RULE_ERROR';
 }
+
+/** 403 — Beta Launch Hardening: double-submit CSRF cookie/header missing or mismatched on a state-changing request. */
+export class CsrfError extends AppError {
+  readonly httpStatus = 403;
+  readonly code = 'CSRF_ERROR';
+}

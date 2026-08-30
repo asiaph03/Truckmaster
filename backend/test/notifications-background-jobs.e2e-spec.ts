@@ -13,6 +13,8 @@ import { CarrierComplianceExpirationSweepService } from '../src/modules/backgrou
 import { ComplianceExpirationNotificationService } from '../src/modules/background-jobs/services/compliance-expiration-notification.service';
 import { CheckCallReminderSweepService } from '../src/modules/background-jobs/services/check-call-reminder-sweep.service';
 
+import { withCsrf } from './support/csrf-agent';
+
 type SuperAgentTest = ReturnType<typeof request.agent>;
 
 /** Every route except /health sits behind the global prefix (main.ts / configure-app.ts). */
@@ -199,11 +201,13 @@ describe('Notifications & Background Jobs (e2e)', () => {
 
   async function activateAndLogin(email: string, password: string): Promise<SuperAgentTest> {
     const token = extractToken((await lastEmailTo(email)).body);
-    await request(app.getHttpServer())
+    await (
+      await withCsrf(request.agent(app.getHttpServer()))
+    )
       .post(`${API}/auth/activate`)
       .send({ token, password })
       .expect(200);
-    const agent = request.agent(app.getHttpServer());
+    const agent = await withCsrf(request.agent(app.getHttpServer()));
     await agent.post(`${API}/auth/login`).send({ email, password }).expect(200);
     return agent;
   }
@@ -214,7 +218,7 @@ describe('Notifications & Background Jobs (e2e)', () => {
   }
 
   async function setUpOrganization(seed: string) {
-    const superAdminAgent = request.agent(app.getHttpServer());
+    const superAdminAgent = await withCsrf(request.agent(app.getHttpServer()));
     await superAdminAgent
       .post(`${API}/auth/login`)
       .send({ email: superAdminEmail, password: superAdminPassword })

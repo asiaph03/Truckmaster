@@ -11,6 +11,8 @@ import {
   MalwareScanResult,
 } from '../src/common/malware-scan/malware-scanner.interface';
 
+import { withCsrf } from './support/csrf-agent';
+
 type SuperAgentTest = ReturnType<typeof request.agent>;
 
 /** Every route except /health sits behind the global prefix (main.ts / configure-app.ts). */
@@ -164,7 +166,7 @@ describe('Core Master Data (e2e)', () => {
    * this file's concern.
    */
   async function setUpOrganization(seed: string) {
-    const superAdminAgent = request.agent(app.getHttpServer());
+    const superAdminAgent = await withCsrf(request.agent(app.getHttpServer()));
     await superAdminAgent
       .post(`${API}/auth/login`)
       .send({ email: superAdminEmail, password: superAdminPassword })
@@ -189,12 +191,14 @@ describe('Core Master Data (e2e)', () => {
     const newOrgId: string = createRes.body.organization.id;
 
     const adminToken = extractToken((await lastEmailTo(adminEmail)).body);
-    await request(app.getHttpServer())
+    await (
+      await withCsrf(request.agent(app.getHttpServer()))
+    )
       .post(`${API}/auth/activate`)
       .send({ token: adminToken, password: 'OrgAdminPass123' })
       .expect(200);
 
-    const agent = request.agent(app.getHttpServer());
+    const agent = await withCsrf(request.agent(app.getHttpServer()));
     await agent
       .post(`${API}/auth/login`)
       .send({ email: adminEmail, password: 'OrgAdminPass123' })
@@ -208,12 +212,14 @@ describe('Core Master Data (e2e)', () => {
       .send({ email: reviewerEmail, roles: ['COMPLIANCE_REVIEWER'] })
       .expect(201);
     const reviewerToken = extractToken((await lastEmailTo(reviewerEmail)).body);
-    await request(app.getHttpServer())
+    await (
+      await withCsrf(request.agent(app.getHttpServer()))
+    )
       .post(`${API}/auth/activate`)
       .send({ token: reviewerToken, password: 'ReviewerPass123' })
       .expect(200);
 
-    const revAgent = request.agent(app.getHttpServer());
+    const revAgent = await withCsrf(request.agent(app.getHttpServer()));
     await revAgent
       .post(`${API}/auth/login`)
       .send({ email: reviewerEmail, password: 'ReviewerPass123' })
@@ -437,11 +443,13 @@ describe('Core Master Data (e2e)', () => {
         .send({ email: dualRoleEmail, roles: ['ADMIN', 'COMPLIANCE_REVIEWER'] })
         .expect(201);
       const dualRoleToken = extractToken((await lastEmailTo(dualRoleEmail)).body);
-      await request(app.getHttpServer())
+      await (
+        await withCsrf(request.agent(app.getHttpServer()))
+      )
         .post(`${API}/auth/activate`)
         .send({ token: dualRoleToken, password: 'DualRolePass123' })
         .expect(200);
-      const dualRoleAgent = request.agent(app.getHttpServer());
+      const dualRoleAgent = await withCsrf(request.agent(app.getHttpServer()));
       await dualRoleAgent
         .post(`${API}/auth/login`)
         .send({ email: dualRoleEmail, password: 'DualRolePass123' })

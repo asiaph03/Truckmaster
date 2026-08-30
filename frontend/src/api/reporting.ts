@@ -1,4 +1,4 @@
-import { apiRequest } from './client';
+import { API_BASE, apiRequest } from './client';
 import { ApiError } from './errors';
 
 export interface SearchResultLoad {
@@ -109,7 +109,7 @@ export const reportingApi = {
  * exact approach: a normal browser file download via a throwaway object URL.
  */
 async function downloadCsv(path: string, filename: string): Promise<void> {
-  const response = await fetch(`/api/v1${path}`, { credentials: 'include' });
+  const response = await fetch(`${API_BASE}${path}`, { credentials: 'include' });
   if (!response.ok) {
     const payload = await response.json().catch(() => undefined);
     throw new ApiError(

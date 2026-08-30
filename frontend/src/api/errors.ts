@@ -16,6 +16,9 @@ export const APP_ERROR_CODES = [
   'CONFLICT',
   'POD_INCOMPLETE_WARNING',
   'BUSINESS_RULE_ERROR',
+  // Beta Launch Hardening
+  'CSRF_ERROR',
+  'TOO_MANY_REQUESTS',
 ] as const;
 // "widen a literal union but keep autocomplete" idiom, not an accidental {}.
 // eslint-disable-next-line @typescript-eslint/ban-types

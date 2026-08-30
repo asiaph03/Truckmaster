@@ -32,6 +32,8 @@ const API = '/api/v1';
  * file's existence as proof — only an actual run against reachable
  * infrastructure verifies anything.
  */
+import { withCsrf } from './support/csrf-agent';
+
 type SuperAgentTest = ReturnType<typeof request.agent>;
 
 function soloConnectionUrl(): string {
@@ -112,7 +114,7 @@ describe('RLS tenant-isolation regression suite (e2e)', () => {
       },
     });
 
-    const superAdminAgent = request.agent(app.getHttpServer());
+    const superAdminAgent = await withCsrf(request.agent(app.getHttpServer()));
     await superAdminAgent
       .post(`${API}/auth/login`)
       .send({ email: superAdminEmail, password: superAdminPassword })
@@ -183,7 +185,9 @@ describe('RLS tenant-isolation regression suite (e2e)', () => {
     const organizationId: string = createRes.body.organization.id;
     const token = extractToken((await lastEmailTo(opts.adminEmail)).body);
 
-    await request(app.getHttpServer())
+    await (
+      await withCsrf(request.agent(app.getHttpServer()))
+    )
       .post(`${API}/auth/activate`)
       .send({ token, password: opts.adminPassword })
       .expect(200);
@@ -196,7 +200,7 @@ describe('RLS tenant-isolation regression suite (e2e)', () => {
     if (!adminUser) throw new Error(`Activated user not found for ${opts.adminEmail}`);
     const adminUserId = adminUser.id;
 
-    const agent = request.agent(app.getHttpServer());
+    const agent = await withCsrf(request.agent(app.getHttpServer()));
     const loginRes = await agent
       .post(`${API}/auth/login`)
       .send({ email: opts.adminEmail, password: opts.adminPassword })
@@ -357,7 +361,7 @@ describe('RLS tenant-isolation regression suite (e2e)', () => {
   it('8. login succeeds and returns correct roles/org after activation, for both a single-org and a multi-org identity', async () => {
     // Single-org case: orgA's admin, already logged in during beforeAll —
     // prove it again explicitly here with a fresh agent/session.
-    const freshAgent = request.agent(app.getHttpServer());
+    const freshAgent = await withCsrf(request.agent(app.getHttpServer()));
     const loginRes = await freshAgent
       .post(`${API}/auth/login`)
       .send({ email: 'admin-a@rls-suite.test', password: 'OrgAAdminPass123' })
@@ -381,7 +385,9 @@ describe('RLS tenant-isolation regression suite (e2e)', () => {
       .post(`${API}/memberships/invite`)
       .send({ email: sharedEmail, roles: ['DISPATCHER'] })
       .expect(201);
-    await request(app.getHttpServer())
+    await (
+      await withCsrf(request.agent(app.getHttpServer()))
+    )
       .post(`${API}/auth/activate`)
       .send({
         token: extractToken((await lastEmailTo(sharedEmail)).body),
@@ -393,12 +399,14 @@ describe('RLS tenant-isolation regression suite (e2e)', () => {
       .post(`${API}/memberships/invite`)
       .send({ email: sharedEmail, roles: ['DISPATCHER'] })
       .expect(201);
-    await request(app.getHttpServer())
+    await (
+      await withCsrf(request.agent(app.getHttpServer()))
+    )
       .post(`${API}/auth/activate`)
       .send({ token: extractToken((await lastEmailTo(sharedEmail)).body) })
       .expect(200);
 
-    const sharedAgent = request.agent(app.getHttpServer());
+    const sharedAgent = await withCsrf(request.agent(app.getHttpServer()));
     const sharedLoginRes = await sharedAgent
       .post(`${API}/auth/login`)
       .send({ email: sharedEmail, password: sharedPassword })

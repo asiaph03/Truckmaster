@@ -1,4 +1,5 @@
 import { Body, Controller, Get, HttpCode, Patch, Post, Req } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { Request } from 'express';
 import { AuthService } from '../services/auth.service';
 import { MembershipService } from '../services/membership.service';
@@ -9,6 +10,15 @@ import { ActivateMembershipDto } from '../dto/activate-membership.dto';
 import { UpdateProfileDto } from '../dto/update-profile.dto';
 import { Public } from '../../../common/decorators/public.decorator';
 import { AuthenticationError } from '../../../common/errors/app-error';
+
+/**
+ * Beta Launch Hardening (TECHNICAL_ARCHITECTURE.md §11/§22 R3) —
+ * "10 attempts/15min" is the doc's own illustrative default; applied
+ * per-IP via the global ThrottlerModule (app.module.ts), not per-IP+email
+ * (no composite-key tracker — smallest implementation that satisfies the
+ * locked requirement).
+ */
+const AUTH_THROTTLE = { default: { limit: 10, ttl: 900_000 } };
 
 /**
  * TECHNICAL_ARCHITECTURE.md §5.1 Auth resource row:
@@ -26,6 +36,7 @@ export class AuthController {
   ) {}
 
   @Public()
+  @Throttle(AUTH_THROTTLE)
   @Post('login')
   @HttpCode(200)
   async login(@Body() dto: LoginDto, @Req() req: Request) {
@@ -47,6 +58,7 @@ export class AuthController {
   }
 
   @Public()
+  @Throttle(AUTH_THROTTLE)
   @Post('activate')
   @HttpCode(200)
   async activate(@Body() dto: ActivateMembershipDto) {

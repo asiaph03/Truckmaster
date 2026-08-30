@@ -1,4 +1,4 @@
-import { apiRequest } from './client';
+import { API_BASE, apiRequest } from './client';
 import { ApiError } from './errors';
 
 /**
@@ -142,7 +142,9 @@ async function downloadCsv(path: string, query: object, filename: string): Promi
     params.set(key, String(value));
   }
   const qs = params.toString();
-  const response = await fetch(`/api/v1${path}${qs ? `?${qs}` : ''}`, { credentials: 'include' });
+  const response = await fetch(`${API_BASE}${path}${qs ? `?${qs}` : ''}`, {
+    credentials: 'include',
+  });
   if (!response.ok) {
     const payload = await response.json().catch(() => undefined);
     throw new ApiError(

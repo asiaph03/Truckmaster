@@ -8,6 +8,7 @@ import type Redis from 'ioredis';
 import { AppConfig } from './config/configuration';
 import { REDIS_CLIENT } from './common/redis/redis.module';
 import { SESSION_REDIS_KEY_PREFIX } from './modules/identity/services/session-registry.service';
+import { buildCsrfBootstrapMiddleware } from './common/security/csrf-bootstrap.middleware';
 
 // Prisma returns JS `BigInt` for `BigInt` columns (e.g. Document.fileSizeBytes)
 // regardless of how the value was created — and `JSON.stringify`/Express's
@@ -49,10 +50,67 @@ BigInt.prototype.toJSON = function (this: bigint) {
  */
 export function configureApp(app: INestApplication): void {
   const config = app.get(ConfigService<AppConfig>);
+  const isProduction = config.get('nodeEnv', { infer: true }) === 'production';
 
-  // Security headers (§11 TECHNICAL_ARCHITECTURE.md)
-  app.use(helmet());
+  // Beta Launch Hardening — the proposed deployment topology puts exactly
+  // one reverse proxy (nginx) in front of this app; trusting the first
+  // hop lets Express derive `req.ip`/`req.protocol` from the proxy's
+  // X-Forwarded-* headers correctly (matters for the rate limiter below,
+  // which keys on IP). Harmless when absent (local dev, e2e tests never
+  // send X-Forwarded-* headers, so there's nothing to trust).
+  app.getHttpAdapter().getInstance().set('trust proxy', 1);
+
+  // Vercel + Render deployment — the frontend and backend are on
+  // different origins (yourdomain.com / api.yourdomain.com), so the
+  // browser needs explicit CORS permission to read cross-origin
+  // responses; `credentials: true` is required alongside `credentials:
+  // 'include'` on the frontend for cookies to flow. Never a wildcard —
+  // wildcard origin + credentials is rejected by browsers outright, and
+  // an explicit single configured origin is the correct minimum here
+  // regardless. Empty string (local dev, and the Docker/nginx
+  // same-origin deployment path) never matches any real Origin header,
+  // so this is a safe no-op in both of those cases — same-origin
+  // requests aren't subject to CORS in the first place.
+  app.enableCors({
+    origin: config.get('corsOrigin', { infer: true }) as string,
+    credentials: true,
+  });
+
+  // Security headers (§11 TECHNICAL_ARCHITECTURE.md). The CSP here covers
+  // this backend's own responses (JSON API, /health) as defense in depth
+  // — the CSP that actually governs the rendered SPA lives in
+  // frontend/nginx.conf.template, since nginx (not this backend) serves
+  // the built HTML/JS in the proposed deployment topology. Both lists are
+  // kept in sync deliberately: 'self' only, plus the configured S3
+  // endpoint's origin in connect-src (verified against the real Vite
+  // production build — zero inline scripts/styles, zero other external
+  // origins referenced anywhere in the frontend, so no unsafe-inline/
+  // unsafe-eval is needed).
+  const s3Origin = new URL(config.get('storage.endpoint', { infer: true }) as string).origin;
+  app.use(
+    helmet({
+      contentSecurityPolicy: {
+        directives: {
+          defaultSrc: ["'self'"],
+          scriptSrc: ["'self'"],
+          styleSrc: ["'self'"],
+          imgSrc: ["'self'", 'data:'],
+          fontSrc: ["'self'"],
+          connectSrc: ["'self'", s3Origin],
+          objectSrc: ["'none'"],
+          baseUri: ["'self'"],
+          frameAncestors: ["'none'"],
+          upgradeInsecureRequests: isProduction ? [] : null,
+        },
+      },
+    }),
+  );
   app.use(cookieParser());
+
+  // Beta Launch Hardening — issues the double-submit CSRF cookie (must
+  // run after cookie-parser, which populates `req.cookies`, and before
+  // CsrfGuard, which is registered globally in app.module.ts).
+  app.use(buildCsrfBootstrapMiddleware(isProduction, config.get('cookieDomain', { infer: true })));
 
   // Redis-backed sessions (§3.2/§11) — chosen specifically so
   // deactivating a membership can revoke access immediately (Decision 3;
@@ -63,7 +121,6 @@ export function configureApp(app: INestApplication): void {
   // (post-Phase-8 remediation), which is what actually performs that
   // deletion on deactivation — see session-registry.service.ts.
   const redisClient = app.get<Redis>(REDIS_CLIENT);
-  const isProduction = config.get('nodeEnv', { infer: true }) === 'production';
   app.use(
     session({
       store: new RedisStore({ client: redisClient, prefix: SESSION_REDIS_KEY_PREFIX }),

@@ -1,4 +1,4 @@
-import { apiRequest } from './client';
+import { API_BASE, apiRequest } from './client';
 import { ApiError } from './errors';
 import type { DocumentTypeDefinition } from './documentTypes';
 
@@ -170,7 +170,7 @@ export const documentsApi = {
    */
   exportSearchCsv: async (filters: DocumentSearchFilters): Promise<void> => {
     const qs = buildDocumentSearchQueryString(filters);
-    const response = await fetch(`/api/v1/documents/search/export${qs ? `?${qs}` : ''}`, {
+    const response = await fetch(`${API_BASE}/documents/search/export${qs ? `?${qs}` : ''}`, {
       credentials: 'include',
     });
     if (!response.ok) {

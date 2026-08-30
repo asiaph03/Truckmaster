@@ -1,0 +1,76 @@
+# Beta Launch Hardening — minimum production nginx config: serves the
+# built SPA, reverse-proxies /api/* to the backend (same-origin topology,
+# no backend CORS needed), and sets the CSP that actually governs the
+# rendered page (the backend's own Helmet CSP in configure-app.ts only
+# covers ITS OWN JSON responses — this app's HTML/JS is served here, not
+# by the backend, so this is where the real, enforced CSP lives).
+#
+# Verified against the actual `npm run build` output (frontend/dist):
+# zero inline <script>/<style>, zero external domains referenced
+# anywhere in the built JS/CSS — the only non-self network target is the
+# S3-compatible bucket the browser uploads directly to via presigned
+# URLs, hence the one extra connect-src entry below. No unsafe-inline/
+# unsafe-eval anywhere — the app genuinely doesn't need them.
+#
+# Environment variables required by this container at startup
+# (substituted into this file by nginx's own docker-entrypoint via
+# envsubst — see Dockerfile comment; no real values are set here):
+#   BACKEND_UPSTREAM  e.g. "http://backend:3000" — where /api/* is proxied to
+#   S3_ORIGIN         e.g. "https://my-bucket.s3.us-east-1.amazonaws.com"
+#                     — must match the real S3_ENDPOINT's origin the
+#                     backend is configured with, so presigned uploads
+#                     aren't blocked by this CSP's connect-src.
+
+server {
+  listen 80;
+  server_name _;
+  root /usr/share/nginx/html;
+  index index.html;
+
+  # Beta Launch Hardening — this container is the TLS-terminating
+  # proxy's origin server, not the TLS terminator itself (see deployment
+  # instructions: a real load balancer/reverse proxy in front of this
+  # container is expected to terminate HTTPS). X-Forwarded-Proto from
+  # that upstream proxy is passed through unchanged to the backend below
+  # so its own `trust proxy` setting sees the original scheme.
+  add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self' ${S3_ORIGIN}; object-src 'none'; base-uri 'self'; frame-ancestors 'none';" always;
+  add_header X-Content-Type-Options "nosniff" always;
+  add_header X-Frame-Options "DENY" always;
+  add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
+  # proxy_pass with NO trailing slash/URI here is deliberate: nginx then
+  # forwards the full original request URI unchanged (e.g. /api/v1/customers
+  # stays /api/v1/customers), matching the backend's own `/api/v1` global
+  # prefix exactly. If BACKEND_UPSTREAM is ever substituted WITH a
+  # trailing slash, nginx's proxy_pass semantics change and silently
+  # strip the /api prefix instead — keep it path-less
+  # (e.g. "http://backend:3000", never "http://backend:3000/").
+  location /api/ {
+    proxy_pass ${BACKEND_UPSTREAM};
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    # This container is plain HTTP only (§ header comment above) — $scheme
+    # here is always "http", never the real client's scheme. Forward
+    # whatever the actual TLS-terminating edge in front of this container
+    # already set, so the backend's `trust proxy` sees the true original
+    # scheme, not this hop's own.
+    proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;
+    # Session/CSRF cookies must round-trip untouched.
+    proxy_pass_header Set-Cookie;
+  }
+
+  location /health {
+    proxy_pass ${BACKEND_UPSTREAM};
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;
+  }
+
+  # SPA fallback — any path that isn't a real static asset falls through
+  # to index.html so client-side routing (react-router) owns the URL.
+  location / {
+    try_files $uri /index.html;
+  }
+}

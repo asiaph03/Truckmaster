@@ -1,4 +1,5 @@
 import { Controller, Get, Inject } from '@nestjs/common';
+import { SkipThrottle } from '@nestjs/throttler';
 import type Redis from 'ioredis';
 import { PrismaService } from '../common/prisma/prisma.service';
 import { REDIS_CLIENT } from '../common/redis/redis.module';
@@ -21,8 +22,13 @@ interface HealthCheckResult {
  *
  * Excluded from the global `/api/v1` prefix (see main.ts) since health
  * checks are an infra concern, not a versioned business API.
+ *
+ * Beta Launch Hardening — explicitly `@SkipThrottle()`: a load balancer's
+ * liveness probe polls this route continuously and must never be rate-
+ * limited, regardless of how the global default is tuned later.
  */
 @Controller('health')
+@SkipThrottle()
 export class HealthController {
   constructor(
     private readonly prisma: PrismaService,

@@ -41,6 +41,23 @@ export interface AppConfig {
     apiKey: string;
     fromAddress: string;
   };
+  /**
+   * Vercel + Render deployment — the frontend's production origin, used
+   * for both CORS (§ configure-app.ts) and the CSRF cookie's Domain
+   * attribute (§ csrf-bootstrap.middleware.ts). Empty string in local dev
+   * and in the Docker/nginx same-origin deployment path, neither of which
+   * needs cross-origin CORS at all.
+   */
+  corsOrigin: string;
+  /**
+   * Vercel + Render deployment — shared parent domain (e.g.
+   * ".yourdomain.com") the CSRF cookie's Domain attribute is widened to,
+   * so frontend JS on the Vercel origin can read a cookie issued by the
+   * Render origin via document.cookie. Empty string leaves the cookie
+   * host-only, exactly as today — local dev and the Docker/nginx
+   * same-origin path must never set this.
+   */
+  cookieDomain: string;
 }
 
 export default (): AppConfig => ({
@@ -71,4 +88,6 @@ export default (): AppConfig => ({
     apiKey: process.env.POSTMARK_API_KEY || '',
     fromAddress: process.env.POSTMARK_FROM_ADDRESS || '',
   },
+  corsOrigin: process.env.CORS_ORIGIN || '',
+  cookieDomain: process.env.COOKIE_DOMAIN || '',
 });

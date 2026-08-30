@@ -33,6 +33,8 @@ const API = '/api/v1';
  * anything; see the Phase 2 verification report for current pass/fail
  * status.
  */
+import { withCsrf } from './support/csrf-agent';
+
 type SuperAgentTest = ReturnType<typeof request.agent>;
 
 describe('Identity & Tenancy (e2e)', () => {
@@ -136,14 +138,16 @@ describe('Identity & Tenancy (e2e)', () => {
     const organizationId: string = createRes.body.organization.id;
     const token = extractToken((await lastEmailTo(opts.adminEmail)).body);
 
-    const activateRes = await request(app.getHttpServer())
+    const activateRes = await (
+      await withCsrf(request.agent(app.getHttpServer()))
+    )
       .post(`${API}/auth/activate`)
       .send({ token, password: opts.adminPassword })
       .expect(200);
 
     expect(activateRes.body.organizationId).toBe(organizationId);
 
-    const agent = request.agent(app.getHttpServer());
+    const agent = await withCsrf(request.agent(app.getHttpServer()));
     const loginRes = await agent
       .post(`${API}/auth/login`)
       .send({ email: opts.adminEmail, password: opts.adminPassword })
@@ -154,7 +158,7 @@ describe('Identity & Tenancy (e2e)', () => {
   }
 
   it('runs the full Workflow 1 lifecycle: org creation, verification, invite, activation, login, roles, zero-Admin protection', async () => {
-    const superAdminAgent = request.agent(app.getHttpServer());
+    const superAdminAgent = await withCsrf(request.agent(app.getHttpServer()));
     await superAdminAgent
       .post(`${API}/auth/login`)
       .send({ email: superAdminEmail, password: superAdminPassword })
@@ -178,12 +182,14 @@ describe('Identity & Tenancy (e2e)', () => {
 
     // §1.5 — invitee activates via the same mechanical operation as §1.3.
     const dispatcherToken = extractToken((await lastEmailTo('dispatcher@acme-freight.test')).body);
-    await request(app.getHttpServer())
+    await (
+      await withCsrf(request.agent(app.getHttpServer()))
+    )
       .post(`${API}/auth/activate`)
       .send({ token: dispatcherToken, password: 'DispatcherPass123' })
       .expect(200);
 
-    const dispatcherAgent = request.agent(app.getHttpServer());
+    const dispatcherAgent = await withCsrf(request.agent(app.getHttpServer()));
     const dispatcherLogin = await dispatcherAgent
       .post(`${API}/auth/login`)
       .send({ email: 'dispatcher@acme-freight.test', password: 'DispatcherPass123' })
@@ -213,7 +219,7 @@ describe('Identity & Tenancy (e2e)', () => {
   });
 
   it('reuses an existing global User as the initial Admin of a second organization, rather than creating a duplicate identity', async () => {
-    const superAdminAgent = request.agent(app.getHttpServer());
+    const superAdminAgent = await withCsrf(request.agent(app.getHttpServer()));
     await superAdminAgent
       .post(`${API}/auth/login`)
       .send({ email: superAdminEmail, password: superAdminPassword })
@@ -254,7 +260,9 @@ describe('Identity & Tenancy (e2e)', () => {
     // Activation for the reused identity requires no password — the
     // account is already verified from the first organization.
     const orgTwoToken = extractToken(reuseEmail.body);
-    const activateSecondRes = await request(app.getHttpServer())
+    const activateSecondRes = await (
+      await withCsrf(request.agent(app.getHttpServer()))
+    )
       .post(`${API}/auth/activate`)
       .send({ token: orgTwoToken })
       .expect(200);
@@ -262,7 +270,7 @@ describe('Identity & Tenancy (e2e)', () => {
 
     // The shared identity now has two active memberships, so login must
     // land in the org-pending state rather than auto-selecting one.
-    const sharedAgent = request.agent(app.getHttpServer());
+    const sharedAgent = await withCsrf(request.agent(app.getHttpServer()));
     const loginRes = await sharedAgent
       .post(`${API}/auth/login`)
       .send({ email: sharedEmail, password: sharedPassword })
@@ -283,7 +291,7 @@ describe('Identity & Tenancy (e2e)', () => {
   });
 
   it("immediately revokes a deactivated member's existing session — Workflow 1 §1.7 (post-Phase-8 remediation, Priority 2)", async () => {
-    const superAdminAgent = request.agent(app.getHttpServer());
+    const superAdminAgent = await withCsrf(request.agent(app.getHttpServer()));
     await superAdminAgent
       .post(`${API}/auth/login`)
       .send({ email: superAdminEmail, password: superAdminPassword })
@@ -301,13 +309,15 @@ describe('Identity & Tenancy (e2e)', () => {
       .send({ email: 'target@revocation-test.test', roles: ['DISPATCHER'] })
       .expect(201);
     const targetToken = extractToken((await lastEmailTo('target@revocation-test.test')).body);
-    await request(app.getHttpServer())
+    await (
+      await withCsrf(request.agent(app.getHttpServer()))
+    )
       .post(`${API}/auth/activate`)
       .send({ token: targetToken, password: 'TargetPass123' })
       .expect(200);
 
     // The target's own agent — its cookie is the one that must stop working.
-    const targetAgent = request.agent(app.getHttpServer());
+    const targetAgent = await withCsrf(request.agent(app.getHttpServer()));
     await targetAgent
       .post(`${API}/auth/login`)
       .send({ email: 'target@revocation-test.test', password: 'TargetPass123' })
@@ -325,7 +335,7 @@ describe('Identity & Tenancy (e2e)', () => {
   });
 
   it('does not revoke a session that switched to a different organization where the user remains Active (deactivation is per-membership, Priority 2)', async () => {
-    const superAdminAgent = request.agent(app.getHttpServer());
+    const superAdminAgent = await withCsrf(request.agent(app.getHttpServer()));
     await superAdminAgent
       .post(`${API}/auth/login`)
       .send({ email: superAdminEmail, password: superAdminPassword })
@@ -357,7 +367,9 @@ describe('Identity & Tenancy (e2e)', () => {
       .send({ email: sharedEmail, roles: ['DISPATCHER'] })
       .expect(201);
     const orgAInviteToken = extractToken((await lastEmailTo(sharedEmail)).body);
-    await request(app.getHttpServer())
+    await (
+      await withCsrf(request.agent(app.getHttpServer()))
+    )
       .post(`${API}/auth/activate`)
       .send({ token: orgAInviteToken, password: sharedPassword })
       .expect(200);
@@ -369,12 +381,14 @@ describe('Identity & Tenancy (e2e)', () => {
     // Already-verified identity — activation needs no password (mirrors
     // the "reuses an existing global User" test's second activation call).
     const orgBInviteToken = extractToken((await lastEmailTo(sharedEmail)).body);
-    await request(app.getHttpServer())
+    await (
+      await withCsrf(request.agent(app.getHttpServer()))
+    )
       .post(`${API}/auth/activate`)
       .send({ token: orgBInviteToken })
       .expect(200);
 
-    const sharedAgent = request.agent(app.getHttpServer());
+    const sharedAgent = await withCsrf(request.agent(app.getHttpServer()));
     const loginRes = await sharedAgent
       .post(`${API}/auth/login`)
       .send({ email: sharedEmail, password: sharedPassword })
@@ -404,7 +418,7 @@ describe('Identity & Tenancy (e2e)', () => {
   });
 
   it("proves cross-tenant isolation: one organization cannot read, list, or act on another organization's membership data", async () => {
-    const superAdminAgent = request.agent(app.getHttpServer());
+    const superAdminAgent = await withCsrf(request.agent(app.getHttpServer()));
     await superAdminAgent
       .post(`${API}/auth/login`)
       .send({ email: superAdminEmail, password: superAdminPassword })
@@ -492,7 +506,9 @@ describe('Identity & Tenancy (e2e)', () => {
       const token = extractToken(
         (await lastEmailTo(`dispatcher-${seed}@role-edit-test.test`)).body,
       );
-      await request(app.getHttpServer())
+      await (
+        await withCsrf(request.agent(app.getHttpServer()))
+      )
         .post(`${API}/auth/activate`)
         .send({ token, password: 'DispatcherPass123' })
         .expect(200);
@@ -506,7 +522,7 @@ describe('Identity & Tenancy (e2e)', () => {
     }
 
     it("Admin can change another active member's role", async () => {
-      const superAdminAgent = request.agent(app.getHttpServer());
+      const superAdminAgent = await withCsrf(request.agent(app.getHttpServer()));
       await superAdminAgent
         .post(`${API}/auth/login`)
         .send({ email: superAdminEmail, password: superAdminPassword })
@@ -524,7 +540,7 @@ describe('Identity & Tenancy (e2e)', () => {
     });
 
     it("a non-Admin cannot change a member's role", async () => {
-      const superAdminAgent = request.agent(app.getHttpServer());
+      const superAdminAgent = await withCsrf(request.agent(app.getHttpServer()));
       await superAdminAgent
         .post(`${API}/auth/login`)
         .send({ email: superAdminEmail, password: superAdminPassword })
@@ -534,7 +550,7 @@ describe('Identity & Tenancy (e2e)', () => {
         superAdminAgent,
       );
 
-      const dispatcherAgent = request.agent(app.getHttpServer());
+      const dispatcherAgent = await withCsrf(request.agent(app.getHttpServer()));
       await dispatcherAgent
         .post(`${API}/auth/login`)
         .send({
@@ -550,7 +566,7 @@ describe('Identity & Tenancy (e2e)', () => {
     });
 
     it('rejects a cross-tenant role change', async () => {
-      const superAdminAgent = request.agent(app.getHttpServer());
+      const superAdminAgent = await withCsrf(request.agent(app.getHttpServer()));
       await superAdminAgent
         .post(`${API}/auth/login`)
         .send({ email: superAdminEmail, password: superAdminPassword })
@@ -568,7 +584,7 @@ describe('Identity & Tenancy (e2e)', () => {
     });
 
     it('blocks demoting the last active Admin to a non-Admin role set', async () => {
-      const superAdminAgent = request.agent(app.getHttpServer());
+      const superAdminAgent = await withCsrf(request.agent(app.getHttpServer()));
       await superAdminAgent
         .post(`${API}/auth/login`)
         .send({ email: superAdminEmail, password: superAdminPassword })
@@ -591,7 +607,7 @@ describe('Identity & Tenancy (e2e)', () => {
     });
 
     it('blocks deactivating the last active Admin (existing zero-Admin protection, re-confirmed alongside role editing)', async () => {
-      const superAdminAgent = request.agent(app.getHttpServer());
+      const superAdminAgent = await withCsrf(request.agent(app.getHttpServer()));
       await superAdminAgent
         .post(`${API}/auth/login`)
         .send({ email: superAdminEmail, password: superAdminPassword })
@@ -605,7 +621,7 @@ describe('Identity & Tenancy (e2e)', () => {
     });
 
     it('allows demoting an Admin once a second active Admin exists', async () => {
-      const superAdminAgent = request.agent(app.getHttpServer());
+      const superAdminAgent = await withCsrf(request.agent(app.getHttpServer()));
       await superAdminAgent
         .post(`${API}/auth/login`)
         .send({ email: superAdminEmail, password: superAdminPassword })
@@ -630,7 +646,7 @@ describe('Identity & Tenancy (e2e)', () => {
     });
 
     it('rejects changing roles on a non-Active membership (e.g. still Invited)', async () => {
-      const superAdminAgent = request.agent(app.getHttpServer());
+      const superAdminAgent = await withCsrf(request.agent(app.getHttpServer()));
       await superAdminAgent
         .post(`${API}/auth/login`)
         .send({ email: superAdminEmail, password: superAdminPassword })

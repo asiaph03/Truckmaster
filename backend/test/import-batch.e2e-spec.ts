@@ -8,6 +8,8 @@ import { PrismaService } from '../src/common/prisma/prisma.service';
 import { PasswordService } from '../src/modules/identity/services/password.service';
 import { EMAIL_SENDER, IEmailSender } from '../src/common/email/email-sender.interface';
 
+import { withCsrf } from './support/csrf-agent';
+
 type SuperAgentTest = ReturnType<typeof request.agent>;
 
 const API = '/api/v1';
@@ -93,17 +95,19 @@ describe('Bulk CSV/Excel Import (e2e)', () => {
 
   async function activateAndLogin(email: string, password: string): Promise<SuperAgentTest> {
     const token = extractToken((await lastEmailTo(email)).body);
-    await request(app.getHttpServer())
+    await (
+      await withCsrf(request.agent(app.getHttpServer()))
+    )
       .post(`${API}/auth/activate`)
       .send({ token, password })
       .expect(200);
-    const agent = request.agent(app.getHttpServer());
+    const agent = await withCsrf(request.agent(app.getHttpServer()));
     await agent.post(`${API}/auth/login`).send({ email, password }).expect(200);
     return agent;
   }
 
   async function setUpOrganization(seed: string) {
-    const superAdminAgent = request.agent(app.getHttpServer());
+    const superAdminAgent = await withCsrf(request.agent(app.getHttpServer()));
     await superAdminAgent
       .post(`${API}/auth/login`)
       .send({ email: superAdminEmail, password: superAdminPassword })
@@ -808,9 +812,7 @@ describe('Bulk CSV/Excel Import (e2e)', () => {
         org.adminAgent.post(`${API}/import-batches/${importBatchId}/commit`),
       ]);
 
-      const results = [first, second].map((r) =>
-        r.status === 'fulfilled' ? r.value.status : -1,
-      );
+      const results = [first, second].map((r) => (r.status === 'fulfilled' ? r.value.status : -1));
       // Exactly one of the two concurrent requests transitions the batch;
       // the other observes updateMany affect 0 rows and gets a clean 400,
       // never a second enqueued job.

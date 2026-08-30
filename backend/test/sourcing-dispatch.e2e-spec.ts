@@ -8,6 +8,8 @@ import { PasswordService } from '../src/modules/identity/services/password.servi
 import { EMAIL_SENDER, IEmailSender } from '../src/common/email/email-sender.interface';
 import { MALWARE_SCANNER } from '../src/common/malware-scan/malware-scanner.interface';
 
+import { withCsrf } from './support/csrf-agent';
+
 type SuperAgentTest = ReturnType<typeof request.agent>;
 
 /** Every route except /health sits behind the global prefix (main.ts / configure-app.ts). */
@@ -226,17 +228,19 @@ describe('Sourcing & Dispatch (e2e)', () => {
 
   async function activateAndLogin(email: string, password: string): Promise<SuperAgentTest> {
     const token = extractToken((await lastEmailTo(email)).body);
-    await request(app.getHttpServer())
+    await (
+      await withCsrf(request.agent(app.getHttpServer()))
+    )
       .post(`${API}/auth/activate`)
       .send({ token, password })
       .expect(200);
-    const agent = request.agent(app.getHttpServer());
+    const agent = await withCsrf(request.agent(app.getHttpServer()));
     await agent.post(`${API}/auth/login`).send({ email, password }).expect(200);
     return agent;
   }
 
   async function setUpOrganization(seed: string) {
-    const superAdminAgent = request.agent(app.getHttpServer());
+    const superAdminAgent = await withCsrf(request.agent(app.getHttpServer()));
     await superAdminAgent
       .post(`${API}/auth/login`)
       .send({ email: superAdminEmail, password: superAdminPassword })
