@@ -16,7 +16,7 @@ import {
 } from '../../../components/ui';
 import { useToast } from '../../../components/ui/toastStore';
 import { usePermissions } from '../../../hooks/usePermissions';
-import { formatDateShort } from '../loadDerived';
+import { formatDateShort, stopCompanyName } from '../loadDerived';
 import '../../shared/DetailPage.css';
 
 const RISK_OPTIONS: { value: RiskStatus; label: string }[] = [
@@ -128,7 +128,11 @@ export function StopsTrackingTab({ load, onChanged }: { load: Load; onChanged: (
             header: 'Type',
             render: (s) => <Badge label={s.stopType} color="neutral" />,
           },
-          { key: 'location', header: 'Location', render: (s) => `${s.city}, ${s.state} ${s.zip}` },
+          {
+            key: 'location',
+            header: 'Location',
+            render: (s) => `${stopCompanyName(s, load)} — ${s.city}, ${s.state} ${s.zip}`,
+          },
           {
             key: 'scheduled',
             header: 'Scheduled',

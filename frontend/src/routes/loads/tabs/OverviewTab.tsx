@@ -5,7 +5,7 @@ import { carriersApi, customersApi, loadsApi, membershipsApi, type Load } from '
 import { Badge, ChecklistItem } from '../../../components/ui';
 import { getStatusBadgeColor } from '../../../components/ui/statusBadgeMap';
 import { usePermissions } from '../../../hooks/usePermissions';
-import { formatDateShort, originDestination } from '../loadDerived';
+import { formatDateShort, originDestination, stopCompanyName } from '../loadDerived';
 import '../../shared/DetailPage.css';
 import '../LoadDetailPage.css';
 
@@ -85,6 +85,7 @@ export function OverviewTab({ load }: { load: Load }) {
             <div key={stop.id} className="load-stop-mini-row">
               <span>Stop {stop.sequence}</span>
               <Badge label={stop.stopType} color="neutral" />
+              <span className="load-stop-mini-company">{stopCompanyName(stop, load)}</span>
               <span className="load-stop-mini-location">
                 {stop.city}, {stop.state}
               </span>

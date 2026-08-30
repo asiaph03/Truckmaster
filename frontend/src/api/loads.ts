@@ -29,6 +29,10 @@ export interface Stop {
   sequence: number;
   stopType: StopType;
   customerLocationId?: string;
+  // Only present when customerLocationId is set (a saved location) --
+  // absent for a manually-entered/lane-level stop, which falls back to
+  // the load's own `customer` instead.
+  customerLocation?: { customer: { id: string; legalName: string } } | null;
   addressLine1?: string;
   city: string;
   state: string;
@@ -123,6 +127,7 @@ export interface Load {
   id: string;
   loadNumber: string;
   customerId: string;
+  customer: { id: string; legalName: string };
   bookingSource: BookingSource;
   quoteId?: string;
   status: LoadStatus;

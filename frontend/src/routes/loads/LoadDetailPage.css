@@ -28,6 +28,12 @@
   border-bottom: none;
 }
 
+.load-stop-mini-company {
+  color: var(--neutral-800);
+  font-size: var(--text-small-size);
+  font-weight: 500;
+}
+
 .load-stop-mini-location {
   flex: 1;
   color: var(--neutral-700);
