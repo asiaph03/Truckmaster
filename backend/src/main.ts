@@ -11,9 +11,10 @@ async function bootstrap() {
 
   const config = app.get(ConfigService<AppConfig>);
   const port = config.get('port', { infer: true }) as number;
-  await app.listen(port);
+  const host = config.get('host', { infer: true }) as string;
+  await app.listen(port, host);
   // eslint-disable-next-line no-console
-  console.log(`TMS backend listening on port ${port}`);
+  console.log(`TMS backend listening on ${host}:${port}`);
 }
 
 bootstrap();

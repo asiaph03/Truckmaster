@@ -7,6 +7,15 @@
 export interface AppConfig {
   nodeEnv: string;
   port: number;
+  /**
+   * Self-hosted beta — the address the HTTP server binds to. Defaults to
+   * `0.0.0.0` (all interfaces), matching Nest's own default and required
+   * for Docker/Render, where the platform's reverse proxy reaches the
+   * container over its network interface, not literal loopback. Set to
+   * `127.0.0.1` only when a local reverse proxy (e.g. Cloudflare Tunnel)
+   * on the same machine is the sole intended entry point.
+   */
+  host: string;
   database: {
     url: string;
   };
@@ -63,6 +72,7 @@ export interface AppConfig {
 export default (): AppConfig => ({
   nodeEnv: process.env.NODE_ENV || 'development',
   port: parseInt(process.env.PORT || '3000', 10),
+  host: process.env.HOST || '0.0.0.0',
   database: {
     url: process.env.DATABASE_URL || '',
   },
