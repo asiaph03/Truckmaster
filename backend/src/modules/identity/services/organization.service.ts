@@ -1,9 +1,11 @@
 import { Injectable } from '@nestjs/common';
 import { Inject } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { Organization } from '@prisma/client';
 import { Queue } from 'bullmq';
 import { PrismaService } from '../../../common/prisma/prisma.service';
 import { AuditService } from '../../../common/audit/audit.service';
+import { AppConfig } from '../../../config/configuration';
 import { TokenService } from './token.service';
 import { UserService } from './user.service';
 import { CreateOrganizationDto } from '../dto/create-organization.dto';
@@ -55,6 +57,7 @@ export class OrganizationService {
     private readonly tokenService: TokenService,
     private readonly audit: AuditService,
     @Inject(EMAIL_QUEUE) private readonly emailQueue: Queue,
+    private readonly config: ConfigService<AppConfig>,
   ) {}
 
   async createOrganization(
@@ -169,14 +172,15 @@ export class OrganizationService {
       return { organization, rawToken };
     });
 
+    const appBaseUrl = this.config.get('appBaseUrl', { infer: true });
     const emailContent = existingUser
       ? {
           subject: "You've been made the Admin of a new organization — Truck Master TMS",
-          body: `You've been made the initial Admin of a new organization on Truck Master TMS. Accept: /accept-invitation?token=${result.rawToken}\nThis link expires in ${INVITATION_EXPIRY_DAYS} days.`,
+          body: `You've been made the initial Admin of a new organization on Truck Master TMS. Accept: ${appBaseUrl}/accept-invitation?token=${result.rawToken}\nThis link expires in ${INVITATION_EXPIRY_DAYS} days.`,
         }
       : {
           subject: 'Verify your account — Truck Master TMS',
-          body: `Welcome to Truck Master TMS. Verify your account: /verify?token=${result.rawToken}\nThis link expires in ${INVITATION_EXPIRY_DAYS} days.`,
+          body: `Welcome to Truck Master TMS. Verify your account: ${appBaseUrl}/verify?token=${result.rawToken}\nThis link expires in ${INVITATION_EXPIRY_DAYS} days.`,
         };
 
     await this.emailQueue.add(

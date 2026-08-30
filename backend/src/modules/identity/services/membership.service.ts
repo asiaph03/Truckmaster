@@ -1,8 +1,10 @@
 import { Inject, Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { MembershipRoleName, OrganizationMembership, Prisma } from '@prisma/client';
 import { Queue } from 'bullmq';
 import { PrismaService } from '../../../common/prisma/prisma.service';
 import { AuditService } from '../../../common/audit/audit.service';
+import { AppConfig } from '../../../config/configuration';
 import { TokenService } from './token.service';
 import { UserService } from './user.service';
 import { PasswordService } from './password.service';
@@ -33,6 +35,7 @@ export class MembershipService {
     private readonly audit: AuditService,
     private readonly sessionRegistry: SessionRegistryService,
     @Inject(EMAIL_QUEUE) private readonly emailQueue: Queue,
+    private readonly config: ConfigService<AppConfig>,
   ) {}
 
   // ---------------------------------------------------------------------
@@ -154,7 +157,7 @@ export class MembershipService {
       {
         to: dto.email,
         subject: "You've been invited to join Truck Master TMS",
-        body: `You've been invited to join an organization on Truck Master TMS. Accept: /accept-invitation?token=${rawToken}\nThis link expires in ${INVITATION_EXPIRY_DAYS} days.`,
+        body: `You've been invited to join an organization on Truck Master TMS. Accept: ${this.config.get('appBaseUrl', { infer: true })}/accept-invitation?token=${rawToken}\nThis link expires in ${INVITATION_EXPIRY_DAYS} days.`,
         organizationId,
         entityType: 'OrganizationMembership',
         entityId: membership.id,
@@ -212,7 +215,7 @@ export class MembershipService {
         {
           to: recipientEmail,
           subject: "You've been invited to join Truck Master TMS",
-          body: `Accept: /accept-invitation?token=${rawToken}\nThis link expires in ${INVITATION_EXPIRY_DAYS} days.`,
+          body: `Accept: ${this.config.get('appBaseUrl', { infer: true })}/accept-invitation?token=${rawToken}\nThis link expires in ${INVITATION_EXPIRY_DAYS} days.`,
           organizationId,
           entityType: 'OrganizationMembership',
           entityId: membershipId,

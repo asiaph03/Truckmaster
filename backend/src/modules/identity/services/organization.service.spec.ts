@@ -56,6 +56,7 @@ describe('OrganizationService.createOrganization', () => {
       tokenService as never,
       audit as never,
       emailQueue as never,
+      { get: jest.fn().mockReturnValue('https://www.truckmasterdispatch.com') } as never,
     );
 
     return { service, tx, userService, audit, emailQueue, createdOrganization, createdUser };
@@ -169,6 +170,7 @@ describe('OrganizationService.getCurrent / update', () => {
       {} as never,
       {} as never,
       audit as never,
+      {} as never,
       {} as never,
     );
 

@@ -71,6 +71,7 @@ describe('MembershipService.deactivate — zero-Admin protection', () => {
       audit as never,
       sessionRegistry as never,
       undefined as never,
+      undefined as never,
     );
 
     return { service, tx, audit, target, sessionRegistry };
@@ -240,6 +241,7 @@ describe('MembershipService.updateRoles — last-Admin protection', () => {
       undefined as never,
       undefined as never,
       audit as never,
+      undefined as never,
       undefined as never,
       undefined as never,
     );

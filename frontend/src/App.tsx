@@ -1,7 +1,8 @@
 import { useEffect } from 'react';
-import { Navigate, Route, Routes } from 'react-router-dom';
+import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { useSessionStore } from './auth/session-store';
 import { LoginPage } from './routes/LoginPage';
+import { ActivateAccountPage } from './routes/ActivateAccountPage';
 import { SelectOrganizationPage } from './routes/SelectOrganizationPage';
 import { DashboardPage } from './routes/DashboardPage';
 import { CustomerListPage } from './routes/customers/CustomerListPage';
@@ -74,10 +75,23 @@ import { ToastViewport } from './components/ui';
 function App() {
   const status = useSessionStore((s) => s.status);
   const bootstrap = useSessionStore((s) => s.bootstrap);
+  const location = useLocation();
 
   useEffect(() => {
     bootstrap();
   }, [bootstrap]);
+
+  // Public, session-independent — an invited user has no session at all
+  // yet. Checked before the loading/auth-status gates below so it renders
+  // immediately, without waiting on the GET /auth/me bootstrap round-trip.
+  if (location.pathname === '/accept-invitation' || location.pathname === '/verify') {
+    return (
+      <>
+        <ActivateAccountPage />
+        <ToastViewport />
+      </>
+    );
+  }
 
   if (status === 'loading') return <BootLoading />;
   if (status === 'unauthenticated') {

@@ -67,6 +67,13 @@ export interface AppConfig {
    * same-origin path must never set this.
    */
   cookieDomain: string;
+  /**
+   * Frontend Phase 23 — the frontend's absolute origin, used to build
+   * clickable links in transactional emails (invitation/verification —
+   * see MembershipService.invite/resend, OrganizationService.createOrganization).
+   * Empty string in local dev, where these links are informational only.
+   */
+  appBaseUrl: string;
 }
 
 export default (): AppConfig => ({
@@ -100,4 +107,5 @@ export default (): AppConfig => ({
   },
   corsOrigin: process.env.CORS_ORIGIN || '',
   cookieDomain: process.env.COOKIE_DOMAIN || '',
+  appBaseUrl: process.env.APP_BASE_URL || '',
 });
