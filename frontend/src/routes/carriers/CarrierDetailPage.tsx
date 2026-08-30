@@ -123,11 +123,9 @@ export function CarrierDetailPage() {
           {can('activateCarrier') && carrier.status === 'PENDING' ? (
             <Button
               loading={activating}
-              disabled={!carrier.assignmentEligible}
+              disabled={!carrier.activationReady}
               title={
-                !carrier.assignmentEligible
-                  ? (carrier.ineligibilityReasons ?? []).join('; ')
-                  : undefined
+                !carrier.activationReady ? (carrier.activationReasons ?? []).join('; ') : undefined
               }
               onClick={onActivate}
             >

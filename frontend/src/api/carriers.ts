@@ -112,6 +112,13 @@ export interface Carrier {
   // insurance/FMCSA/document event, not by carrier creation itself), so
   // a freshly-created carrier has `null` here, not `[]`.
   ineligibilityReasons: string[] | null;
+  // Only present when status === 'PENDING' -- the narrower activation-
+  // readiness check (the 6 compliance conditions only, no status check,
+  // since a Pending carrier's status can never itself be Active yet).
+  // This is the correct signal for the Activate button; assignmentEligible
+  // above is structurally always false pre-activation and is not it.
+  activationReady?: boolean;
+  activationReasons?: string[];
   createdAt: string;
   contacts?: CarrierContact[];
   insuranceRecords?: CarrierInsuranceRecord[];

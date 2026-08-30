@@ -29,8 +29,8 @@ export class CarrierService {
   ) {}
 
   async findById(organizationId: string, id: string) {
-    const carrier = await this.prisma.withTenantTransaction(organizationId, (tx) =>
-      tx.carrier.findFirst({
+    return this.prisma.withTenantTransaction(organizationId, async (tx) => {
+      const carrier = await tx.carrier.findFirst({
         where: { id, organizationId },
         include: {
           contacts: true,
@@ -42,10 +42,26 @@ export class CarrierService {
           trucks: true,
           trailers: true,
         },
-      }),
-    );
-    if (!carrier) throw new NotFoundError('Carrier not found.');
-    return carrier;
+      });
+      if (!carrier) throw new NotFoundError('Carrier not found.');
+
+      // Only a Pending carrier can ever be activated, and assignmentEligible
+      // is structurally always false pre-activation (recalculate() itself
+      // includes the "status is Active" condition -- see
+      // CarrierEligibilityService's own doc comment). Surface the narrower,
+      // activation-specific readiness check here too so the frontend's
+      // Activate button can gate on the correct signal instead.
+      if (carrier.status === 'PENDING') {
+        const readiness = await this.eligibility.checkActivationReadiness(tx, organizationId, id);
+        return {
+          ...carrier,
+          activationReady: readiness.eligible,
+          activationReasons: readiness.reasons,
+        };
+      }
+
+      return { ...carrier, activationReady: undefined, activationReasons: undefined };
+    });
   }
 
   list(organizationId: string, filters: { status?: string; assignmentEligible?: boolean } = {}) {

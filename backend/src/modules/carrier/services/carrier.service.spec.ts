@@ -133,4 +133,56 @@ describe('CarrierService', () => {
       expect(eligibility.recalculate).toHaveBeenCalledWith(tx, ORG_ID, 'c1');
     });
   });
+
+  describe('findById — activation readiness (Activate button gating)', () => {
+    it('exposes activationReady=true for a Pending carrier that passes all 6 compliance checks', async () => {
+      const { service, eligibility } = buildService({
+        carrier: { id: 'c1', status: 'PENDING', assignmentEligible: false },
+        activationReadiness: { eligible: true, reasons: [] },
+      });
+
+      const result = await service.findById(ORG_ID, 'c1');
+
+      expect(result.activationReady).toBe(true);
+      expect(result.activationReasons).toEqual([]);
+      expect(eligibility.checkActivationReadiness).toHaveBeenCalledWith(
+        expect.anything(),
+        ORG_ID,
+        'c1',
+      );
+      // assignmentEligible is untouched -- still the structurally-always-false
+      // recalculate() result for a Pending carrier, not the readiness check.
+      expect(result.assignmentEligible).toBe(false);
+    });
+
+    it('exposes activationReady=false with the unmet reasons when a compliance requirement fails', async () => {
+      const { service } = buildService({
+        carrier: { id: 'c1', status: 'PENDING', assignmentEligible: false },
+        activationReadiness: { eligible: false, reasons: ['Notice of Assignment is not approved'] },
+      });
+
+      const result = await service.findById(ORG_ID, 'c1');
+
+      expect(result.activationReady).toBe(false);
+      expect(result.activationReasons).toEqual(['Notice of Assignment is not approved']);
+    });
+
+    it('does not compute activation readiness for an Active carrier -- assignmentEligible remains the signal', async () => {
+      const { service, eligibility } = buildService({
+        carrier: {
+          id: 'c1',
+          status: 'ACTIVE',
+          assignmentEligible: true,
+          ineligibilityReasons: [],
+        },
+      });
+
+      const result = await service.findById(ORG_ID, 'c1');
+
+      expect(result.activationReady).toBeUndefined();
+      expect(eligibility.checkActivationReadiness).not.toHaveBeenCalled();
+      expect(result.assignmentEligible).toBe(true);
+      expect(result.ineligibilityReasons).toEqual([]);
+    });
+  });
 });
