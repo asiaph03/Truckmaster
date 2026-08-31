@@ -11,6 +11,7 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../../../common/prisma/prisma.service';
 import { AuditService } from '../../../common/audit/audit.service';
+import { parseBusinessDateTime } from '../../../common/timezone/business-timezone';
 import { OrganizationSequenceService } from '../../identity/services/organization-sequence.service';
 import { RateAgreementMatchingService } from './rate-agreement-matching.service';
 import { shapeFinancialFields, shapeFinancialFieldsList } from './financial-field-shaping';
@@ -289,7 +290,7 @@ export class LoadService {
             state: stop.state,
             zip: stop.zip,
             appointmentDatetime: stop.appointmentDatetime
-              ? new Date(stop.appointmentDatetime)
+              ? parseBusinessDateTime(stop.appointmentDatetime)
               : undefined,
             contactName: stop.contactName,
             contactPhone: stop.contactPhone,

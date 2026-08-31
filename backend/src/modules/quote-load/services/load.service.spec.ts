@@ -176,6 +176,39 @@ describe('LoadService.createDirect — Workflow 4 §4.8', () => {
     ]);
   });
 
+  it('Timezone fix: interprets a naive stop appointmentDatetime (New Load form datetime-local) as America/New_York, not server-local time', async () => {
+    const { service, tx } = buildService({});
+
+    await service.createDirect(
+      ORG_ID,
+      {
+        customerId: CUSTOMER_ID,
+        stops: [
+          { ...BASE_STOPS[0], appointmentDatetime: '2026-09-01T14:30' },
+          BASE_STOPS[1],
+        ] as never,
+        equipmentType: 'DRY_VAN',
+        customerRate: '1800.00',
+      },
+      USER_ID,
+    );
+
+    expect(tx.load.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          stops: expect.objectContaining({
+            create: expect.arrayContaining([
+              expect.objectContaining({
+                sequence: 1,
+                appointmentDatetime: new Date('2026-09-01T18:30:00.000Z'),
+              }),
+            ]),
+          }),
+        }),
+      }),
+    );
+  });
+
   it('Phase 6: creates an ORIGINAL customer-side LINEHAUL ChargeLineItem at booking time (DATABASE_DESIGN.md §14)', async () => {
     const { service, tx } = buildService({});
 

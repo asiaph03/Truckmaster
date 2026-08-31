@@ -4,6 +4,7 @@ import { loadsApi, type LoadSummary, type Stop } from '../../api';
 import { ApiError } from '../../api/errors';
 import { Badge, Button, DatePicker, Modal, ModalFooter, RowActionsMenu } from '../../components/ui';
 import { useToast } from '../../components/ui/toastStore';
+import { formatBusinessTime, toBusinessDatetimeLocalValue } from './businessTimezone';
 import './CalendarBoard.css';
 
 type CalendarViewMode = 'day' | 'week';
@@ -38,22 +39,19 @@ function formatDayHeader(d: Date): string {
   return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
 }
 
-function formatTime(iso: string): string {
-  return new Date(iso).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
-}
-
-/** Combines a target day's date with an existing appointment's time-of-day. */
+/**
+ * Combines a target day's date with an existing appointment's
+ * time-of-day. NOTE: still uses browser-local getters/`toISOString()`
+ * for the day-only drag-to-reschedule interaction — a known, separate
+ * gap from the exact-time Reschedule modal below (which now goes
+ * through the Eastern-explicit conversion utilities), left untouched as
+ * out of scope for this fix.
+ */
 function combineDayAndTime(day: Date, existingIso: string): string {
   const existingTime = new Date(existingIso);
   const combined = new Date(day);
   combined.setHours(existingTime.getHours(), existingTime.getMinutes(), 0, 0);
   return combined.toISOString();
-}
-
-function toDatetimeLocalValue(iso?: string): string {
-  const d = iso ? new Date(iso) : new Date();
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
 /**
@@ -146,7 +144,12 @@ export function CalendarBoard({
     if (!reschedulingEvent || !rescheduleValue) return;
     setRescheduling(true);
     try {
-      await reschedule(reschedulingEvent, new Date(rescheduleValue).toISOString());
+      // Sends the raw datetime-local (Eastern wall-clock, no timezone
+      // marker) value as-is — the backend explicitly interprets it as
+      // America/New_York (RescheduleStopDto -> parseBusinessDateTime),
+      // so it must not be pre-converted to UTC via the browser's own
+      // local timezone here.
+      await reschedule(reschedulingEvent, rescheduleValue);
       setReschedulingEvent(null);
     } finally {
       setRescheduling(false);
@@ -262,7 +265,7 @@ export function CalendarBoard({
                               ) : (
                                 <ArrowDownLeft size={12} strokeWidth={1.75} />
                               )}
-                              {formatTime(event.stop.appointmentDatetime!)}
+                              {formatBusinessTime(event.stop.appointmentDatetime!)}
                             </span>
                             {draggable ? (
                               <div onClick={(e) => e.stopPropagation()}>
@@ -271,7 +274,9 @@ export function CalendarBoard({
                                     className="data-table-row-action"
                                     onClick={() => {
                                       setRescheduleValue(
-                                        toDatetimeLocalValue(event.stop.appointmentDatetime),
+                                        toBusinessDatetimeLocalValue(
+                                          event.stop.appointmentDatetime,
+                                        ),
                                       );
                                       setReschedulingEvent(event);
                                     }}
@@ -326,7 +331,7 @@ export function CalendarBoard({
                     variant="tertiary"
                     size="sm"
                     onClick={() => {
-                      setRescheduleValue(toDatetimeLocalValue());
+                      setRescheduleValue(toBusinessDatetimeLocalValue());
                       setReschedulingEvent(event);
                     }}
                   >

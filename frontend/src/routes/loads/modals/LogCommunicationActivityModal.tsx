@@ -10,19 +10,13 @@ import {
   TextField,
 } from '../../../components/ui';
 import { useToast } from '../../../components/ui/toastStore';
+import { toBusinessDatetimeLocalValue } from '../businessTimezone';
 
 const DIRECTION_OPTIONS = [
   { value: '', label: '—' },
   { value: 'INBOUND', label: 'Inbound' },
   { value: 'OUTBOUND', label: 'Outbound' },
 ];
-
-/** Mirrors CalendarBoard's reschedule-modal datetime-local convention. */
-function toDatetimeLocalValue(): string {
-  const d = new Date();
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
 
 interface FormValues {
   activityType: string;
@@ -57,7 +51,7 @@ export function LogCommunicationActivityModal({
     reset,
     formState: { errors, isSubmitting },
   } = useForm<FormValues>({
-    defaultValues: { direction: '', occurredAt: toDatetimeLocalValue() },
+    defaultValues: { direction: '', occurredAt: toBusinessDatetimeLocalValue() },
   });
 
   async function onSubmit(values: FormValues) {
@@ -67,11 +61,16 @@ export function LogCommunicationActivityModal({
         notes: values.notes,
         direction: values.direction || undefined,
         contactPerson: values.contactPerson || undefined,
-        occurredAt: new Date(values.occurredAt).toISOString(),
+        // Raw Eastern wall-clock value, sent as-is — the backend
+        // explicitly interprets it as America/New_York
+        // (CreateCommunicationActivityDto -> parseBusinessDateTime), so
+        // it must not be pre-converted to UTC via the browser's own
+        // local timezone here.
+        occurredAt: values.occurredAt,
       };
       await activityApi.logCommunicationActivity(loadId, body);
       toast.success('Communication activity logged.');
-      reset({ direction: '', occurredAt: toDatetimeLocalValue() });
+      reset({ direction: '', occurredAt: toBusinessDatetimeLocalValue() });
       onAdded();
     } catch (error) {
       toast.danger(error instanceof ApiError ? error.message : 'Something went wrong.');

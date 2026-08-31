@@ -3,13 +3,7 @@ import { loadsApi, type Load, type Stop } from '../../../api';
 import { ApiError } from '../../../api/errors';
 import { Modal, ModalFooter, StopListEditor, type StopFormValue } from '../../../components/ui';
 import { useToast } from '../../../components/ui/toastStore';
-
-/** Mirrors CalendarBoard's reschedule-modal datetime-local convention. */
-function toDatetimeLocalValue(iso?: string): string {
-  const d = iso ? new Date(iso) : new Date();
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
+import { toBusinessDatetimeLocalValue } from '../businessTimezone';
 
 function stopToFormValue(stop: Stop): StopFormValue {
   return {
@@ -20,7 +14,7 @@ function stopToFormValue(stop: Stop): StopFormValue {
     state: stop.state,
     zip: stop.zip,
     appointmentDatetime: stop.appointmentDatetime
-      ? toDatetimeLocalValue(stop.appointmentDatetime)
+      ? toBusinessDatetimeLocalValue(stop.appointmentDatetime)
       : '',
     contactName: stop.contactName ?? '',
     contactPhone: stop.contactPhone ?? '',

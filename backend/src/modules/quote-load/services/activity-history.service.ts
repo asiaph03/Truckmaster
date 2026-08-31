@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { MembershipRoleName } from '@prisma/client';
 import { PrismaService } from '../../../common/prisma/prisma.service';
+import { parseBusinessDateTime } from '../../../common/timezone/business-timezone';
 import { NotFoundError } from '../../../common/errors/app-error';
 import { CreateInternalNoteDto } from '../dto/create-internal-note.dto';
 import { CreateCommunicationActivityDto } from '../dto/create-communication-activity.dto';
@@ -67,7 +68,7 @@ export class ActivityHistoryService {
           direction: dto.direction,
           contactPerson: dto.contactPerson,
           notes: dto.notes,
-          occurredAt: dto.occurredAt ? new Date(dto.occurredAt) : new Date(),
+          occurredAt: dto.occurredAt ? parseBusinessDateTime(dto.occurredAt) : new Date(),
         },
       });
     });

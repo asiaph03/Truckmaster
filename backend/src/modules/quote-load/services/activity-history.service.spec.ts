@@ -129,6 +129,25 @@ describe('ActivityHistoryService — Frontend Phase 7 (Activity History)', () =>
       expect((explicitCall.data.occurredAt as Date).toISOString()).toBe('2026-01-01T00:00:00.000Z');
     });
 
+    it('Timezone fix: interprets a naive occurredAt (datetime-local, no timezone marker) as America/New_York, not server-local time', async () => {
+      const { service, tx } = buildService({});
+
+      await service.logCommunicationActivity(
+        ORG_ID,
+        LOAD_ID,
+        { activityType: 'Called Carrier', notes: 'x', occurredAt: '2026-09-01T14:30' },
+        USER_ID,
+      );
+
+      expect(tx.communicationActivity.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            occurredAt: new Date('2026-09-01T18:30:00.000Z'),
+          }),
+        }),
+      );
+    });
+
     it('throws NotFoundError when the Load does not exist in this tenant', async () => {
       const { service } = buildService({ load: null });
       await expect(

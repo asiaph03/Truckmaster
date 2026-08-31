@@ -16,7 +16,7 @@ import {
 } from '../../../components/ui';
 import { useToast } from '../../../components/ui/toastStore';
 import { usePermissions } from '../../../hooks/usePermissions';
-import { formatDateShort } from '../loadDerived';
+import { formatBusinessDateTime } from '../businessTimezone';
 import '../../shared/DetailPage.css';
 
 const RISK_OPTIONS: { value: RiskStatus; label: string }[] = [
@@ -136,14 +136,14 @@ export function StopsTrackingTab({ load, onChanged }: { load: Load; onChanged: (
           {
             key: 'scheduled',
             header: 'Scheduled',
-            render: (s) => formatDateShort(s.appointmentDatetime ?? null),
+            render: (s) => formatBusinessDateTime(s.appointmentDatetime ?? null),
           },
           {
             key: 'arrival',
             header: 'Actual Arrival',
             render: (s) =>
               s.actualArrival ? (
-                formatDateShort(s.actualArrival)
+                formatBusinessDateTime(s.actualArrival)
               ) : canAct && s.status === 'PENDING' ? (
                 <Button
                   size="sm"
@@ -162,7 +162,7 @@ export function StopsTrackingTab({ load, onChanged }: { load: Load; onChanged: (
             header: 'Actual Departure',
             render: (s) =>
               s.actualDeparture ? (
-                formatDateShort(s.actualDeparture)
+                formatBusinessDateTime(s.actualDeparture)
               ) : canAct && s.status === 'ARRIVED' ? (
                 <Button
                   size="sm"
@@ -211,7 +211,7 @@ export function StopsTrackingTab({ load, onChanged }: { load: Load; onChanged: (
         ) : (
           sortedCheckCalls.map((cc) => (
             <div key={cc.id} className="load-stop-mini-row">
-              <span className="load-stop-mini-time">{formatDateShort(cc.occurredAt)}</span>
+              <span className="load-stop-mini-time">{formatBusinessDateTime(cc.occurredAt)}</span>
               <span>{cc.contactMethod}</span>
               <span className="load-stop-mini-location">{cc.personContacted}</span>
               <span className="load-stop-mini-location">

@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { Load, Prisma, Stop } from '@prisma/client';
 import { PrismaService } from '../../../common/prisma/prisma.service';
 import { AuditService } from '../../../common/audit/audit.service';
+import { parseBusinessDateTime } from '../../../common/timezone/business-timezone';
 import { CarrierEligibilityService } from '../../carrier/services/carrier-eligibility.service';
 import { LoadStatusDerivationService } from './load-status-derivation.service';
 import { DispatchLoadDto } from '../dto/dispatch-load.dto';
@@ -328,7 +329,7 @@ export class DispatchTrackingService {
       }
 
       const previousAppointment = stop.appointmentDatetime;
-      const newAppointment = new Date(dto.appointmentDatetime);
+      const newAppointment = parseBusinessDateTime(dto.appointmentDatetime);
 
       const updatedStop = await tx.stop.update({
         where: { id: stop.id },
@@ -398,7 +399,9 @@ export class DispatchTrackingService {
           city: item.city,
           state: item.state,
           zip: item.zip,
-          appointmentDatetime: item.appointmentDatetime ? new Date(item.appointmentDatetime) : null,
+          appointmentDatetime: item.appointmentDatetime
+            ? parseBusinessDateTime(item.appointmentDatetime)
+            : null,
           contactName: item.contactName ?? null,
           contactPhone: item.contactPhone ?? null,
           notes: item.notes ?? null,
@@ -460,13 +463,13 @@ export class DispatchTrackingService {
           organizationId,
           loadId,
           loggedByUserId: actingUserId,
-          occurredAt: dto.occurredAt ? new Date(dto.occurredAt) : new Date(),
+          occurredAt: dto.occurredAt ? parseBusinessDateTime(dto.occurredAt) : new Date(),
           contactMethod: dto.contactMethod,
           personContacted: dto.personContacted,
           locationCity: dto.locationCity,
           locationState: dto.locationState,
           locationZip: dto.locationZip,
-          eta: dto.eta ? new Date(dto.eta) : undefined,
+          eta: dto.eta ? parseBusinessDateTime(dto.eta) : undefined,
           onTimeStatus: dto.onTimeStatus,
           notes: dto.notes,
         },
@@ -479,7 +482,7 @@ export class DispatchTrackingService {
           currentLocationState: dto.locationState ?? load.currentLocationState,
           currentLocationZip: dto.locationZip ?? load.currentLocationZip,
           currentLocationUpdatedAt: new Date(),
-          currentEta: dto.eta ? new Date(dto.eta) : load.currentEta,
+          currentEta: dto.eta ? parseBusinessDateTime(dto.eta) : load.currentEta,
         },
       });
 

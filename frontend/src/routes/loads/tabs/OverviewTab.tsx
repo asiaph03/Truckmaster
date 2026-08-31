@@ -6,7 +6,8 @@ import { carriersApi, customersApi, loadsApi, membershipsApi, type Load } from '
 import { Badge, Button, ChecklistItem } from '../../../components/ui';
 import { getStatusBadgeColor } from '../../../components/ui/statusBadgeMap';
 import { usePermissions } from '../../../hooks/usePermissions';
-import { formatDateShort, originDestination } from '../loadDerived';
+import { formatBusinessDateTime } from '../businessTimezone';
+import { originDestination } from '../loadDerived';
 import { EditStopsModal } from '../modals/EditStopsModal';
 import '../../shared/DetailPage.css';
 import '../LoadDetailPage.css';
@@ -106,7 +107,7 @@ export function OverviewTab({ load, onChanged }: { load: Load; onChanged: () => 
                 {stop.city}, {stop.state}
               </span>
               <span className="load-stop-mini-time">
-                {formatDateShort(
+                {formatBusinessDateTime(
                   stop.actualDeparture ?? stop.actualArrival ?? stop.appointmentDatetime ?? null,
                 )}
               </span>
