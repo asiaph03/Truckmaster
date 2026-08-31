@@ -44,6 +44,9 @@ export function DispatchModal({
   const [manualDriver, setManualDriver] = useState(false);
   const [manualTruck, setManualTruck] = useState(false);
   const [manualTrailer, setManualTrailer] = useState(false);
+  const [selectedDriverId, setSelectedDriverId] = useState<string | null>(null);
+  const [selectedTruckId, setSelectedTruckId] = useState<string | null>(null);
+  const [selectedTrailerId, setSelectedTrailerId] = useState<string | null>(null);
 
   const { data: carrier } = useQuery({
     queryKey: ['carriers', carrierId],
@@ -62,6 +65,22 @@ export function DispatchModal({
   useEffect(() => {
     if (open && mode === 'edit' && initialValues) reset(initialValues);
   }, [open, mode, initialValues, reset]);
+
+  // The combobox path sets driverName/truckNumber/trailerNumber via
+  // setValue() (no DOM input for register() to attach a ref to), so
+  // `required` validation would never apply to those fields when a
+  // carrier has drivers/trucks/trailers on file (only the manual-entry
+  // TextFields registered it). Registering here — RHF's documented
+  // pattern for a field backed entirely by a custom/controlled component
+  // — makes the same rule apply regardless of which UI is showing, so
+  // `errors.driverName`/`errors.truckNumber`/`errors.trailerNumber` are
+  // populated (and can be surfaced) whether the user picks from the list
+  // or types manually.
+  useEffect(() => {
+    register('driverName', { required: true });
+    register('truckNumber', { required: true });
+    register('trailerNumber', { required: true });
+  }, [register]);
 
   async function onSubmit(values: DispatchLoadRequest) {
     try {
@@ -97,9 +116,10 @@ export function DispatchModal({
         {!manualDriver && drivers.length > 0 ? (
           <SearchableCombobox
             label="Driver"
-            value={null}
+            value={selectedDriverId}
             options={drivers.map((d) => ({ value: d.id, label: `${d.firstName} ${d.lastName}` }))}
             onChange={(value) => {
+              setSelectedDriverId(value);
               const driver = drivers.find((d) => d.id === value);
               if (driver) {
                 setValue('driverName', `${driver.firstName} ${driver.lastName}`);
@@ -108,31 +128,32 @@ export function DispatchModal({
               }
             }}
             onEnterManually={() => setManualDriver(true)}
+            error={errors.driverName ? 'Driver is required.' : undefined}
           />
         ) : (
           <>
             <TextField
               label="Driver Name"
               required
+              error={errors.driverName ? 'Driver name is required.' : undefined}
               {...register('driverName', { required: true })}
             />
             <TextField
               label="Driver Phone"
               required
+              error={errors.driverPhone ? 'Driver phone is required.' : undefined}
               {...register('driverPhone', { required: true })}
             />
           </>
         )}
-        {errors.driverName ? (
-          <p style={{ color: 'var(--danger-600)' }}>Driver name is required.</p>
-        ) : null}
 
         {!manualTruck && trucks.length > 0 ? (
           <SearchableCombobox
             label="Truck"
-            value={null}
+            value={selectedTruckId}
             options={trucks.map((t) => ({ value: t.id, label: t.unitNumber }))}
             onChange={(value) => {
+              setSelectedTruckId(value);
               const truck = trucks.find((t) => t.id === value);
               if (truck) {
                 setValue('truckNumber', truck.unitNumber);
@@ -140,11 +161,13 @@ export function DispatchModal({
               }
             }}
             onEnterManually={() => setManualTruck(true)}
+            error={errors.truckNumber ? 'Truck is required.' : undefined}
           />
         ) : (
           <TextField
             label="Truck Number"
             required
+            error={errors.truckNumber ? 'Truck number is required.' : undefined}
             {...register('truckNumber', { required: true })}
           />
         )}
@@ -152,9 +175,10 @@ export function DispatchModal({
         {!manualTrailer && trailers.length > 0 ? (
           <SearchableCombobox
             label="Trailer"
-            value={null}
+            value={selectedTrailerId}
             options={trailers.map((t) => ({ value: t.id, label: t.unitNumber }))}
             onChange={(value) => {
+              setSelectedTrailerId(value);
               const trailer = trailers.find((t) => t.id === value);
               if (trailer) {
                 setValue('trailerNumber', trailer.unitNumber);
@@ -162,11 +186,13 @@ export function DispatchModal({
               }
             }}
             onEnterManually={() => setManualTrailer(true)}
+            error={errors.trailerNumber ? 'Trailer is required.' : undefined}
           />
         ) : (
           <TextField
             label="Trailer Number"
             required
+            error={errors.trailerNumber ? 'Trailer number is required.' : undefined}
             {...register('trailerNumber', { required: true })}
           />
         )}
