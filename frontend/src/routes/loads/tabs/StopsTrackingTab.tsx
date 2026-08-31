@@ -16,7 +16,7 @@ import {
 } from '../../../components/ui';
 import { useToast } from '../../../components/ui/toastStore';
 import { usePermissions } from '../../../hooks/usePermissions';
-import { formatDateShort, stopCompanyName } from '../loadDerived';
+import { formatDateShort } from '../loadDerived';
 import '../../shared/DetailPage.css';
 
 const RISK_OPTIONS: { value: RiskStatus; label: string }[] = [
@@ -131,7 +131,7 @@ export function StopsTrackingTab({ load, onChanged }: { load: Load; onChanged: (
           {
             key: 'location',
             header: 'Location',
-            render: (s) => `${stopCompanyName(s, load)} — ${s.city}, ${s.state} ${s.zip}`,
+            render: (s) => `${s.companyName ?? '—'} — ${s.city}, ${s.state} ${s.zip}`,
           },
           {
             key: 'scheduled',

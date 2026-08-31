@@ -18,6 +18,7 @@ const LOAD_STOPS = [
   {
     sequence: 1,
     stopType: 'PICKUP',
+    companyName: 'Test Co',
     addressLine1: '1 Dock Rd',
     city: 'Dallas',
     state: 'TX',
@@ -26,6 +27,7 @@ const LOAD_STOPS = [
   {
     sequence: 2,
     stopType: 'DELIVERY',
+    companyName: 'Test Co',
     addressLine1: '2 Dock Rd',
     city: 'Chicago',
     state: 'IL',

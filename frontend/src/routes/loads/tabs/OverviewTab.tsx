@@ -1,11 +1,13 @@
+import { useState } from 'react';
 import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { carriersApi, customersApi, loadsApi, membershipsApi, type Load } from '../../../api';
-import { Badge, ChecklistItem } from '../../../components/ui';
+import { Badge, Button, ChecklistItem } from '../../../components/ui';
 import { getStatusBadgeColor } from '../../../components/ui/statusBadgeMap';
 import { usePermissions } from '../../../hooks/usePermissions';
-import { formatDateShort, originDestination, stopCompanyName } from '../loadDerived';
+import { formatDateShort, originDestination } from '../loadDerived';
+import { EditStopsModal } from '../modals/EditStopsModal';
 import '../../shared/DetailPage.css';
 import '../LoadDetailPage.css';
 
@@ -19,12 +21,17 @@ import '../LoadDetailPage.css';
  * never renders for Sales/Booking without any extra role logic (their
  * `carrierRate` is always server-redacted to null).
  */
-export function OverviewTab({ load }: { load: Load }) {
+export function OverviewTab({ load, onChanged }: { load: Load; onChanged: () => void }) {
   const { can, roles } = usePermissions();
   const showFinancialCard = !roles.includes('DISPATCHER');
   // Workflow 10's exact actor list (Admin/Ops Manager/Accounting) matches
   // `viewLoadFinancials`'s role set exactly — no separate key needed.
   const showClosingCard = can('viewLoadFinancials') && load.status !== 'CLOSED';
+  // Same role set that can create a Load's stops in the first place
+  // (createDirect) — correcting a stop's details afterward is a natural
+  // extension of that same permission, not a dispatch-tracking action.
+  const canEditStops = can('createQuoteOrLoad');
+  const [editingStops, setEditingStops] = useState(false);
 
   const { data: closingChecklist } = useQuery({
     queryKey: ['loads', load.id, 'closing-checklist'],
@@ -80,12 +87,21 @@ export function OverviewTab({ load }: { load: Load }) {
         </div>
 
         <div className="detail-card">
-          <h2 className="detail-card-title">Stops</h2>
+          <div className="detail-section-header">
+            <h2 className="detail-card-title" style={{ margin: 0 }}>
+              Stops
+            </h2>
+            {canEditStops ? (
+              <Button variant="tertiary" size="sm" onClick={() => setEditingStops(true)}>
+                Edit
+              </Button>
+            ) : null}
+          </div>
           {sortedStops.map((stop) => (
             <div key={stop.id} className="load-stop-mini-row">
               <span>Stop {stop.sequence}</span>
               <Badge label={stop.stopType} color="neutral" />
-              <span className="load-stop-mini-company">{stopCompanyName(stop, load)}</span>
+              <span className="load-stop-mini-company">{stop.companyName ?? '—'}</span>
               <span className="load-stop-mini-location">
                 {stop.city}, {stop.state}
               </span>
@@ -178,6 +194,16 @@ export function OverviewTab({ load }: { load: Load }) {
           </div>
         ) : null}
       </div>
+
+      <EditStopsModal
+        open={editingStops}
+        load={load}
+        onClose={() => setEditingStops(false)}
+        onSaved={() => {
+          setEditingStops(false);
+          onChanged();
+        }}
+      />
     </div>
   );
 }

@@ -427,6 +427,278 @@ describe('DispatchTrackingService.rescheduleStop — Frontend Phase 6 gap-fix (C
   });
 });
 
+describe('DispatchTrackingService.updateStops — Load Detail Edit Stops action', () => {
+  const EXISTING_STOP_1 = {
+    id: 'stop-1',
+    sequence: 1,
+    stopType: 'PICKUP',
+    status: 'PENDING',
+    companyName: 'Old Pickup Co',
+    addressLine1: '1 Old Rd',
+    city: 'Dallas',
+    state: 'TX',
+    zip: '75201',
+    appointmentDatetime: new Date('2026-01-01T10:00:00Z'),
+    contactName: 'Old Contact',
+    contactPhone: '555-0001',
+    notes: 'Old note',
+  };
+  const EXISTING_STOP_2 = {
+    id: 'stop-2',
+    sequence: 2,
+    stopType: 'DELIVERY',
+    status: 'PENDING',
+    companyName: 'Old Delivery Co',
+    addressLine1: '2 Old Rd',
+    city: 'Chicago',
+    state: 'IL',
+    zip: '60601',
+    appointmentDatetime: null,
+    contactName: null,
+    contactPhone: null,
+    notes: null,
+  };
+
+  const UPDATED_STOP_1_ITEM = {
+    sequence: 1,
+    stopType: 'PICKUP' as const,
+    companyName: 'ABC Manufacturing',
+    addressLine1: '123 Main St',
+    city: 'Philadelphia',
+    state: 'PA',
+    zip: '19101',
+    appointmentDatetime: '2026-02-01T10:00:00Z',
+    contactName: 'New Contact',
+    contactPhone: '555-9999',
+    notes: 'New note',
+  };
+
+  it('updates every field of a single stop and audits the previous/new values', async () => {
+    const { service, tx, audit } = buildService({
+      load: { id: LOAD_ID, status: 'BOOKED' },
+      stops: [EXISTING_STOP_1],
+    });
+
+    const result = await service.updateStops(
+      ORG_ID,
+      LOAD_ID,
+      { stops: [UPDATED_STOP_1_ITEM] },
+      USER_ID,
+    );
+
+    expect(tx.stop.update).toHaveBeenCalledWith({
+      where: { id: 'stop-1' },
+      data: {
+        stopType: 'PICKUP',
+        companyName: 'ABC Manufacturing',
+        addressLine1: '123 Main St',
+        city: 'Philadelphia',
+        state: 'PA',
+        zip: '19101',
+        appointmentDatetime: new Date('2026-02-01T10:00:00Z'),
+        contactName: 'New Contact',
+        contactPhone: '555-9999',
+        notes: 'New note',
+      },
+    });
+    expect(result.stops[0].companyName).toBe('ABC Manufacturing');
+    expect(audit.record).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: 'Stop Details Updated',
+        entityType: 'Stop',
+        entityId: 'stop-1',
+      }),
+    );
+  });
+
+  it('writes companyName directly from the submitted value — never derives it from Load/Customer/CustomerLocation', async () => {
+    const { service, tx } = buildService({
+      load: { id: LOAD_ID, status: 'BOOKED', customerId: 'customer-999' },
+      stops: [EXISTING_STOP_1],
+    });
+
+    await service.updateStops(
+      ORG_ID,
+      LOAD_ID,
+      { stops: [{ ...UPDATED_STOP_1_ITEM, companyName: 'XYZ Distribution' }] },
+      USER_ID,
+    );
+
+    expect(tx.stop.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ companyName: 'XYZ Distribution' }),
+      }),
+    );
+    // The mocked tx has no `customer`/`customerLocation` table at all —
+    // if the service tried to look either up to derive companyName, this
+    // test would throw on that call instead of reaching the assertion
+    // above, since neither is defined on the buildService() tx mock.
+  });
+
+  it('updates multiple stops in one call, each independently audited', async () => {
+    const { service, tx, audit } = buildService({
+      load: { id: LOAD_ID, status: 'BOOKED' },
+      stops: [EXISTING_STOP_1, EXISTING_STOP_2],
+    });
+
+    const result = await service.updateStops(
+      ORG_ID,
+      LOAD_ID,
+      {
+        stops: [
+          UPDATED_STOP_1_ITEM,
+          {
+            sequence: 2,
+            stopType: 'DELIVERY',
+            companyName: 'DEF Distribution',
+            addressLine1: '456 Industrial Ave',
+            city: 'Lodi',
+            state: 'NJ',
+            zip: '07644',
+          },
+        ],
+      },
+      USER_ID,
+    );
+
+    expect(result.stops).toHaveLength(2);
+    expect(result.stops[0].companyName).toBe('ABC Manufacturing');
+    expect(result.stops[1].companyName).toBe('DEF Distribution');
+    expect(tx.stop.update).toHaveBeenCalledTimes(2);
+    expect(audit.record).toHaveBeenCalledTimes(2);
+  });
+
+  it('clears an optional field left empty — full-replace semantics, not partial-patch', async () => {
+    const { service, tx } = buildService({
+      load: { id: LOAD_ID, status: 'BOOKED' },
+      stops: [EXISTING_STOP_1],
+    });
+
+    await service.updateStops(
+      ORG_ID,
+      LOAD_ID,
+      {
+        stops: [
+          {
+            ...UPDATED_STOP_1_ITEM,
+            appointmentDatetime: undefined,
+            contactName: undefined,
+            contactPhone: undefined,
+            notes: undefined,
+          },
+        ],
+      },
+      USER_ID,
+    );
+
+    expect(tx.stop.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          appointmentDatetime: null,
+          contactName: null,
+          contactPhone: null,
+          notes: null,
+        }),
+      }),
+    );
+  });
+
+  it('never touches Stop.status/actualArrival/actualDeparture', async () => {
+    const { service, tx } = buildService({
+      load: { id: LOAD_ID, status: 'DISPATCHED' },
+      stops: [
+        { ...EXISTING_STOP_1, status: 'ARRIVED', actualArrival: new Date('2026-01-01T12:00:00Z') },
+      ],
+    });
+
+    await service.updateStops(ORG_ID, LOAD_ID, { stops: [UPDATED_STOP_1_ITEM] }, USER_ID);
+
+    const data = tx.stop.update.mock.calls[0][0].data;
+    expect(data).not.toHaveProperty('status');
+    expect(data).not.toHaveProperty('actualArrival');
+    expect(data).not.toHaveProperty('actualDeparture');
+  });
+
+  it('throws NotFoundError for a Load outside the organization', async () => {
+    const { service } = buildService({ load: null });
+
+    await expect(
+      service.updateStops(ORG_ID, LOAD_ID, { stops: [UPDATED_STOP_1_ITEM] }, USER_ID),
+    ).rejects.toThrow(NotFoundError);
+  });
+
+  it('throws NotFoundError for a sequence that does not exist on this Load, without updating any stop', async () => {
+    const { service, tx } = buildService({
+      load: { id: LOAD_ID, status: 'BOOKED' },
+      stops: [EXISTING_STOP_1],
+    });
+
+    await expect(
+      service.updateStops(
+        ORG_ID,
+        LOAD_ID,
+        { stops: [{ ...UPDATED_STOP_1_ITEM, sequence: 99 }] },
+        USER_ID,
+      ),
+    ).rejects.toThrow(NotFoundError);
+    expect(tx.stop.update).not.toHaveBeenCalled();
+  });
+
+  it('scopes every lookup by loadId + organizationId + sequence — a matching sequence on another load is never touched', async () => {
+    // Purpose-built tx mock (not the shared buildService fixture): two
+    // "loads" each with their own sequence-1 stop, proving the lookup
+    // is loadId-scoped, not sequence-only.
+    const otherLoadStop = { id: 'other-load-stop-1', sequence: 1, companyName: 'Other Load Co' };
+    const thisLoadStop = { ...EXISTING_STOP_1 };
+
+    const findFirstCalls: unknown[] = [];
+    const tx = {
+      load: { findFirst: jest.fn().mockResolvedValue({ id: LOAD_ID, status: 'BOOKED' }) },
+      stop: {
+        findFirst: jest.fn().mockImplementation(({ where }) => {
+          findFirstCalls.push(where);
+          if (where.loadId === LOAD_ID && where.sequence === 1) return thisLoadStop;
+          return null;
+        }),
+        findMany: jest.fn().mockResolvedValue([thisLoadStop]),
+        update: jest
+          .fn()
+          .mockImplementation(({ where, data }) => ({ ...thisLoadStop, ...data, id: where.id })),
+      },
+    };
+    const prisma = {
+      withTenantTransaction: jest.fn().mockImplementation((_orgId, fn) => fn(tx)),
+    };
+    const audit = { record: jest.fn().mockResolvedValue(undefined) };
+    const service = new DispatchTrackingService(
+      prisma as never,
+      audit as never,
+      {} as never,
+      new LoadStatusDerivationService(),
+    );
+
+    const result = await service.updateStops(
+      ORG_ID,
+      LOAD_ID,
+      { stops: [UPDATED_STOP_1_ITEM] },
+      USER_ID,
+    );
+
+    expect(findFirstCalls).toContainEqual({ loadId: LOAD_ID, organizationId: ORG_ID, sequence: 1 });
+    expect(tx.stop.update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: thisLoadStop.id } }),
+    );
+    expect(result.stops[0].companyName).toBe('ABC Manufacturing');
+    // The other load's row was never even a candidate — findFirst was
+    // scoped to LOAD_ID from the start, so `otherLoadStop` (id
+    // 'other-load-stop-1') never appears in any tx.stop.update call.
+    expect(tx.stop.update).not.toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: otherLoadStop.id } }),
+    );
+  });
+});
+
 describe('DispatchTrackingService.logCheckCall — Workflow 6 §6.7', () => {
   const CHECK_CALL_DTO = {
     contactMethod: 'Phone',

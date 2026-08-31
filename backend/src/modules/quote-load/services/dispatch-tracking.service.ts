@@ -8,6 +8,7 @@ import { DispatchLoadDto } from '../dto/dispatch-load.dto';
 import { UpdateDispatchDto } from '../dto/update-dispatch.dto';
 import { StopTimestampDto } from '../dto/stop-timestamp.dto';
 import { RescheduleStopDto } from '../dto/reschedule-stop.dto';
+import { UpdateStopsDto } from '../dto/update-stops.dto';
 import { LogCheckCallDto } from '../dto/log-check-call.dto';
 import { SetRiskStatusDto } from '../dto/set-risk-status.dto';
 import { AssignDispatcherDto } from '../dto/assign-dispatcher.dto';
@@ -345,6 +346,98 @@ export class DispatchTrackingService {
       });
 
       return updatedStop;
+    });
+  }
+
+  /**
+   * Load Detail's Edit Stops action — corrects existing stops' descriptive
+   * fields (Company Name, address, contact, notes, appointment, type)
+   * after a Load has already been created. No load-status gate, matching
+   * `updateReferenceNumbers`'s own "post-creation correction" precedent —
+   * this is a data-correction action, not a dispatch-tracking transition,
+   * and never touches `Stop.status`/`actualArrival`/`actualDeparture`
+   * (those stay owned by `recordArrival`/`recordDeparture` above).
+   *
+   * The whole batch runs inside one transaction: if any item's `sequence`
+   * doesn't resolve to a Stop on *this* Load/organization, the thrown
+   * `NotFoundError` rolls back every `tx.stop.update` already applied
+   * earlier in the same loop (Prisma's `$transaction` semantics, via
+   * `withTenantTransaction`) — so a batch can never partially apply.
+   * `sequence` itself is only ever read (to find the target row), never
+   * written — stop ordering is untouched by construction, and no stop is
+   * added, removed, or recreated; every write is `tx.stop.update({
+   * where: { id: stop.id }, ... })` against the row `findFirst` already
+   * proved belongs to this Load and organization.
+   *
+   * `companyName` is written directly from `item.companyName` — never
+   * derived from `load.customerId`, `stop.customerLocationId`, or any
+   * joined Customer/CustomerLocation/Carrier row.
+   */
+  async updateStops(
+    organizationId: string,
+    loadId: string,
+    dto: UpdateStopsDto,
+    actingUserId: string,
+  ): Promise<{ stops: Stop[]; load: Load }> {
+    return this.prisma.withTenantTransaction(organizationId, async (tx) => {
+      const load = await tx.load.findFirst({ where: { id: loadId, organizationId } });
+      if (!load) throw new NotFoundError('Load not found.');
+
+      const updatedStops: Stop[] = [];
+
+      for (const item of dto.stops) {
+        const stop = await tx.stop.findFirst({
+          where: { loadId, organizationId, sequence: item.sequence },
+        });
+        if (!stop) throw new NotFoundError(`Stop ${item.sequence} not found.`);
+
+        const nextValues = {
+          stopType: item.stopType,
+          companyName: item.companyName,
+          addressLine1: item.addressLine1,
+          city: item.city,
+          state: item.state,
+          zip: item.zip,
+          appointmentDatetime: item.appointmentDatetime ? new Date(item.appointmentDatetime) : null,
+          contactName: item.contactName ?? null,
+          contactPhone: item.contactPhone ?? null,
+          notes: item.notes ?? null,
+        };
+
+        const fieldChanges: { field: string; previous: unknown; new: unknown }[] = [];
+        for (const [field, newValue] of Object.entries(nextValues)) {
+          const previousValue = (stop as unknown as Record<string, unknown>)[field];
+          const changed =
+            newValue instanceof Date
+              ? previousValue === null ||
+                previousValue === undefined ||
+                new Date(previousValue as string).getTime() !== newValue.getTime()
+              : previousValue !== newValue;
+          if (changed) {
+            fieldChanges.push({ field, previous: previousValue, new: newValue });
+          }
+        }
+
+        const updatedStop = await tx.stop.update({
+          where: { id: stop.id },
+          data: nextValues,
+        });
+        updatedStops.push(updatedStop);
+
+        if (fieldChanges.length > 0) {
+          await this.audit.record(tx, {
+            organizationId,
+            action: 'Stop Details Updated',
+            entityType: 'Stop',
+            entityId: stop.id,
+            previousValue: { sequence: stop.sequence, field_changes: fieldChanges },
+            actorUserId: actingUserId,
+          });
+        }
+      }
+
+      const updatedLoad = await this.reEvaluateLoadStatus(tx, organizationId, load);
+      return { stops: updatedStops, load: updatedLoad };
     });
   }
 

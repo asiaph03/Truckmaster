@@ -22,6 +22,7 @@ const SINGLE_DELIVERY_STOPS = [
   {
     sequence: 1,
     stopType: 'PICKUP',
+    companyName: 'Test Co',
     addressLine1: '1 Dock Rd',
     city: 'Dallas',
     state: 'TX',
@@ -30,6 +31,7 @@ const SINGLE_DELIVERY_STOPS = [
   {
     sequence: 2,
     stopType: 'DELIVERY',
+    companyName: 'Test Co',
     addressLine1: '2 Dock Rd',
     city: 'Chicago',
     state: 'IL',
@@ -41,6 +43,7 @@ const MULTI_DELIVERY_STOPS = [
   {
     sequence: 1,
     stopType: 'PICKUP',
+    companyName: 'Test Co',
     addressLine1: '1 Dock Rd',
     city: 'Dallas',
     state: 'TX',
@@ -49,6 +52,7 @@ const MULTI_DELIVERY_STOPS = [
   {
     sequence: 2,
     stopType: 'DELIVERY',
+    companyName: 'Test Co',
     addressLine1: '2 Dock Rd',
     city: 'Springfield',
     state: 'IL',
@@ -57,6 +61,7 @@ const MULTI_DELIVERY_STOPS = [
   {
     sequence: 3,
     stopType: 'DELIVERY',
+    companyName: 'Test Co',
     addressLine1: '3 Dock Rd',
     city: 'Chicago',
     state: 'IL',

@@ -18,6 +18,7 @@ const STOPS_WITH_APPOINTMENTS = (pickupIso: string, deliveryIso: string) => [
   {
     sequence: 1,
     stopType: 'PICKUP',
+    companyName: 'Test Co',
     addressLine1: '1 Dock Rd',
     city: 'Dallas',
     state: 'TX',
@@ -27,6 +28,7 @@ const STOPS_WITH_APPOINTMENTS = (pickupIso: string, deliveryIso: string) => [
   {
     sequence: 2,
     stopType: 'DELIVERY',
+    companyName: 'Test Co',
     addressLine1: '2 Dock Rd',
     city: 'Chicago',
     state: 'IL',
@@ -39,6 +41,7 @@ const PLAIN_STOPS = [
   {
     sequence: 1,
     stopType: 'PICKUP',
+    companyName: 'Test Co',
     addressLine1: '1 Dock Rd',
     city: 'Dallas',
     state: 'TX',
@@ -47,6 +50,7 @@ const PLAIN_STOPS = [
   {
     sequence: 2,
     stopType: 'DELIVERY',
+    companyName: 'Test Co',
     addressLine1: '2 Dock Rd',
     city: 'Chicago',
     state: 'IL',

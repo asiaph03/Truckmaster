@@ -42,6 +42,7 @@ export interface LoadStopCreateInput {
   sequence: number;
   stopType: StopType;
   customerLocationId?: string;
+  companyName?: string;
   addressLine1?: string;
   city: string;
   state: string;
@@ -96,22 +97,7 @@ export class LoadService {
         // item's `amount` per its `side`, same as every other financial
         // field on this response.
         include: {
-          // Load Detail's Stops section (Overview mini-rows + Stops &
-          // Tracking tab) needs each stop's associated company name.
-          // A stop only carries a direct customer link when booked from a
-          // saved CustomerLocation; select only what's needed to display
-          // it (not the full Customer record) -- the load's own customer
-          // below is the fallback for stops with no saved location
-          // (customerLocationId null, e.g. Quote-converted lane-level
-          // stops -- DATABASE_DESIGN.md §9).
-          stops: {
-            include: {
-              customerLocation: {
-                include: { customer: { select: { id: true, legalName: true } } },
-              },
-            },
-          },
-          customer: { select: { id: true, legalName: true } },
+          stops: true,
           sourcingAttempts: true,
           dispatchRecord: true,
           checkCalls: true,
@@ -297,6 +283,7 @@ export class LoadService {
             sequence: stop.sequence,
             stopType: stop.stopType,
             customerLocationId: stop.customerLocationId,
+            companyName: stop.companyName,
             addressLine1: stop.addressLine1,
             city: stop.city,
             state: stop.state,

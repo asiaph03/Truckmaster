@@ -26,6 +26,7 @@ import { DispatchLoadDto } from '../dto/dispatch-load.dto';
 import { UpdateDispatchDto } from '../dto/update-dispatch.dto';
 import { StopTimestampDto } from '../dto/stop-timestamp.dto';
 import { RescheduleStopDto } from '../dto/reschedule-stop.dto';
+import { UpdateStopsDto } from '../dto/update-stops.dto';
 import { LogCheckCallDto } from '../dto/log-check-call.dto';
 import { SetRiskStatusDto } from '../dto/set-risk-status.dto';
 import { AssignDispatcherDto } from '../dto/assign-dispatcher.dto';
@@ -469,6 +470,22 @@ export class LoadController {
     const organizationId = RequestContextStore.requireOrganizationId();
     const actingUserId = RequestContextStore.requireUserId();
     return this.dispatchTracking.rescheduleStop(organizationId, id, sequence, dto, actingUserId);
+  }
+
+  /**
+   * Load Detail's Edit Stops action (Overview tab, Stops card) — a
+   * booking-detail correction, not a dispatch-tracking transition, so
+   * this uses `QUOTE_LOAD_CREATE_ROLES` (same roles that create these
+   * stops via `createDirect`) rather than `SOURCING_DISPATCH_ROLES`.
+   * Distinct path shape from `:id/stops/:sequence/*` above — no route
+   * ordering conflict.
+   */
+  @Patch(':id/stops')
+  @Roles(...QUOTE_LOAD_CREATE_ROLES)
+  updateStops(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateStopsDto) {
+    const organizationId = RequestContextStore.requireOrganizationId();
+    const actingUserId = RequestContextStore.requireUserId();
+    return this.dispatchTracking.updateStops(organizationId, id, dto, actingUserId);
   }
 
   @Post(':id/check-calls')

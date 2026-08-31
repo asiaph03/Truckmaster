@@ -35,6 +35,7 @@ const LOAD_STOPS = [
   {
     sequence: 1,
     stopType: 'PICKUP',
+    companyName: 'Test Co',
     addressLine1: '1 Dock Rd',
     city: 'Dallas',
     state: 'TX',
@@ -43,6 +44,7 @@ const LOAD_STOPS = [
   {
     sequence: 2,
     stopType: 'DELIVERY',
+    companyName: 'Test Co',
     addressLine1: '2 Dock Rd',
     city: 'Chicago',
     state: 'IL',
@@ -651,6 +653,145 @@ describe('Load Lifecycle Core (e2e)', () => {
         .send({ customerPoNumber: 'PO-999' })
         .expect(200);
       expect(patchRes.body.customerPoNumber).toBe('PO-999');
+    });
+  });
+
+  describe('Edit Stops — PATCH /loads/:id/stops (atomic bulk stop-details correction)', () => {
+    function editItem(overrides: Record<string, unknown> = {}) {
+      return {
+        sequence: 1,
+        stopType: 'PICKUP',
+        companyName: 'ABC Manufacturing',
+        addressLine1: '123 Main St',
+        city: 'Philadelphia',
+        state: 'PA',
+        zip: '19101',
+        ...overrides,
+      };
+    }
+
+    it('updates every submitted stop in one call and persists all fields', async () => {
+      const customerId = await createCustomer(adminAgent, 'ACTIVE', 'edit-stops-happy');
+      const loadRes = await adminAgent
+        .post(`${API}/loads`)
+        .send({ customerId, stops: LOAD_STOPS, equipmentType: 'DRY_VAN', customerRate: '1800.00' })
+        .expect(201);
+      const loadId = loadRes.body.id;
+
+      const patchRes = await adminAgent
+        .patch(`${API}/loads/${loadId}/stops`)
+        .send({
+          stops: [
+            editItem({ sequence: 1, companyName: 'ABC Manufacturing', city: 'Philadelphia' }),
+            editItem({
+              sequence: 2,
+              stopType: 'DELIVERY',
+              companyName: 'DEF Distribution',
+              addressLine1: '456 Industrial Ave',
+              city: 'Lodi',
+              state: 'NJ',
+              zip: '07644',
+            }),
+          ],
+        })
+        .expect(200);
+      expect(patchRes.body.stops.map((s: { companyName: string }) => s.companyName).sort()).toEqual(
+        ['ABC Manufacturing', 'DEF Distribution'].sort(),
+      );
+
+      const getRes = await adminAgent.get(`${API}/loads/${loadId}`).expect(200);
+      const stopsByCompany = getRes.body.stops
+        .sort((a: { sequence: number }, b: { sequence: number }) => a.sequence - b.sequence)
+        .map((s: { companyName: string; city: string }) => ({
+          companyName: s.companyName,
+          city: s.city,
+        }));
+      expect(stopsByCompany).toEqual([
+        { companyName: 'ABC Manufacturing', city: 'Philadelphia' },
+        { companyName: 'DEF Distribution', city: 'Lodi' },
+      ]);
+      // The Load Customer itself is untouched by a Stop company-name edit.
+      expect(getRes.body.customerId).toBe(customerId);
+    });
+
+    it('rolls back the entire batch when one stop in a multi-stop update fails — no partial write', async () => {
+      const customerId = await createCustomer(adminAgent, 'ACTIVE', 'edit-stops-rollback');
+      const loadRes = await adminAgent
+        .post(`${API}/loads`)
+        .send({ customerId, stops: LOAD_STOPS, equipmentType: 'DRY_VAN', customerRate: '1800.00' })
+        .expect(201);
+      const loadId = loadRes.body.id;
+      const originalCompanyName = loadRes.body.stops.find(
+        (s: { sequence: number }) => s.sequence === 1,
+      ).companyName;
+
+      await adminAgent
+        .patch(`${API}/loads/${loadId}/stops`)
+        .send({
+          stops: [
+            editItem({ sequence: 1, companyName: 'Should Never Persist' }),
+            // sequence 99 does not exist on this Load — the whole
+            // transaction must roll back, including stop 1's update
+            // above, which is processed first in the same request.
+            editItem({ sequence: 99, companyName: 'Also Should Never Persist' }),
+          ],
+        })
+        .expect(404);
+
+      const getRes = await adminAgent.get(`${API}/loads/${loadId}`).expect(200);
+      const stop1 = getRes.body.stops.find((s: { sequence: number }) => s.sequence === 1);
+      expect(stop1.companyName).toBe(originalCompanyName);
+    });
+
+    it('requires createQuoteOrLoad — Accounting cannot edit stops', async () => {
+      const customerId = await createCustomer(adminAgent, 'ACTIVE', 'edit-stops-perm');
+      const loadRes = await adminAgent
+        .post(`${API}/loads`)
+        .send({ customerId, stops: LOAD_STOPS, equipmentType: 'DRY_VAN', customerRate: '1800.00' })
+        .expect(201);
+
+      await accountingAgent
+        .patch(`${API}/loads/${loadRes.body.id}/stops`)
+        .send({ stops: [editItem()] })
+        .expect(403);
+    });
+
+    it('rejects a stop update missing a required field (Company Name)', async () => {
+      const customerId = await createCustomer(adminAgent, 'ACTIVE', 'edit-stops-validation');
+      const loadRes = await adminAgent
+        .post(`${API}/loads`)
+        .send({ customerId, stops: LOAD_STOPS, equipmentType: 'DRY_VAN', customerRate: '1800.00' })
+        .expect(201);
+
+      await adminAgent
+        .patch(`${API}/loads/${loadRes.body.id}/stops`)
+        .send({ stops: [editItem({ companyName: '' })] })
+        .expect(400);
+    });
+
+    it("never allows one organization's Load to have its stops edited via another organization's session", async () => {
+      const orgA = await setUpOrganization('edit-stops-cross-a');
+      const orgB = await setUpOrganization('edit-stops-cross-b');
+      const customerAId = await createCustomer(orgA.adminAgent, 'ACTIVE', 'edit-stops-cross-cust');
+      const loadARes = await orgA.adminAgent
+        .post(`${API}/loads`)
+        .send({
+          customerId: customerAId,
+          stops: LOAD_STOPS,
+          equipmentType: 'DRY_VAN',
+          customerRate: '100.00',
+        })
+        .expect(201);
+
+      await orgB.adminAgent
+        .patch(`${API}/loads/${loadARes.body.id}/stops`)
+        .send({ stops: [editItem()] })
+        .expect(404);
+
+      // Org A's stop is provably untouched by Org B's rejected attempt.
+      const getRes = await orgA.adminAgent.get(`${API}/loads/${loadARes.body.id}`).expect(200);
+      const stop1 = getRes.body.stops.find((s: { sequence: number }) => s.sequence === 1);
+      expect(stop1.companyName).toBe('Test Co');
     });
   });
 

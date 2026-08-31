@@ -14,6 +14,7 @@ export interface StopFormValue {
   state: string;
   zip: string;
   // 'full' mode only (Direct Booking) — matches LoadStopInputDto.
+  companyName?: string;
   addressLine1?: string;
   appointmentDatetime?: string;
   contactName?: string;
@@ -32,7 +33,7 @@ const STOP_TYPE_OPTIONS_FULL = [...STOP_TYPE_OPTIONS_LANE, { value: 'OTHER', lab
 function emptyStop(mode: 'lane' | 'full', stopType: StopFormStopType): StopFormValue {
   return mode === 'lane'
     ? { stopType, city: '', state: '', zip: '' }
-    : { stopType, city: '', state: '', zip: '', addressLine1: '' };
+    : { stopType, city: '', state: '', zip: '', companyName: '', addressLine1: '' };
 }
 
 /**
@@ -51,6 +52,7 @@ export function StopListEditor({
   stops,
   onChange,
   error,
+  allowAddRemove = true,
 }: {
   mode: 'lane' | 'full';
   stops: StopFormValue[];
@@ -64,6 +66,12 @@ export function StopListEditor({
   // silently overwrite the first's result instead of appending to it.
   onChange: (updater: StopFormValue[] | ((prev: StopFormValue[]) => StopFormValue[])) => void;
   error?: string;
+  // Load Detail's Edit Stops action edits existing stops' fields only —
+  // it never adds, removes, or reorders a stop (the backend's bulk update
+  // matches each item back to an existing row by its current `sequence`
+  // and never touches that field). Defaults to true so Create/Quote's
+  // existing add/remove behavior is unaffected.
+  allowAddRemove?: boolean;
 }) {
   const typeOptions = mode === 'lane' ? STOP_TYPE_OPTIONS_LANE : STOP_TYPE_OPTIONS_FULL;
 
@@ -92,15 +100,27 @@ export function StopListEditor({
               value={stop.stopType}
               onChange={(e) => updateStop(index, { stopType: e.target.value as StopFormStopType })}
             />
-            <Button
-              variant="icon"
-              type="button"
-              aria-label={`Remove stop ${index + 1}`}
-              onClick={() => removeStop(index)}
-            >
-              <Trash2 size={16} strokeWidth={1.5} />
-            </Button>
+            {allowAddRemove ? (
+              <Button
+                variant="icon"
+                type="button"
+                aria-label={`Remove stop ${index + 1}`}
+                onClick={() => removeStop(index)}
+              >
+                <Trash2 size={16} strokeWidth={1.5} />
+              </Button>
+            ) : null}
           </div>
+
+          {mode === 'full' ? (
+            <TextField
+              id={`stop-${index}-company-name`}
+              label="Company Name"
+              required
+              value={stop.companyName ?? ''}
+              onChange={(e) => updateStop(index, { companyName: e.target.value })}
+            />
+          ) : null}
 
           {mode === 'full' ? (
             <TextField
@@ -179,14 +199,16 @@ export function StopListEditor({
 
       {error ? <p className="stop-list-error">{error}</p> : null}
 
-      <div className="stop-list-add-row">
-        <Button variant="secondary" size="sm" type="button" onClick={() => addStop('PICKUP')}>
-          <Plus size={14} strokeWidth={1.5} /> Add Pickup
-        </Button>
-        <Button variant="secondary" size="sm" type="button" onClick={() => addStop('DELIVERY')}>
-          <Plus size={14} strokeWidth={1.5} /> Add Delivery
-        </Button>
-      </div>
+      {allowAddRemove ? (
+        <div className="stop-list-add-row">
+          <Button variant="secondary" size="sm" type="button" onClick={() => addStop('PICKUP')}>
+            <Plus size={14} strokeWidth={1.5} /> Add Pickup
+          </Button>
+          <Button variant="secondary" size="sm" type="button" onClick={() => addStop('DELIVERY')}>
+            <Plus size={14} strokeWidth={1.5} /> Add Delivery
+          </Button>
+        </div>
+      ) : null}
     </div>
   );
 }

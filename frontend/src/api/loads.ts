@@ -29,10 +29,9 @@ export interface Stop {
   sequence: number;
   stopType: StopType;
   customerLocationId?: string;
-  // Only present when customerLocationId is set (a saved location) --
-  // absent for a manually-entered/lane-level stop, which falls back to
-  // the load's own `customer` instead.
-  customerLocation?: { customer: { id: string; legalName: string } } | null;
+  // Authoritative pickup/delivery company name for this stop. Nullable —
+  // pre-existing and Quote-converted stops never had one captured.
+  companyName: string | null;
   addressLine1?: string;
   city: string;
   state: string;
@@ -127,7 +126,6 @@ export interface Load {
   id: string;
   loadNumber: string;
   customerId: string;
-  customer: { id: string; legalName: string };
   bookingSource: BookingSource;
   quoteId?: string;
   status: LoadStatus;
@@ -258,6 +256,7 @@ export interface LoadStopInput {
   sequence: number;
   stopType: StopType;
   customerLocationId?: string;
+  companyName: string;
   addressLine1: string;
   city: string;
   state: string;
@@ -325,6 +324,30 @@ export interface StopTimestampRequest {
 /** Frontend Phase 6 approved gap-fix — Dispatch Board Calendar drag-to-reschedule. */
 export interface RescheduleStopRequest {
   appointmentDatetime: string;
+}
+
+/**
+ * Load Detail's Edit Stops action — `sequence` identifies which existing
+ * Stop this item targets (never itself changed). Full-replace semantics:
+ * an absent optional field clears it, matching UpdateStopItemDto on the
+ * backend.
+ */
+export interface UpdateStopItemRequest {
+  sequence: number;
+  stopType: StopType;
+  companyName: string;
+  addressLine1: string;
+  city: string;
+  state: string;
+  zip: string;
+  appointmentDatetime?: string;
+  contactName?: string;
+  contactPhone?: string;
+  notes?: string;
+}
+
+export interface UpdateStopsRequest {
+  stops: UpdateStopItemRequest[];
 }
 
 export interface LogCheckCallRequest {
@@ -476,6 +499,15 @@ export const loadsApi = {
    */
   rescheduleStop: (id: string, sequence: number, body: RescheduleStopRequest) =>
     apiRequest<Stop>(`/loads/${id}/stops/${sequence}/reschedule`, { method: 'PATCH', body }),
+
+  /**
+   * Load Detail's Edit Stops action — one atomic call for the whole
+   * batch (never one request per stop): the backend runs every stop's
+   * update inside a single transaction, rolling back entirely if any
+   * item fails lookup/validation.
+   */
+  updateStops: (id: string, body: UpdateStopsRequest) =>
+    apiRequest<{ stops: Stop[]; load: Load }>(`/loads/${id}/stops`, { method: 'PATCH', body }),
 
   logCheckCall: (id: string, body: LogCheckCallRequest) =>
     apiRequest<CheckCall>(`/loads/${id}/check-calls`, { method: 'POST', body }),

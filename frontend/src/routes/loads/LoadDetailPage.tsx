@@ -188,7 +188,7 @@ export function LoadDetailPage() {
         <Tabs tabs={tabs} activeKey={activeTab} onChange={setActiveTab} />
       </div>
 
-      {activeTab === 'overview' ? <OverviewTab load={load} /> : null}
+      {activeTab === 'overview' ? <OverviewTab load={load} onChanged={refetch} /> : null}
       {activeTab === 'stops' ? <StopsTrackingTab load={load} onChanged={refetch} /> : null}
       {activeTab === 'carrier' ? <CarrierDispatchTab load={load} onChanged={refetch} /> : null}
       {activeTab === 'documents' ? <DocumentsTab load={load} /> : null}

@@ -1232,6 +1232,14 @@ model Stop {
   customerLocationId String?           @map("customer_location_id") @db.Uuid
   customerLocation   CustomerLocation? @relation(fields: [customerLocationId], references: [id])
 
+  /// The authoritative pickup/delivery company name for this specific
+  /// stop -- independent of the Load's own Customer and of any saved
+  /// CustomerLocation.customer, since the two can differ (e.g. a
+  /// customer's freight picked up from a third-party warehouse).
+  /// Nullable: pre-existing stops and Quote-converted stops (which never
+  /// captured a company name) have no value until entered on a new load.
+  companyName String? @map("company_name")
+
   /// addressLine1 is nullable specifically because a Load booked via
   /// Quote conversion (Workflow 4 §4.7) carries forward QuoteStop rows,
   /// which are deliberately lane-level only (city/state/zip — §4.2's

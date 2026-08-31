@@ -18,6 +18,7 @@ const DALLAS_CHICAGO_STOPS = [
   {
     sequence: 1,
     stopType: 'PICKUP',
+    companyName: 'Test Co',
     addressLine1: '1 Dock Rd',
     city: 'Dallas',
     state: 'TX',
@@ -26,6 +27,7 @@ const DALLAS_CHICAGO_STOPS = [
   {
     sequence: 2,
     stopType: 'DELIVERY',
+    companyName: 'Test Co',
     addressLine1: '2 Dock Rd',
     city: 'Chicago',
     state: 'IL',
@@ -37,6 +39,7 @@ const HOUSTON_ATLANTA_STOPS = [
   {
     sequence: 1,
     stopType: 'PICKUP',
+    companyName: 'Test Co',
     addressLine1: '10 Port Rd',
     city: 'Houston',
     state: 'TX',
@@ -45,6 +48,7 @@ const HOUSTON_ATLANTA_STOPS = [
   {
     sequence: 2,
     stopType: 'DELIVERY',
+    companyName: 'Test Co',
     addressLine1: '20 Peach St',
     city: 'Atlanta',
     state: 'GA',

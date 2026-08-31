@@ -302,6 +302,12 @@ describe('QuoteService.convert — Workflow 4 §4.7', () => {
       ORG_ID,
       expect.objectContaining({ auditAction: 'Load Booked From Quote' }),
     );
+    // QuoteStop never captures a company name (§4.2, lane-level only) —
+    // conversion must not fabricate one from Customer/CustomerLocation.
+    const convertedStops = (loadService.createFromBooking as jest.Mock).mock.calls[0][2].stops;
+    for (const stop of convertedStops) {
+      expect(stop.companyName).toBeUndefined();
+    }
     expect(tx.quote.update).toHaveBeenCalledWith({
       where: { id: 'quote-1' },
       data: { status: 'WON', resultingLoadId: 'load-1' },

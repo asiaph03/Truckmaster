@@ -31,6 +31,10 @@ export class LoadStopInputDto {
 
   @IsString()
   @MinLength(1)
+  companyName!: string;
+
+  @IsString()
+  @MinLength(1)
   addressLine1!: string;
 
   @IsString()

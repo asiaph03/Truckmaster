@@ -77,6 +77,7 @@ export function LoadCreatePage() {
       stops: sequenceStops(stops).map((s) => ({
         sequence: s.sequence,
         stopType: s.stopType as 'PICKUP' | 'DELIVERY' | 'OTHER',
+        companyName: s.companyName ?? '',
         addressLine1: s.addressLine1 ?? '',
         city: s.city,
         state: s.state,

@@ -10,6 +10,7 @@ const BASE_STOPS = [
   {
     sequence: 1,
     stopType: 'PICKUP',
+    companyName: 'ABC Manufacturing',
     addressLine1: '1 Dock Rd',
     city: 'Dallas',
     state: 'TX',
@@ -18,6 +19,7 @@ const BASE_STOPS = [
   {
     sequence: 2,
     stopType: 'DELIVERY',
+    companyName: 'XYZ Distribution',
     addressLine1: '2 Dock Rd',
     city: 'Chicago',
     state: 'IL',
@@ -165,6 +167,13 @@ describe('LoadService.createDirect — Workflow 4 §4.8', () => {
       expect.anything(),
       expect.objectContaining({ action: 'Load Booked Directly (No Quote)' }),
     );
+    // createFromBooking's declared return type is the bare Load (no stops
+    // relation), even though `include: { stops: true }` puts it on the
+    // runtime object — same cast style as the `as never` params above.
+    expect((load as never as { stops: unknown }).stops).toEqual([
+      expect.objectContaining({ companyName: 'ABC Manufacturing' }),
+      expect.objectContaining({ companyName: 'XYZ Distribution' }),
+    ]);
   });
 
   it('Phase 6: creates an ORIGINAL customer-side LINEHAUL ChargeLineItem at booking time (DATABASE_DESIGN.md §14)', async () => {

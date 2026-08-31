@@ -1,14 +1,4 @@
-import type { Load, Stop } from '../../api';
-
-/**
- * A stop only carries its own company name when booked from a saved
- * CustomerLocation; a manually-entered/lane-level stop (customerLocationId
- * null -- Quote-converted loads, DATABASE_DESIGN.md §9) falls back to the
- * load's own customer, since every load always has exactly one.
- */
-export function stopCompanyName(stop: Stop, load: Load): string {
-  return stop.customerLocation?.customer.legalName ?? load.customer.legalName;
-}
+import type { Stop } from '../../api';
 
 /** First Pickup / last Delivery by sequence — matches the locked Table View column derivation (§5.4.1). */
 export function originDestination(stops: Stop[]): string {
