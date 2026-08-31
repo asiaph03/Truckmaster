@@ -1,0 +1,32 @@
+.eastern-clock {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-2);
+  white-space: nowrap;
+}
+
+.eastern-clock-icon {
+  color: var(--icon-color-inactive);
+  flex-shrink: 0;
+}
+
+.eastern-clock-text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.15;
+}
+
+.eastern-clock-time {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--text-body-medium-size);
+  font-weight: var(--text-body-medium-weight);
+  color: var(--neutral-900);
+}
+
+.eastern-clock-date {
+  font-size: var(--text-caption-size);
+  color: var(--neutral-500);
+}

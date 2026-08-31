@@ -82,3 +82,20 @@ export function toBusinessDatetimeLocalValue(iso?: string): string {
   const { year, month, day, hour, minute } = wallClockPartsInBusinessTimezone(instant);
   return `${year}-${month}-${day}T${hour}:${minute}`;
 }
+
+/**
+ * The current standard/daylight abbreviation ("EST" or "EDT") for
+ * `instant` (defaults to now) in `America/New_York` — read live from
+ * `Intl`/ICU's own tzdata via `timeZoneName: 'short'`, never a hardcoded
+ * offset or label, so it flips automatically across the DST boundary.
+ * Used by the header's live Eastern Time clock (TopBar/EasternClock).
+ */
+export function getBusinessTimeZoneAbbreviation(instant: Date = new Date()): string {
+  const part = new Intl.DateTimeFormat('en-US', {
+    timeZone: BUSINESS_TIMEZONE,
+    timeZoneName: 'short',
+  })
+    .formatToParts(instant)
+    .find((p) => p.type === 'timeZoneName');
+  return part?.value ?? '';
+}

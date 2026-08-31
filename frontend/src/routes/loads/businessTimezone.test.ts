@@ -3,6 +3,7 @@ import {
   BUSINESS_TIMEZONE,
   formatBusinessDateTime,
   formatBusinessTime,
+  getBusinessTimeZoneAbbreviation,
   toBusinessDatetimeLocalValue,
 } from './businessTimezone';
 
@@ -74,6 +75,42 @@ describe('Edit -> save -> reload regression: the Eastern wall-clock value surviv
     const storedUtcInstant = '2026-09-01T18:30:00.000Z';
 
     expect(toBusinessDatetimeLocalValue(storedUtcInstant)).toBe(enteredEasternWallClock);
+  });
+});
+
+describe('getBusinessTimeZoneAbbreviation — header clock EST/EDT indicator, IANA-driven', () => {
+  it('returns EDT for a summer instant', () => {
+    expect(getBusinessTimeZoneAbbreviation(new Date('2026-07-15T18:30:00.000Z'))).toBe('EDT');
+  });
+
+  it('returns EST for a winter instant', () => {
+    expect(getBusinessTimeZoneAbbreviation(new Date('2026-01-15T18:30:00.000Z'))).toBe('EST');
+  });
+
+  it('flips automatically across the DST transition, without any hardcoded offset', () => {
+    // Just before the 2026 spring-forward (2026-03-08, 2:00 AM local).
+    expect(getBusinessTimeZoneAbbreviation(new Date('2026-03-08T06:30:00.000Z'))).toBe('EST');
+    // Just after.
+    expect(getBusinessTimeZoneAbbreviation(new Date('2026-03-08T07:30:00.000Z'))).toBe('EDT');
+  });
+
+  it('defaults to the current instant when called with no argument', () => {
+    expect(getBusinessTimeZoneAbbreviation()).toMatch(/^E[SD]T$/);
+  });
+
+  it('is unaffected by the viewing browser being configured for a non-Eastern timezone', () => {
+    const originalTZ = process.env.TZ;
+    try {
+      process.env.TZ = 'Asia/Singapore';
+      const summerSingapore = getBusinessTimeZoneAbbreviation(new Date('2026-07-15T18:30:00.000Z'));
+      process.env.TZ = 'Pacific/Auckland';
+      const summerAuckland = getBusinessTimeZoneAbbreviation(new Date('2026-07-15T18:30:00.000Z'));
+
+      expect(summerSingapore).toBe('EDT');
+      expect(summerAuckland).toBe('EDT');
+    } finally {
+      process.env.TZ = originalTZ;
+    }
   });
 });
 
