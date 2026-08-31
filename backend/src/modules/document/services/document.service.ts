@@ -49,13 +49,16 @@ const POD_UPLOAD_ROLES: MembershipRoleName[] = [
 ];
 
 /**
- * Entities whose existence can actually be validated (Load/Invoice/
- * CarrierPayment don't exist as tables — Invoice/CarrierPayment are
- * Phase 6 — or have no upload path wired yet; DATABASE_DESIGN.md §7's
- * entity_type enum anticipates all of them, but this module only accepts
- * uploads against entities/paths that actually exist, rather than
- * silently allowing an orphaned polymorphic reference). STOP added in
- * Phase 5 for per-delivery-stop POD upload (Workflow 7).
+ * Entities whose existence can actually be validated (Invoice/
+ * CarrierPayment don't exist as tables yet — Phase 6 — or have no upload
+ * path wired yet; DATABASE_DESIGN.md §7's entity_type enum anticipates
+ * all of them, but this module only accepts uploads against
+ * entities/paths that actually exist, rather than silently allowing an
+ * orphaned polymorphic reference). STOP added in Phase 5 for
+ * per-delivery-stop POD upload (Workflow 7). LOAD added for the
+ * Load-Level Documents upload control (Load Detail's Documents tab) —
+ * the generic Load-lifecycle document types (BOL, Lumper Receipt, Scale
+ * Ticket, Accessorial Receipt, etc.) seeded with category LOAD.
  */
 const SUPPORTED_ENTITY_TYPES: DocumentEntityType[] = [
   'CARRIER',
@@ -64,6 +67,7 @@ const SUPPORTED_ENTITY_TYPES: DocumentEntityType[] = [
   'TRUCK',
   'TRAILER',
   'STOP',
+  'LOAD',
 ];
 
 @Injectable()
@@ -113,6 +117,8 @@ export class DocumentService {
         return !!(await tx.trailer.findFirst({ where: { id: entityId, organizationId } }));
       case 'STOP':
         return !!(await tx.stop.findFirst({ where: { id: entityId, organizationId } }));
+      case 'LOAD':
+        return !!(await tx.load.findFirst({ where: { id: entityId, organizationId } }));
       default:
         return false;
     }
@@ -132,6 +138,14 @@ export class DocumentService {
       if (!POD_UPLOAD_ROLES.some((r) => roles.includes(r))) {
         throw new PermissionError(
           'Uploading a POD document requires Admin, Operations Manager, Dispatcher, or Accounting.',
+        );
+      }
+    }
+    if (entityType === 'LOAD') {
+      const { roles = [] } = RequestContextStore.current();
+      if (!POD_UPLOAD_ROLES.some((r) => roles.includes(r))) {
+        throw new PermissionError(
+          'Uploading a Load document requires Admin, Operations Manager, Dispatcher, or Accounting.',
         );
       }
     }

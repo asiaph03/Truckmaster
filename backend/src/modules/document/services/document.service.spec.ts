@@ -642,6 +642,105 @@ describe('DocumentService upload permission — entity-aware (§2.5)', () => {
   });
 });
 
+describe('DocumentService — Load-level document uploads (Load Detail Documents tab gap-fix)', () => {
+  const ORG_ID = 'org-1';
+
+  function buildService(opts: { load?: Record<string, unknown> | null } = {}) {
+    const load = 'load' in opts ? opts.load : { id: 'load-1' };
+    const tx = {
+      load: { findFirst: jest.fn().mockResolvedValue(load) },
+      documentTypeDefinition: {
+        findFirst: jest
+          .fn()
+          .mockResolvedValue({ id: 'dt-1', code: 'ACCESSORIAL_RECEIPT', requiresReview: false }),
+      },
+      document: {
+        create: jest.fn().mockImplementation(({ data }) => ({ id: 'doc-1', ...data })),
+        update: jest.fn().mockImplementation(({ data }) => ({ id: 'doc-1', ...data })),
+      },
+    };
+    const prisma = {
+      withTenantTransaction: jest
+        .fn()
+        .mockImplementation((_orgId: string, fn: (tx: unknown) => unknown) => fn(tx)),
+    };
+    const audit = { record: jest.fn().mockResolvedValue(undefined) };
+    const storage = {
+      buildDocumentKey: jest.fn().mockReturnValue('key'),
+      getUploadUrl: jest.fn().mockResolvedValue('https://upload-url.example'),
+    };
+    const carrierEligibility = {};
+    const loadPodStatus = {};
+    const scanQueue = { add: jest.fn() };
+
+    const service = new DocumentService(
+      prisma as never,
+      audit as never,
+      storage as never,
+      carrierEligibility as never,
+      loadPodStatus as never,
+      scanQueue as never,
+    );
+
+    return { service, tx };
+  }
+
+  const LOAD_UPLOAD_DTO = {
+    entityType: 'LOAD' as const,
+    entityId: 'load-1',
+    documentTypeId: 'dt-1',
+    fileName: 'accessorial-receipt.pdf',
+    mimeType: 'application/pdf',
+    fileSizeBytes: 1024,
+  };
+
+  it('allows a Dispatcher to upload a Load-level document (e.g. Accessorial Receipt)', async () => {
+    const { service } = buildService();
+    await RequestContextStore.run({ requestId: 'r1', roles: ['DISPATCHER'] }, async () => {
+      await expect(
+        service.initiateUpload(ORG_ID, LOAD_UPLOAD_DTO, 'user-1'),
+      ).resolves.toBeDefined();
+    });
+  });
+
+  it('allows Accounting to upload a Load-level document', async () => {
+    const { service } = buildService();
+    await RequestContextStore.run({ requestId: 'r2', roles: ['ACCOUNTING'] }, async () => {
+      await expect(
+        service.initiateUpload(ORG_ID, LOAD_UPLOAD_DTO, 'user-1'),
+      ).resolves.toBeDefined();
+    });
+  });
+
+  it('blocks a Sales/Booking user from uploading a Load-level document', async () => {
+    const { service } = buildService();
+    await RequestContextStore.run({ requestId: 'r3', roles: ['SALES_BOOKING'] }, async () => {
+      await expect(service.initiateUpload(ORG_ID, LOAD_UPLOAD_DTO, 'user-1')).rejects.toThrow(
+        /Uploading a Load document requires Admin, Operations Manager, Dispatcher, or Accounting/,
+      );
+    });
+  });
+
+  it('looks up the Load scoped to the acting organization (tenant isolation)', async () => {
+    const { service, tx } = buildService();
+    await RequestContextStore.run({ requestId: 'r4', roles: ['ADMIN'] }, async () => {
+      await service.initiateUpload(ORG_ID, LOAD_UPLOAD_DTO, 'user-1');
+    });
+    expect(tx.load.findFirst).toHaveBeenCalledWith({
+      where: { id: 'load-1', organizationId: ORG_ID },
+    });
+  });
+
+  it('rejects with NotFoundError when the Load does not belong to the acting organization', async () => {
+    const { service } = buildService({ load: null });
+    await RequestContextStore.run({ requestId: 'r5', roles: ['ADMIN'] }, async () => {
+      await expect(service.initiateUpload(ORG_ID, LOAD_UPLOAD_DTO, 'user-1')).rejects.toThrow(
+        /LOAD not found/,
+      );
+    });
+  });
+});
+
 describe('DocumentService — Phase 5 POD/Stop uploads (Workflow 7 §7.1)', () => {
   const ORG_ID = 'org-1';
 
