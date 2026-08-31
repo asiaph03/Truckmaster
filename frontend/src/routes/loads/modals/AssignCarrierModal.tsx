@@ -113,6 +113,7 @@ export function AssignCarrierModal({
         <CurrencyInput
           label="Carrier Rate"
           required
+          error={errors.carrierRate ? 'Carrier Rate is required.' : undefined}
           {...register('carrierRate', { required: true })}
         />
       </form>
