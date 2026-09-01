@@ -27,6 +27,8 @@ import { UpdateDispatchDto } from '../dto/update-dispatch.dto';
 import { StopTimestampDto } from '../dto/stop-timestamp.dto';
 import { RescheduleStopDto } from '../dto/reschedule-stop.dto';
 import { UpdateStopsDto } from '../dto/update-stops.dto';
+import { InitiateReturnDto } from '../dto/initiate-return.dto';
+import { LinkReturnLoadDto } from '../dto/link-return-load.dto';
 import { LogCheckCallDto } from '../dto/log-check-call.dto';
 import { SetRiskStatusDto } from '../dto/set-risk-status.dto';
 import { AssignDispatcherDto } from '../dto/assign-dispatcher.dto';
@@ -359,6 +361,20 @@ export class LoadController {
     return this.loadService.updateReferenceNumbers(organizationId, id, dto, actingUserId);
   }
 
+  /**
+   * Return Product feature — the lighter, post-creation linking action
+   * (approved over adding this to `createDirect`'s `CreateLoadDto`).
+   * Same role set as `createDirect`/`updateReferenceNumbers` — linking a
+   * return Load is a booking-detail action, not a dispatch-tracking one.
+   */
+  @Patch(':id/link-return')
+  @Roles(...QUOTE_LOAD_CREATE_ROLES)
+  linkReturnLoad(@Param('id', ParseUUIDPipe) id: string, @Body() dto: LinkReturnLoadDto) {
+    const organizationId = RequestContextStore.requireOrganizationId();
+    const actingUserId = RequestContextStore.requireUserId();
+    return this.loadService.linkReturnLoad(organizationId, id, dto, actingUserId);
+  }
+
   // --- Phase 4: Sourcing (Workflow 5) ---------------------------------
 
   @Post(':id/begin-sourcing')
@@ -486,6 +502,23 @@ export class LoadController {
     const organizationId = RequestContextStore.requireOrganizationId();
     const actingUserId = RequestContextStore.requireUserId();
     return this.dispatchTracking.updateStops(organizationId, id, dto, actingUserId);
+  }
+
+  /**
+   * Return Product feature — "Initiate Return". Same `SOURCING_DISPATCH_
+   * ROLES` as every other dispatch-tracking mutation on this controller
+   * (arrival/departure/reschedule) — a return is a tracking event, not a
+   * booking-detail correction like `updateStops` above it. Distinct path
+   * shape (`:id/stops/return`, no further segments) from both `:id/stops`
+   * (PATCH, this route is POST) and `:id/stops/:sequence/*` (always one
+   * more segment) — no route ordering conflict.
+   */
+  @Post(':id/stops/return')
+  @Roles(...SOURCING_DISPATCH_ROLES)
+  initiateReturn(@Param('id', ParseUUIDPipe) id: string, @Body() dto: InitiateReturnDto) {
+    const organizationId = RequestContextStore.requireOrganizationId();
+    const actingUserId = RequestContextStore.requireUserId();
+    return this.dispatchTracking.initiateReturn(organizationId, id, dto, actingUserId);
   }
 
   @Post(':id/check-calls')

@@ -18,6 +18,7 @@ import { shapeFinancialFields, shapeFinancialFieldsList } from './financial-fiel
 import { CreateLoadDto } from '../dto/create-load.dto';
 import { UpdateLoadReferenceNumbersDto } from '../dto/update-load-reference-numbers.dto';
 import { AddChargeDto } from '../dto/add-charge.dto';
+import { LinkReturnLoadDto } from '../dto/link-return-load.dto';
 import {
   BusinessRuleError,
   InvalidTransitionError,
@@ -103,6 +104,11 @@ export class LoadService {
           dispatchRecord: true,
           checkCalls: true,
           chargeLineItems: true,
+          // Return Product feature — read-side only, so a Return Load is
+          // never indistinguishable from an ordinary one in the UI, and
+          // an original Load can show which return Load(s) exist for it.
+          returnForLoad: { select: { id: true, loadNumber: true } },
+          returnLoads: { select: { id: true, loadNumber: true, status: true } },
         },
       });
       if (!found) return null;
@@ -413,6 +419,55 @@ export class LoadService {
           actorUserId: actingUserId,
         });
       }
+
+      return updated;
+    });
+  }
+
+  /**
+   * Return Product feature — the lighter, post-creation approach for
+   * linking a separate return Load back to the original (approved over
+   * adding this to `CreateLoadDto`, which keeps Create Load's own flow
+   * unchanged). Mirrors `updateReferenceNumbers`'s "addable any time
+   * after" shape: no Load.status gate on either side. Rejects linking a
+   * Load to itself, and requires the target to actually exist in this
+   * organization — deliberately does not attempt to prevent multi-level
+   * chains (a return Load pointing at another return Load), since
+   * nothing in the approved design calls for that extra validation.
+   */
+  async linkReturnLoad(
+    organizationId: string,
+    loadId: string,
+    dto: LinkReturnLoadDto,
+    actingUserId: string,
+  ): Promise<Load> {
+    return this.prisma.withTenantTransaction(organizationId, async (tx) => {
+      if (loadId === dto.returnForLoadId) {
+        throw new BusinessRuleError('A Load cannot be linked as a return for itself.');
+      }
+
+      const existing = await tx.load.findFirst({ where: { id: loadId, organizationId } });
+      if (!existing) throw new NotFoundError('Load not found.');
+
+      const original = await tx.load.findFirst({
+        where: { id: dto.returnForLoadId, organizationId },
+      });
+      if (!original) throw new NotFoundError('Original Load not found.');
+
+      const updated = await tx.load.update({
+        where: { id: loadId },
+        data: { returnForLoadId: dto.returnForLoadId },
+      });
+
+      await this.audit.record(tx, {
+        organizationId,
+        action: 'Load Linked as Return',
+        entityType: 'Load',
+        entityId: loadId,
+        previousValue: { returnForLoadId: existing.returnForLoadId },
+        newValue: { returnForLoadId: dto.returnForLoadId, originalLoadNumber: original.loadNumber },
+        actorUserId: actingUserId,
+      });
 
       return updated;
     });

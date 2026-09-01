@@ -10,6 +10,7 @@ import { UpdateDispatchDto } from '../dto/update-dispatch.dto';
 import { StopTimestampDto } from '../dto/stop-timestamp.dto';
 import { RescheduleStopDto } from '../dto/reschedule-stop.dto';
 import { UpdateStopsDto } from '../dto/update-stops.dto';
+import { InitiateReturnDto } from '../dto/initiate-return.dto';
 import { LogCheckCallDto } from '../dto/log-check-call.dto';
 import { SetRiskStatusDto } from '../dto/set-risk-status.dto';
 import { AssignDispatcherDto } from '../dto/assign-dispatcher.dto';
@@ -178,7 +179,12 @@ export class DispatchTrackingService {
     const stops = await tx.stop.findMany({ where: { loadId: load.id, organizationId } });
     const nextStatus = this.statusDerivation.deriveLoadStatus(
       load.status,
-      stops.map((s) => ({ stopType: s.stopType, status: s.status, sequence: s.sequence })),
+      stops.map((s) => ({
+        stopType: s.stopType,
+        stopPurpose: s.stopPurpose,
+        status: s.status,
+        sequence: s.sequence,
+      })),
     );
     if (nextStatus === load.status) return load;
 
@@ -199,7 +205,21 @@ export class DispatchTrackingService {
     return updated;
   }
 
-  /** Workflow 6 §6.4 — Stop PENDING -> ARRIVED, then re-derives Load status. */
+  /**
+   * Workflow 6 §6.4 — Stop PENDING -> ARRIVED, then re-derives Load status.
+   *
+   * Return Product feature — `load.status === 'DELIVERED'` now also
+   * allows a `stopPurpose: RETURN` stop (a return is very often initiated
+   * after the standard delivery already completed). Structured so every
+   * pre-existing Load.status/error precedence is provably unchanged: the
+   * `POST_DISPATCH_STATUSES` check still runs first and short-circuits
+   * exactly as before for every status except `DELIVERED` — only that one
+   * new branch does an extra stop lookup, and only to decide whether to
+   * allow, never to change what happens for a STANDARD stop (still
+   * rejected) or any other status (still rejected, no stop lookup at
+   * all, so a Load with no stops still throws `InvalidTransitionError`
+   * before ever reaching `NotFoundError`, matching the original order).
+   */
   async recordArrival(
     organizationId: string,
     loadId: string,
@@ -210,12 +230,20 @@ export class DispatchTrackingService {
     return this.prisma.withTenantTransaction(organizationId, async (tx) => {
       const load = await tx.load.findFirst({ where: { id: loadId, organizationId } });
       if (!load) throw new NotFoundError('Load not found.');
+
+      let stop: Stop | null = null;
       if (!POST_DISPATCH_STATUSES.includes(load.status)) {
-        throw new InvalidTransitionError('This Load has not been Dispatched yet.');
+        if (load.status === 'DELIVERED') {
+          stop = await tx.stop.findFirst({ where: { loadId, organizationId, sequence } });
+        }
+        if (stop?.stopPurpose !== 'RETURN') {
+          throw new InvalidTransitionError('This Load has not been Dispatched yet.');
+        }
       }
 
-      const stop = await tx.stop.findFirst({ where: { loadId, organizationId, sequence } });
+      stop = stop ?? (await tx.stop.findFirst({ where: { loadId, organizationId, sequence } }));
       if (!stop) throw new NotFoundError('Stop not found.');
+
       if (stop.status !== 'PENDING') {
         throw new InvalidTransitionError('This Stop has already recorded an arrival.');
       }
@@ -247,7 +275,12 @@ export class DispatchTrackingService {
     });
   }
 
-  /** Workflow 6 §6.5 — Stop ARRIVED -> COMPLETED, then re-derives Load status. */
+  /**
+   * Workflow 6 §6.5 — Stop ARRIVED -> COMPLETED, then re-derives Load status.
+   *
+   * Return Product feature — same narrow `DELIVERED` + `stopPurpose:
+   * RETURN` exception as `recordArrival` above; see its doc comment.
+   */
   async recordDeparture(
     organizationId: string,
     loadId: string,
@@ -258,12 +291,20 @@ export class DispatchTrackingService {
     return this.prisma.withTenantTransaction(organizationId, async (tx) => {
       const load = await tx.load.findFirst({ where: { id: loadId, organizationId } });
       if (!load) throw new NotFoundError('Load not found.');
+
+      let stop: Stop | null = null;
       if (!POST_DISPATCH_STATUSES.includes(load.status)) {
-        throw new InvalidTransitionError('This Load has not been Dispatched yet.');
+        if (load.status === 'DELIVERED') {
+          stop = await tx.stop.findFirst({ where: { loadId, organizationId, sequence } });
+        }
+        if (stop?.stopPurpose !== 'RETURN') {
+          throw new InvalidTransitionError('This Load has not been Dispatched yet.');
+        }
       }
 
-      const stop = await tx.stop.findFirst({ where: { loadId, organizationId, sequence } });
+      stop = stop ?? (await tx.stop.findFirst({ where: { loadId, organizationId, sequence } }));
       if (!stop) throw new NotFoundError('Stop not found.');
+
       if (stop.status !== 'ARRIVED') {
         throw new InvalidTransitionError('This Stop must record an arrival before a departure.');
       }
@@ -441,6 +482,102 @@ export class DispatchTrackingService {
 
       const updatedLoad = await this.reEvaluateLoadStatus(tx, organizationId, load);
       return { stops: updatedStops, load: updatedLoad };
+    });
+  }
+
+  /**
+   * Return Product feature — "Initiate Return", a genuinely new
+   * capability (no prior endpoint ever adds a Stop after Load creation).
+   * Appends exactly one PICKUP/RETURN + one DELIVERY/RETURN pair at the
+   * next two sequence numbers. Deliberately does not require the Load to
+   * still be in a POST_DISPATCH_STATUSES state — `DELIVERED` is the most
+   * common real-world timing (the return is usually decided only once the
+   * standard delivery has already happened) — but does reject `CLOSED`
+   * (no reopen mechanism exists; a return after closing must be a
+   * separate Load per the approved same-Load/separate-Load rule) and
+   * anything before `DISPATCHED` (a return only makes sense once the
+   * truck has actually run the original leg).
+   *
+   * Calls `reEvaluateLoadStatus` for consistency with every other stop-
+   * mutating action above — per `LoadStatusDerivationService`'s
+   * `stopPurpose: STANDARD` filter, this is provably a no-op for
+   * `Load.status` here, included defensively rather than because
+   * anything is expected to change.
+   */
+  async initiateReturn(
+    organizationId: string,
+    loadId: string,
+    dto: InitiateReturnDto,
+    actingUserId: string,
+  ): Promise<{ stops: Stop[]; load: Load }> {
+    return this.prisma.withTenantTransaction(organizationId, async (tx) => {
+      const load = await tx.load.findFirst({ where: { id: loadId, organizationId } });
+      if (!load) throw new NotFoundError('Load not found.');
+      if (load.status === 'CLOSED') {
+        throw new BusinessRuleError('Cannot initiate a return on a Closed Load.');
+      }
+      if (!POST_DISPATCH_STATUSES.includes(load.status) && load.status !== 'DELIVERED') {
+        throw new BusinessRuleError(
+          'A return can only be initiated after the Load has been Dispatched.',
+        );
+      }
+
+      const [lastStop] = await tx.stop.findMany({
+        where: { loadId, organizationId },
+        orderBy: { sequence: 'desc' },
+        take: 1,
+      });
+      const nextSequence = (lastStop?.sequence ?? 0) + 1;
+
+      const buildData = (
+        item: InitiateReturnDto['pickupStop'],
+        sequence: number,
+        stopType: 'PICKUP' | 'DELIVERY',
+      ) => ({
+        organizationId,
+        loadId,
+        sequence,
+        stopType,
+        stopPurpose: 'RETURN' as const,
+        customerLocationId: item.customerLocationId,
+        companyName: item.companyName,
+        addressLine1: item.addressLine1,
+        city: item.city,
+        state: item.state,
+        zip: item.zip,
+        appointmentDatetime: item.appointmentDatetime
+          ? parseBusinessDateTime(item.appointmentDatetime)
+          : null,
+        contactName: item.contactName ?? null,
+        contactPhone: item.contactPhone ?? null,
+        notes: item.notes ?? null,
+      });
+
+      const pickupStop = await tx.stop.create({
+        data: buildData(dto.pickupStop, nextSequence, 'PICKUP'),
+      });
+      const deliveryStop = await tx.stop.create({
+        data: buildData(dto.deliveryStop, nextSequence + 1, 'DELIVERY'),
+      });
+
+      await this.audit.record(tx, {
+        organizationId,
+        action: 'Return Initiated',
+        entityType: 'Load',
+        entityId: loadId,
+        newValue: {
+          pickupStopId: pickupStop.id,
+          pickupSequence: pickupStop.sequence,
+          pickupCity: pickupStop.city,
+          deliveryStopId: deliveryStop.id,
+          deliverySequence: deliveryStop.sequence,
+          deliveryCity: deliveryStop.city,
+        },
+        actorUserId: actingUserId,
+      });
+
+      const updatedLoad = await this.reEvaluateLoadStatus(tx, organizationId, load);
+      return { stops: [pickupStop, deliveryStop], load: updatedLoad };
     });
   }
 

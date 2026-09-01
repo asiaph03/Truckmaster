@@ -55,6 +55,10 @@ function buildService(opts: {
         // matching real Postgres read-your-writes behavior inside one tx.
         return Object.assign(existing ?? {}, data);
       }),
+      // Return Product feature — initiateReturn's tx.stop.create; no
+      // default implementation (individual tests override it), just
+      // declared here so its type is assignable/overridable.
+      create: jest.fn(),
     },
     dispatchRecord: {
       create: jest.fn().mockResolvedValue(undefined),
@@ -320,6 +324,248 @@ describe('DispatchTrackingService.recordArrival/recordDeparture — Workflow 6 �
     const departureMs = (stop.actualDeparture as Date).getTime();
     expect(departureMs).toBeGreaterThanOrEqual(before);
     expect(departureMs).toBeLessThanOrEqual(after);
+  });
+
+  // --- Return Product feature — the narrow DELIVERED + RETURN exception ---
+  it('allows recordArrival on a RETURN stop while the Load is DELIVERED', async () => {
+    const stops = [
+      { id: 'stop-3', sequence: 3, stopType: 'PICKUP', status: 'PENDING', stopPurpose: 'RETURN' },
+    ];
+    const { service } = buildService({ load: { id: LOAD_ID, status: 'DELIVERED' }, stops });
+
+    const { stop } = await service.recordArrival(ORG_ID, LOAD_ID, 3, {}, USER_ID);
+
+    expect(stop.status).toBe('ARRIVED');
+  });
+
+  it('allows recordDeparture on a RETURN stop while the Load is DELIVERED', async () => {
+    const stops = [
+      {
+        id: 'stop-3',
+        sequence: 3,
+        stopType: 'PICKUP',
+        status: 'ARRIVED',
+        stopPurpose: 'RETURN',
+        actualArrival: new Date(),
+      },
+    ];
+    const { service } = buildService({ load: { id: LOAD_ID, status: 'DELIVERED' }, stops });
+
+    const { stop } = await service.recordDeparture(ORG_ID, LOAD_ID, 3, {}, USER_ID);
+
+    expect(stop.status).toBe('COMPLETED');
+  });
+
+  it('still rejects recordArrival on a STANDARD stop while the Load is DELIVERED — standard behavior is unchanged', async () => {
+    const stops = [
+      { id: 'stop-1', sequence: 1, stopType: 'PICKUP', status: 'PENDING', stopPurpose: 'STANDARD' },
+    ];
+    const { service } = buildService({ load: { id: LOAD_ID, status: 'DELIVERED' }, stops });
+
+    await expect(service.recordArrival(ORG_ID, LOAD_ID, 1, {}, USER_ID)).rejects.toThrow(
+      InvalidTransitionError,
+    );
+  });
+
+  it('still rejects recordDeparture on a STANDARD stop while the Load is DELIVERED — standard behavior is unchanged', async () => {
+    const stops = [
+      {
+        id: 'stop-1',
+        sequence: 1,
+        stopType: 'PICKUP',
+        status: 'ARRIVED',
+        stopPurpose: 'STANDARD',
+        actualArrival: new Date(),
+      },
+    ];
+    const { service } = buildService({ load: { id: LOAD_ID, status: 'DELIVERED' }, stops });
+
+    await expect(service.recordDeparture(ORG_ID, LOAD_ID, 1, {}, USER_ID)).rejects.toThrow(
+      InvalidTransitionError,
+    );
+  });
+
+  it('still rejects a RETURN stop before Dispatch — DELIVERED is the only widened exception, not "any status"', async () => {
+    const stops = [
+      { id: 'stop-3', sequence: 3, stopType: 'PICKUP', status: 'PENDING', stopPurpose: 'RETURN' },
+    ];
+    const { service } = buildService({ load: { id: LOAD_ID, status: 'RATE_CONFIRMATION' }, stops });
+
+    await expect(service.recordArrival(ORG_ID, LOAD_ID, 3, {}, USER_ID)).rejects.toThrow(
+      InvalidTransitionError,
+    );
+  });
+});
+
+describe('DispatchTrackingService.initiateReturn — Return Product feature', () => {
+  function returnStopDto(overrides: Record<string, unknown> = {}) {
+    return {
+      companyName: 'Some Co',
+      addressLine1: '1 Main St',
+      city: 'Dallas',
+      state: 'TX',
+      zip: '75201',
+      ...overrides,
+    };
+  }
+  const INITIATE_RETURN_DTO = {
+    pickupStop: returnStopDto({ city: 'Customer City' }),
+    deliveryStop: returnStopDto({ city: 'Shipper City' }),
+  };
+
+  /**
+   * The shared `buildService` mock's `tx.stop.findMany` ignores
+   * `orderBy`/`take` and always returns the raw fixture array — fine for
+   * every other test in this file (which only ever needs "all stops"),
+   * but `initiateReturn`'s `orderBy: sequence desc, take: 1` next-
+   * sequence lookup needs it honored for real. Scoped to these tests
+   * only, not the shared helper.
+   */
+  function mockOrderedStopFindMany(tx: ReturnType<typeof buildService>['tx'], stops: unknown[]) {
+    tx.stop.findMany = jest
+      .fn()
+      .mockImplementation((args: { orderBy?: unknown; take?: number }) =>
+        args?.take === 1
+          ? [...(stops as { sequence: number }[])]
+              .sort((a, b) => b.sequence - a.sequence)
+              .slice(0, 1)
+          : stops,
+      );
+  }
+
+  it('appends a PICKUP/RETURN + DELIVERY/RETURN pair at the next two sequence numbers', async () => {
+    const stops = [
+      { id: 'stop-1', sequence: 1, stopType: 'PICKUP', status: 'COMPLETED' },
+      { id: 'stop-2', sequence: 2, stopType: 'DELIVERY', status: 'COMPLETED' },
+    ];
+    const { service, tx } = buildService({ load: { id: LOAD_ID, status: 'DELIVERED' }, stops });
+    mockOrderedStopFindMany(tx, stops);
+    tx.stop.create = jest
+      .fn()
+      .mockImplementation(({ data }) => ({ id: `new-${data.sequence}`, ...data }));
+
+    const { stops: created } = await service.initiateReturn(
+      ORG_ID,
+      LOAD_ID,
+      INITIATE_RETURN_DTO as never,
+      USER_ID,
+    );
+
+    expect(created[0]).toMatchObject({ sequence: 3, stopType: 'PICKUP', stopPurpose: 'RETURN' });
+    expect(created[1]).toMatchObject({ sequence: 4, stopType: 'DELIVERY', stopPurpose: 'RETURN' });
+  });
+
+  it('computes the next sequence correctly against an already-interleaved Load (4 existing stops -> 5/6)', async () => {
+    const stops = [
+      { id: 'stop-1', sequence: 1, stopType: 'PICKUP', status: 'COMPLETED' },
+      { id: 'stop-2', sequence: 2, stopType: 'DELIVERY', status: 'COMPLETED' },
+      { id: 'stop-3', sequence: 3, stopType: 'PICKUP', status: 'COMPLETED', stopPurpose: 'RETURN' },
+      {
+        id: 'stop-4',
+        sequence: 4,
+        stopType: 'DELIVERY',
+        status: 'COMPLETED',
+        stopPurpose: 'RETURN',
+      },
+    ];
+    const { service, tx } = buildService({ load: { id: LOAD_ID, status: 'DELIVERED' }, stops });
+    mockOrderedStopFindMany(tx, stops);
+    tx.stop.create = jest
+      .fn()
+      .mockImplementation(({ data }) => ({ id: `new-${data.sequence}`, ...data }));
+
+    const { stops: created } = await service.initiateReturn(
+      ORG_ID,
+      LOAD_ID,
+      INITIATE_RETURN_DTO as never,
+      USER_ID,
+    );
+
+    expect(created[0].sequence).toBe(5);
+    expect(created[1].sequence).toBe(6);
+  });
+
+  it('does not change Load.status (DELIVERED stays DELIVERED)', async () => {
+    const stops = [
+      { id: 'stop-1', sequence: 1, stopType: 'PICKUP', status: 'COMPLETED' },
+      { id: 'stop-2', sequence: 2, stopType: 'DELIVERY', status: 'COMPLETED' },
+    ];
+    const { service, tx } = buildService({ load: { id: LOAD_ID, status: 'DELIVERED' }, stops });
+    mockOrderedStopFindMany(tx, stops);
+    tx.stop.create = jest
+      .fn()
+      .mockImplementation(({ data }) => ({ id: `new-${data.sequence}`, ...data }));
+
+    const { load } = await service.initiateReturn(
+      ORG_ID,
+      LOAD_ID,
+      INITIATE_RETURN_DTO as never,
+      USER_ID,
+    );
+
+    expect(load.status).toBe('DELIVERED');
+  });
+
+  it('writes a single "Return Initiated" audit event', async () => {
+    const stops = [
+      { id: 'stop-1', sequence: 1, stopType: 'PICKUP', status: 'COMPLETED' },
+      { id: 'stop-2', sequence: 2, stopType: 'DELIVERY', status: 'COMPLETED' },
+    ];
+    const { service, tx, audit } = buildService({
+      load: { id: LOAD_ID, status: 'DELIVERED' },
+      stops,
+    });
+    mockOrderedStopFindMany(tx, stops);
+    tx.stop.create = jest
+      .fn()
+      .mockImplementation(({ data }) => ({ id: `new-${data.sequence}`, ...data }));
+
+    await service.initiateReturn(ORG_ID, LOAD_ID, INITIATE_RETURN_DTO as never, USER_ID);
+
+    expect(audit.record).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ action: 'Return Initiated' }),
+    );
+  });
+
+  it('rejects initiating a return on a Closed Load', async () => {
+    const { service } = buildService({ load: { id: LOAD_ID, status: 'CLOSED' } });
+
+    await expect(
+      service.initiateReturn(ORG_ID, LOAD_ID, INITIATE_RETURN_DTO as never, USER_ID),
+    ).rejects.toThrow(BusinessRuleError);
+  });
+
+  it('rejects initiating a return before the Load has been Dispatched', async () => {
+    const { service } = buildService({ load: { id: LOAD_ID, status: 'RATE_CONFIRMATION' } });
+
+    await expect(
+      service.initiateReturn(ORG_ID, LOAD_ID, INITIATE_RETURN_DTO as never, USER_ID),
+    ).rejects.toThrow(BusinessRuleError);
+  });
+
+  it('allows initiating a return while still IN_TRANSIT (before the standard delivery has completed)', async () => {
+    const stops = [
+      { id: 'stop-1', sequence: 1, stopType: 'PICKUP', status: 'COMPLETED' },
+      { id: 'stop-2', sequence: 2, stopType: 'DELIVERY', status: 'PENDING' },
+    ];
+    const { service, tx } = buildService({ load: { id: LOAD_ID, status: 'IN_TRANSIT' }, stops });
+    mockOrderedStopFindMany(tx, stops);
+    tx.stop.create = jest
+      .fn()
+      .mockImplementation(({ data }) => ({ id: `new-${data.sequence}`, ...data }));
+
+    await expect(
+      service.initiateReturn(ORG_ID, LOAD_ID, INITIATE_RETURN_DTO as never, USER_ID),
+    ).resolves.toBeDefined();
+  });
+
+  it('throws NotFoundError for a Load outside the organization', async () => {
+    const { service } = buildService({ load: null });
+
+    await expect(
+      service.initiateReturn(ORG_ID, LOAD_ID, INITIATE_RETURN_DTO as never, USER_ID),
+    ).rejects.toThrow(NotFoundError);
   });
 });
 

@@ -17,6 +17,7 @@ import {
 import { useToast } from '../../../components/ui/toastStore';
 import { usePermissions } from '../../../hooks/usePermissions';
 import { formatBusinessDateTime } from '../businessTimezone';
+import { InitiateReturnModal } from '../modals/InitiateReturnModal';
 import '../../shared/DetailPage.css';
 
 const RISK_OPTIONS: { value: RiskStatus; label: string }[] = [
@@ -47,8 +48,13 @@ export function StopsTrackingTab({ load, onChanged }: { load: Load; onChanged: (
   const trackingEnabled = (['DISPATCHED', 'PICKUP', 'IN_TRANSIT'] as string[]).includes(
     load.status,
   );
+  // Return Product feature — matches DispatchTrackingService.initiateReturn's
+  // own gate exactly: anything from DISPATCHED through DELIVERED, never
+  // CLOSED or pre-DISPATCHED.
+  const canInitiateReturn = trackingEnabled || load.status === 'DELIVERED';
   const [recordingStopSeq, setRecordingStopSeq] = useState<number | null>(null);
   const [loggingCheckCall, setLoggingCheckCall] = useState(false);
+  const [initiatingReturn, setInitiatingReturn] = useState(false);
   const [pendingRisk, setPendingRisk] = useState<RiskStatus | null>(null);
   const [riskReason, setRiskReason] = useState('');
   const [savingRisk, setSavingRisk] = useState(false);
@@ -118,6 +124,26 @@ export function StopsTrackingTab({ load, onChanged }: { load: Load; onChanged: (
 
   return (
     <div>
+      <div className="detail-section-header">
+        <h2 className="detail-card-title" style={{ margin: 0 }}>
+          Stops
+        </h2>
+        {canAct ? (
+          <Button
+            variant="tertiary"
+            size="sm"
+            disabled={!canInitiateReturn}
+            title={
+              !canInitiateReturn
+                ? 'Available once the load is Dispatched, until it is Closed.'
+                : undefined
+            }
+            onClick={() => setInitiatingReturn(true)}
+          >
+            + Initiate Return
+          </Button>
+        ) : null}
+      </div>
       <DataTable
         rows={sortedStops}
         rowKey={(s) => s.id}
@@ -126,7 +152,12 @@ export function StopsTrackingTab({ load, onChanged }: { load: Load; onChanged: (
           {
             key: 'type',
             header: 'Type',
-            render: (s) => <Badge label={s.stopType} color="neutral" />,
+            render: (s) => (
+              <div style={{ display: 'flex', gap: 'var(--space-1)', alignItems: 'center' }}>
+                <Badge label={s.stopType} color="neutral" />
+                {s.stopPurpose === 'RETURN' ? <Badge label="Return" color="warning" /> : null}
+              </div>
+            ),
           },
           {
             key: 'location',
@@ -309,6 +340,16 @@ export function StopsTrackingTab({ load, onChanged }: { load: Load; onChanged: (
           <Textarea label="Notes" {...checkCallForm.register('notes')} rows={2} />
         </form>
       </Modal>
+
+      <InitiateReturnModal
+        open={initiatingReturn}
+        loadId={load.id}
+        onClose={() => setInitiatingReturn(false)}
+        onInitiated={() => {
+          setInitiatingReturn(false);
+          onChanged();
+        }}
+      />
     </div>
   );
 }

@@ -195,10 +195,22 @@ describe('LoadSearchService.search — sorting and pagination', () => {
     expect(loadFindMany.mock.calls[0][0]).toEqual(
       expect.objectContaining({ select: { id: true } }),
     );
-    // Bare stop tuples only, not full stop rows.
+    // Bare stop tuples only, not full stop rows. Return Product feature —
+    // also filters/selects stopPurpose, so a return leg's pickup never
+    // affects this sort.
     expect(stopFindMany).toHaveBeenCalledWith({
-      where: { loadId: { in: ['load-a', 'load-b', 'load-c'] }, stopType: 'PICKUP' },
-      select: { loadId: true, sequence: true, appointmentDatetime: true, stopType: true },
+      where: {
+        loadId: { in: ['load-a', 'load-b', 'load-c'] },
+        stopType: 'PICKUP',
+        stopPurpose: 'STANDARD',
+      },
+      select: {
+        loadId: true,
+        sequence: true,
+        appointmentDatetime: true,
+        stopType: true,
+        stopPurpose: true,
+      },
     });
     // load-b (Jan) sorts before load-a (Mar); load-c (no stop) would be last but is excluded by pageSize 2.
     expect(loadFindMany.mock.calls[1][0]).toEqual(

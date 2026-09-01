@@ -106,4 +106,32 @@ describe('LoadPodStatusService.recalculatePodStatus — Workflow 7 §7.2 / TECHN
       }),
     );
   });
+
+  // --- Return Product feature — Decision 2 (stopPurpose: STANDARD filter) ---
+  it('only queries stopPurpose STANDARD delivery stops — a return delivery is excluded from the query itself', async () => {
+    const { service, tx } = buildService({});
+
+    await service.recalculatePodStatus(tx as never, ORG_ID, LOAD_ID);
+
+    expect(tx.stop.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ stopType: 'DELIVERY', stopPurpose: 'STANDARD' }),
+      }),
+    );
+  });
+
+  it('stays COMPLETE when the standard delivery has a CLEAN POD, even though a return delivery (excluded from the query) has none', async () => {
+    // The mock's `deliveryStopIds` simulates what tx.stop.findMany would
+    // return for a stopPurpose:STANDARD-filtered query — a return
+    // delivery stop id is deliberately NOT included here, exactly as the
+    // real filtered query would omit it.
+    const { service, tx } = buildService({
+      deliveryStopIds: ['stop-1'],
+      cleanPodDocuments: [{ entityId: 'stop-1' }],
+    });
+
+    const result = await service.recalculatePodStatus(tx as never, ORG_ID, LOAD_ID);
+
+    expect(result).toBe('COMPLETE');
+  });
 });

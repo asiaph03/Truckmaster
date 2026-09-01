@@ -91,6 +91,10 @@ const SYSTEM_CHARGE_TYPES = [
   { code: 'TONU', label: 'TONU (Truck Ordered Not Used)' },
   { code: 'ADDITIONAL_STOP', label: 'Additional Stop' },
   { code: 'REDELIVERY', label: 'Redelivery' },
+  // Return Product feature — deliberately distinct from REDELIVERY (a
+  // second delivery attempt) rather than reusing it, so charge-type
+  // reporting doesn't conflate the two different root causes.
+  { code: 'RETURN_FREIGHT', label: 'Return Freight' },
   { code: 'OTHER', label: 'Other Accessorial' },
 ] as const;
 

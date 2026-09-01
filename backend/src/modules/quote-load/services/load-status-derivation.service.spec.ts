@@ -9,8 +9,9 @@ describe('LoadStatusDerivationService.deriveLoadStatus', () => {
     stopType: StopProgressInput['stopType'],
     status: StopProgressInput['status'],
     sequence: number,
+    stopPurpose: StopProgressInput['stopPurpose'] = 'STANDARD',
   ): StopProgressInput {
-    return { stopType, status, sequence };
+    return { stopType, status, sequence, stopPurpose };
   }
 
   const cases: {
@@ -117,6 +118,62 @@ describe('LoadStatusDerivationService.deriveLoadStatus', () => {
       stops: [stop('PICKUP', 'COMPLETED', 1), stop('DELIVERY', 'COMPLETED', 2)],
       expected: 'CLOSED',
     },
+    // --- Return Product feature — Decision 1 (stopPurpose: STANDARD filter) ---
+    {
+      name: 'a completed return pickup+delivery, appended after an already-DELIVERED standard pair, does not change the outcome (DELIVERED)',
+      currentStatus: 'IN_TRANSIT',
+      stops: [
+        stop('PICKUP', 'COMPLETED', 1),
+        stop('DELIVERY', 'COMPLETED', 2),
+        stop('PICKUP', 'COMPLETED', 3, 'RETURN'),
+        stop('DELIVERY', 'COMPLETED', 4, 'RETURN'),
+      ],
+      expected: 'DELIVERED',
+    },
+    {
+      name: 'a return pickup+delivery pending does not block DELIVERED once the standard pair completes',
+      currentStatus: 'IN_TRANSIT',
+      stops: [
+        stop('PICKUP', 'COMPLETED', 1),
+        stop('DELIVERY', 'COMPLETED', 2),
+        stop('PICKUP', 'PENDING', 3, 'RETURN'),
+        stop('DELIVERY', 'PENDING', 4, 'RETURN'),
+      ],
+      expected: 'DELIVERED',
+    },
+    {
+      name: 'the corrected Risk 1 scenario: a COMPLETED return delivery must NOT drive DELIVERED while the standard delivery is still incomplete',
+      currentStatus: 'IN_TRANSIT',
+      stops: [
+        stop('PICKUP', 'COMPLETED', 1),
+        stop('DELIVERY', 'ARRIVED', 2), // standard delivery NOT completed
+        stop('PICKUP', 'COMPLETED', 3, 'RETURN'),
+        stop('DELIVERY', 'COMPLETED', 4, 'RETURN'), // return delivery IS completed
+      ],
+      expected: 'IN_TRANSIT',
+    },
+    {
+      name: 'a newly-appended, still-PENDING return pickup does not flip allPickupsCompleted to false for the standard pair',
+      currentStatus: 'IN_TRANSIT',
+      stops: [
+        stop('PICKUP', 'COMPLETED', 1),
+        stop('DELIVERY', 'COMPLETED', 2),
+        stop('PICKUP', 'PENDING', 3, 'RETURN'),
+      ],
+      expected: 'DELIVERED',
+    },
+    {
+      name: 'multiple return pairs, all interleaved with the standard pair, never affect status',
+      currentStatus: 'IN_TRANSIT',
+      stops: [
+        stop('PICKUP', 'PENDING', 5, 'RETURN'),
+        stop('DELIVERY', 'COMPLETED', 4, 'RETURN'),
+        stop('PICKUP', 'COMPLETED', 1),
+        stop('DELIVERY', 'COMPLETED', 3),
+        stop('PICKUP', 'COMPLETED', 2, 'RETURN'),
+      ],
+      expected: 'DELIVERED',
+    },
   ];
 
   for (const { name, currentStatus, stops, expected } of cases) {
@@ -124,4 +181,19 @@ describe('LoadStatusDerivationService.deriveLoadStatus', () => {
       expect(service.deriveLoadStatus(currentStatus, stops)).toBe(expected);
     });
   }
+
+  // DELIVERED is a terminal/sticky value (not in DERIVABLE_STATUSES) — this
+  // is what actually prevents any literal regression, independent of the
+  // stopPurpose filter; kept as its own explicit assertion since it's easy
+  // to conflate with the (separate) Decision 1 protection above.
+  it('DELIVERED never regresses even with an unfiltered mix of incomplete return stops', () => {
+    expect(
+      service.deriveLoadStatus('DELIVERED', [
+        stop('PICKUP', 'COMPLETED', 1),
+        stop('DELIVERY', 'COMPLETED', 2),
+        stop('PICKUP', 'PENDING', 3, 'RETURN'),
+        stop('DELIVERY', 'PENDING', 4, 'RETURN'),
+      ]),
+    ).toBe('DELIVERED');
+  });
 });

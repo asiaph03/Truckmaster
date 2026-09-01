@@ -684,14 +684,17 @@ export class ReportCatalogService {
     } else {
       // LANE — first PICKUP stop's city/state through last DELIVERY
       // stop's city/state, per load, then grouped on that derived pair.
+      // Return Product feature — both subqueries add `stop_purpose =
+      // 'STANDARD'`, so a return leg's own pickup/delivery never becomes
+      // the reported lane.
       raw = await tx.$queryRaw<RevenueRollupRawRow[]>`
         WITH load_lane AS (
           SELECT load.id AS load_id,
             (SELECT s.city || ', ' || s.state FROM stop s
-              WHERE s.load_id = load.id AND s.stop_type = 'PICKUP'
+              WHERE s.load_id = load.id AND s.stop_type = 'PICKUP' AND s.stop_purpose = 'STANDARD'
               ORDER BY s.sequence ASC LIMIT 1) AS origin,
             (SELECT s.city || ', ' || s.state FROM stop s
-              WHERE s.load_id = load.id AND s.stop_type = 'DELIVERY'
+              WHERE s.load_id = load.id AND s.stop_type = 'DELIVERY' AND s.stop_purpose = 'STANDARD'
               ORDER BY s.sequence DESC LIMIT 1) AS destination
           FROM load
           WHERE load.organization_id = ${organizationId}::uuid
@@ -898,6 +901,10 @@ export class ReportCatalogService {
    * `appointmentDatetime` are excluded from the evaluated denominator and
    * reported separately (`excludedNoAppointment`) rather than silently
    * dropped — approved decision.
+   *
+   * Return Product feature — every query below adds `stop_purpose =
+   * 'STANDARD'`, so a return delivery never appears in either the
+   * evaluated or excluded on-time counts.
    */
   private async onTimeRows(
     tx: TenantTx,
@@ -921,6 +928,7 @@ export class ReportCatalogService {
               JOIN load ON load.id = stop.load_id
               JOIN carrier ON carrier.id = load.assigned_carrier_id
               WHERE stop.stop_type = 'DELIVERY'
+                AND stop.stop_purpose = 'STANDARD'
                 AND stop.appointment_datetime IS NOT NULL
                 AND stop.actual_arrival IS NOT NULL
                 AND load.organization_id = ${organizationId}::uuid
@@ -936,6 +944,7 @@ export class ReportCatalogService {
               FROM stop
               JOIN load ON load.id = stop.load_id
               WHERE stop.stop_type = 'DELIVERY'
+                AND stop.stop_purpose = 'STANDARD'
                 AND stop.appointment_datetime IS NULL
                 AND stop.actual_arrival IS NOT NULL
                 AND load.organization_id = ${organizationId}::uuid
@@ -954,6 +963,7 @@ export class ReportCatalogService {
               JOIN load ON load.id = stop.load_id
               JOIN "user" ON "user".id = load.assigned_dispatcher_id
               WHERE stop.stop_type = 'DELIVERY'
+                AND stop.stop_purpose = 'STANDARD'
                 AND stop.appointment_datetime IS NOT NULL
                 AND stop.actual_arrival IS NOT NULL
                 AND load.organization_id = ${organizationId}::uuid
@@ -968,6 +978,7 @@ export class ReportCatalogService {
               FROM stop
               JOIN load ON load.id = stop.load_id
               WHERE stop.stop_type = 'DELIVERY'
+                AND stop.stop_purpose = 'STANDARD'
                 AND stop.appointment_datetime IS NULL
                 AND stop.actual_arrival IS NOT NULL
                 AND load.organization_id = ${organizationId}::uuid

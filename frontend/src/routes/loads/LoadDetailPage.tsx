@@ -151,6 +151,12 @@ export function LoadDetailPage() {
             label={`POD: ${load.podStatus}`}
             color={getStatusBadgeColor('Load.podStatus', load.podStatus) ?? 'neutral'}
           />
+          {load.returnForLoadId ? (
+            <Badge
+              label={`Return Load — for ${load.returnForLoad?.loadNumber ?? '…'}`}
+              color="warning"
+            />
+          ) : null}
         </div>
         {canAct ? (
           <div className="detail-page-actions">

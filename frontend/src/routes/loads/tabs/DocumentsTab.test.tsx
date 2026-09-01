@@ -51,6 +51,7 @@ function makeStop(overrides: Partial<Stop>): Stop {
     loadId: 'load-1',
     sequence: 1,
     stopType: 'PICKUP',
+    stopPurpose: 'STANDARD',
     companyName: 'Test Co',
     city: 'Dallas',
     state: 'TX',
@@ -177,6 +178,32 @@ describe('DocumentsTab — Proof of Pickup (POP) / Proof of Delivery (POD) by St
     }
     expect(screen.getAllByText('Upload POP')).toHaveLength(3);
     expect(screen.getAllByText('Upload POD')).toHaveLength(2);
+  });
+
+  it('a RETURN-purpose PICKUP stop still renders Upload POP, labeled "(Return)" — stopType-only logic needs no changes', async () => {
+    const load = makeLoad([
+      makeStop({ sequence: 1, stopType: 'PICKUP', stopPurpose: 'STANDARD', city: 'Dallas' }),
+      makeStop({ sequence: 2, stopType: 'DELIVERY', stopPurpose: 'STANDARD', city: 'Chicago' }),
+      makeStop({ sequence: 3, stopType: 'PICKUP', stopPurpose: 'RETURN', city: 'Chicago' }),
+      makeStop({ sequence: 4, stopType: 'DELIVERY', stopPurpose: 'RETURN', city: 'Dallas' }),
+    ]);
+    renderTab(load);
+
+    const pickupRow = (await screen.findByText(/Stop 3 —.*\(Return\)/)).closest(
+      '.detail-card',
+    ) as HTMLElement;
+    expect(within(pickupRow).getByText(/Proof of Pickup/)).toBeInTheDocument();
+    expect(within(pickupRow).getByText('Upload POP')).toBeInTheDocument();
+
+    const deliveryRow = screen
+      .getByText(/Stop 4 —.*\(Return\)/)
+      .closest('.detail-card') as HTMLElement;
+    expect(within(deliveryRow).getByText(/Proof of Delivery/)).toBeInTheDocument();
+    expect(within(deliveryRow).getByText('Upload POD')).toBeInTheDocument();
+
+    // Standard stops are unaffected — no "(Return)" suffix.
+    expect(screen.queryByText(/Stop 1 —.*\(Return\)/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Stop 2 —.*\(Return\)/)).not.toBeInTheDocument();
   });
 
   it('POP and POD are excluded from the generic Load-Level Documents type dropdown', async () => {

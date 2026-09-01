@@ -187,6 +187,7 @@ function StopDocumentRow({
             Stop {stop.sequence} — {stop.city}, {stop.state}
             {' — '}
             {docLabel}
+            {stop.stopPurpose === 'RETURN' ? ' (Return)' : ''}
           </div>
           <div className="detail-field-value">
             {current ? `${current.fileName} (v${current.versionNumber})` : 'Not received.'}

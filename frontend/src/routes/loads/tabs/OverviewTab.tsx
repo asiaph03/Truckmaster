@@ -9,6 +9,7 @@ import { usePermissions } from '../../../hooks/usePermissions';
 import { formatBusinessDateTime } from '../businessTimezone';
 import { originDestination } from '../loadDerived';
 import { EditStopsModal } from '../modals/EditStopsModal';
+import { LinkReturnLoadModal } from '../modals/LinkReturnLoadModal';
 import '../../shared/DetailPage.css';
 import '../LoadDetailPage.css';
 
@@ -33,6 +34,7 @@ export function OverviewTab({ load, onChanged }: { load: Load; onChanged: () => 
   // extension of that same permission, not a dispatch-tracking action.
   const canEditStops = can('createQuoteOrLoad');
   const [editingStops, setEditingStops] = useState(false);
+  const [linkingReturn, setLinkingReturn] = useState(false);
 
   const { data: closingChecklist } = useQuery({
     queryKey: ['loads', load.id, 'closing-checklist'],
@@ -102,6 +104,7 @@ export function OverviewTab({ load, onChanged }: { load: Load; onChanged: () => 
             <div key={stop.id} className="load-stop-mini-row">
               <span>Stop {stop.sequence}</span>
               <Badge label={stop.stopType} color="neutral" />
+              {stop.stopPurpose === 'RETURN' ? <Badge label="Return" color="warning" /> : null}
               <span className="load-stop-mini-company">{stop.companyName ?? '—'}</span>
               <span className="load-stop-mini-location">
                 {stop.city}, {stop.state}
@@ -118,6 +121,53 @@ export function OverviewTab({ load, onChanged }: { load: Load; onChanged: () => 
             </div>
           ))}
         </div>
+
+        {load.returnForLoadId || (load.returnLoads && load.returnLoads.length > 0) ? (
+          <div className="detail-card" style={{ borderColor: 'var(--warning-600)' }}>
+            <h2 className="detail-card-title">Return Load Info</h2>
+            {load.returnForLoadId ? (
+              <div className="detail-field-value" style={{ marginBottom: 'var(--space-2)' }}>
+                This Load is a return for{' '}
+                {load.returnForLoad ? (
+                  <Link to={`/loads/${load.returnForLoad.id}`}>
+                    {load.returnForLoad.loadNumber}
+                  </Link>
+                ) : (
+                  '—'
+                )}
+                .
+              </div>
+            ) : null}
+            {load.returnLoads && load.returnLoads.length > 0 ? (
+              <div className="detail-field-value">
+                Return Load(s) for this Load:{' '}
+                {load.returnLoads.map((r, i) => (
+                  <span key={r.id}>
+                    {i > 0 ? ', ' : ''}
+                    <Link to={`/loads/${r.id}`}>{r.loadNumber}</Link>
+                  </span>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+
+        {canEditStops && !load.returnForLoadId ? (
+          <div className="detail-card">
+            <div className="detail-section-header">
+              <h2 className="detail-card-title" style={{ margin: 0 }}>
+                Return Linking
+              </h2>
+              <Button variant="tertiary" size="sm" onClick={() => setLinkingReturn(true)}>
+                Link as Return For…
+              </Button>
+            </div>
+            <span className="detail-field-value">
+              Use this if this Load exists because of a return that couldn&apos;t stay on the
+              original Load (different carrier, original already Closed, or a later trip).
+            </span>
+          </div>
+        ) : null}
 
         {load.riskStatus !== 'NORMAL' ? (
           <div className="detail-card" style={{ borderColor: 'var(--warning-600)' }}>
@@ -202,6 +252,16 @@ export function OverviewTab({ load, onChanged }: { load: Load; onChanged: () => 
         onClose={() => setEditingStops(false)}
         onSaved={() => {
           setEditingStops(false);
+          onChanged();
+        }}
+      />
+
+      <LinkReturnLoadModal
+        open={linkingReturn}
+        loadId={load.id}
+        onClose={() => setLinkingReturn(false)}
+        onLinked={() => {
+          setLinkingReturn(false);
           onChanged();
         }}
       />

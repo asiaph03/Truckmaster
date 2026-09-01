@@ -1014,6 +1014,18 @@ enum StopStatus {
   COMPLETED
 }
 
+/// Return Product feature — orthogonal to StopType (never a third
+/// StopType value): a RETURN-purpose PICKUP still uses POP, a
+/// RETURN-purpose DELIVERY still uses POD, via the exact same
+/// stopType-only document logic. Deliberately excluded from
+/// LoadStatusDerivationService.deriveLoadStatus and
+/// LoadPodStatusService.recalculatePodStatus (both filter to STANDARD
+/// only), so a return never changes Load.status or Load.podStatus.
+enum StopPurpose {
+  STANDARD
+  RETURN
+}
+
 /// DATABASE_DESIGN.md §8. Workflow 4 §4.2 — non-binding, expires after
 /// `expirationDate` (default now + 7 days) unless explicitly converted or
 /// marked Lost first. `OPEN -> WON | LOST` is permanently terminal in
@@ -1180,6 +1192,19 @@ model Load {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
+  /// Return Product feature — set only when this Load itself exists
+  /// because of a return that could not stay on the original Load
+  /// (different carrier required, original already CLOSED, or a later
+  /// independent trip). Linked post-creation via
+  /// LoadService.linkReturnLoad, never at Create Load time (keeps that
+  /// flow unchanged). Deliberately distinct from `Stop.stopPurpose`:
+  /// this Load's own stops are ordinary STANDARD stops from its own
+  /// perspective — `returnForLoadId` is what carries the "this Load
+  /// exists because of a return" meaning.
+  returnForLoadId String? @map("return_for_load_id") @db.Uuid
+  returnForLoad   Load?   @relation("LoadReturnFor", fields: [returnForLoadId], references: [id])
+  returnLoads     Load[]  @relation("LoadReturnFor")
+
   stops         Stop[]
   resultOfQuote Quote? @relation("QuoteResultingLoad")
 
@@ -1206,6 +1231,7 @@ model Load {
   /// the Ready-to-Invoice queue; never added when that query was built in
   /// Phase 6. Reused now by AP Aging's own Load scan.
   @@index([organizationId, invoiced])
+  @@index([organizationId, returnForLoadId])
   @@map("load")
 }
 
@@ -1225,6 +1251,14 @@ model Stop {
 
   sequence Int
   stopType StopType @map("stop_type")
+
+  /// Return Product feature — default STANDARD for every pre-existing and
+  /// newly-booked stop; set to RETURN only by
+  /// DispatchTrackingService.initiateReturn. Never read by POD/POP
+  /// upload validation (that stays stopType-only, by design), only by
+  /// status/podStatus derivation and reporting, to keep a return from
+  /// distorting the standard leg's metrics.
+  stopPurpose StopPurpose @default(STANDARD) @map("stop_purpose")
 
   /// If reused from the customer's saved locations — address fields
   /// below are still always populated inline, a snapshot at time of

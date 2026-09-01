@@ -18,6 +18,13 @@ import { AuditService } from '../../../common/audit/audit.service';
  * malware-scan gate. Called from `DocumentService.applyScanResult`, never
  * from `initiateUpload` — recalculation only ever happens once a scan
  * result (of any outcome) is known.
+ *
+ * Return Product feature — scoped to `stopPurpose: STANDARD` delivery
+ * stops only, an approved extension beyond §6.4's original pseudocode
+ * (which predates the concept of a return): a return delivery's own POD
+ * is still fully trackable as a Document row, just excluded from this
+ * derived milestone so it never affects invoicing readiness or the
+ * closing checklist.
  */
 @Injectable()
 export class LoadPodStatusService {
@@ -30,8 +37,12 @@ export class LoadPodStatusService {
   ): Promise<PodStatus> {
     const load = await tx.load.findFirstOrThrow({ where: { id: loadId, organizationId } });
 
+    // Return Product feature — a return delivery's POD is tracked as an
+    // ordinary Document row (same as POP) but deliberately excluded from
+    // this milestone, so podStatus/the closing checklist/the invoicing
+    // warning always reflect only the standard delivery leg.
     const deliveryStops = await tx.stop.findMany({
-      where: { loadId, organizationId, stopType: 'DELIVERY' },
+      where: { loadId, organizationId, stopType: 'DELIVERY', stopPurpose: 'STANDARD' },
       select: { id: true },
     });
 

@@ -15,6 +15,8 @@ export type LoadStatus =
 
 export type StopType = 'PICKUP' | 'DELIVERY' | 'OTHER';
 export type StopStatus = 'PENDING' | 'ARRIVED' | 'COMPLETED';
+/** Return Product feature — orthogonal to StopType; a RETURN pickup still uses POP, a RETURN delivery still uses POD. */
+export type StopPurpose = 'STANDARD' | 'RETURN';
 export type SourcingAttemptOutcome =
   'ASSIGNED' | 'DECLINED' | 'NO_RESPONSE' | 'QUOTED' | 'REJECTED_AFTER_ASSIGNMENT';
 export type CheckCallOnTimeStatus = 'ON_TIME' | 'LATE' | 'UNKNOWN';
@@ -28,6 +30,7 @@ export interface Stop {
   loadId: string;
   sequence: number;
   stopType: StopType;
+  stopPurpose: StopPurpose;
   customerLocationId?: string;
   // Authoritative pickup/delivery company name for this stop. Nullable —
   // pre-existing and Quote-converted stops never had one captured.
@@ -156,6 +159,12 @@ export interface Load {
   dispatchRecord: DispatchRecord | null;
   checkCalls: CheckCall[];
   chargeLineItems: ChargeLineItem[];
+  // Return Product feature — set only when this Load itself exists
+  // because of a return that couldn't stay on the original Load.
+  returnForLoadId?: string;
+  returnForLoad?: { id: string; loadNumber: string } | null;
+  // Loads that point back at this one as their returnForLoad.
+  returnLoads?: { id: string; loadNumber: string; status: LoadStatus }[];
 }
 
 /**
@@ -350,6 +359,35 @@ export interface UpdateStopsRequest {
   stops: UpdateStopItemRequest[];
 }
 
+/**
+ * Return Product feature — "Initiate Return" modal's per-stop input.
+ * `sequence`/`stopType` are never caller-supplied — both stops are always
+ * PICKUP/RETURN then DELIVERY/RETURN at the next two sequence numbers,
+ * resolved server-side.
+ */
+export interface ReturnStopInput {
+  customerLocationId?: string;
+  companyName: string;
+  addressLine1: string;
+  city: string;
+  state: string;
+  zip: string;
+  appointmentDatetime?: string;
+  contactName?: string;
+  contactPhone?: string;
+  notes?: string;
+}
+
+export interface InitiateReturnRequest {
+  pickupStop: ReturnStopInput;
+  deliveryStop: ReturnStopInput;
+}
+
+/** Return Product feature — the post-creation "link to original Load" action. */
+export interface LinkReturnLoadRequest {
+  returnForLoadId: string;
+}
+
 export interface LogCheckCallRequest {
   occurredAt?: string;
   contactMethod: string;
@@ -508,6 +546,22 @@ export const loadsApi = {
    */
   updateStops: (id: string, body: UpdateStopsRequest) =>
     apiRequest<{ stops: Stop[]; load: Load }>(`/loads/${id}/stops`, { method: 'PATCH', body }),
+
+  /**
+   * Return Product feature — appends one PICKUP/RETURN + one
+   * DELIVERY/RETURN stop pair to this Load at the next two sequence
+   * numbers. Works after DELIVERED (the common real-world timing);
+   * rejected server-side on a CLOSED Load or before DISPATCHED.
+   */
+  initiateReturn: (id: string, body: InitiateReturnRequest) =>
+    apiRequest<{ stops: Stop[]; load: Load }>(`/loads/${id}/stops/return`, {
+      method: 'POST',
+      body,
+    }),
+
+  /** Return Product feature — the post-creation "link to original Load" action for a separate return Load. */
+  linkReturnLoad: (id: string, body: LinkReturnLoadRequest) =>
+    apiRequest<Load>(`/loads/${id}/link-return`, { method: 'PATCH', body }),
 
   logCheckCall: (id: string, body: LogCheckCallRequest) =>
     apiRequest<CheckCall>(`/loads/${id}/check-calls`, { method: 'POST', body }),

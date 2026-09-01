@@ -1,12 +1,18 @@
 import type { Stop } from '../../api';
 
-/** First Pickup / last Delivery by sequence — matches the locked Table View column derivation (§5.4.1). */
+/**
+ * First Pickup / last Delivery by sequence — matches the locked Table
+ * View column derivation (§5.4.1). Return Product feature — filtered to
+ * `stopPurpose: 'STANDARD'` (mirrors the exact same filter in the
+ * backend's `load-search.service.ts` `pickStopDate`), so a return leg's
+ * pickup/delivery never becomes the reported lane/date.
+ */
 export function originDestination(stops: Stop[]): string {
   const pickups = stops
-    .filter((s) => s.stopType === 'PICKUP')
+    .filter((s) => s.stopType === 'PICKUP' && s.stopPurpose === 'STANDARD')
     .sort((a, b) => a.sequence - b.sequence);
   const deliveries = stops
-    .filter((s) => s.stopType === 'DELIVERY')
+    .filter((s) => s.stopType === 'DELIVERY' && s.stopPurpose === 'STANDARD')
     .sort((a, b) => a.sequence - b.sequence);
   const origin = pickups[0];
   const destination = deliveries[deliveries.length - 1];
@@ -16,14 +22,14 @@ export function originDestination(stops: Stop[]): string {
 
 export function firstPickupDate(stops: Stop[]): string | null {
   const pickups = stops
-    .filter((s) => s.stopType === 'PICKUP')
+    .filter((s) => s.stopType === 'PICKUP' && s.stopPurpose === 'STANDARD')
     .sort((a, b) => a.sequence - b.sequence);
   return pickups[0]?.appointmentDatetime ?? null;
 }
 
 export function lastDeliveryDate(stops: Stop[]): string | null {
   const deliveries = stops
-    .filter((s) => s.stopType === 'DELIVERY')
+    .filter((s) => s.stopType === 'DELIVERY' && s.stopPurpose === 'STANDARD')
     .sort((a, b) => a.sequence - b.sequence);
   return deliveries[deliveries.length - 1]?.appointmentDatetime ?? null;
 }

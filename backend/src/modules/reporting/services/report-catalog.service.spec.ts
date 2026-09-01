@@ -180,6 +180,22 @@ describe('ReportCatalogService.revenueMargin', () => {
     },
   );
 
+  // Return Product feature — a return leg's own pickup/delivery must never
+  // become the reported lane. Unlike this file's other tests (which mock
+  // $queryRaw's *result* only), this one inspects the tagged-template SQL
+  // text itself, the only way to actually pin the filter is present
+  // without a live database.
+  it('LANE grouping filters both the origin and destination subqueries to stopPurpose STANDARD', async () => {
+    const { service, tx } = buildService();
+
+    await service.revenueMargin(ORG_ID, 'LANE', {}, { page: 1, pageSize: 50 }, false);
+
+    const [strings] = tx.$queryRaw.mock.calls[0] as [TemplateStringsArray];
+    const sql = strings.join('');
+    expect(sql).toContain("s.stop_type = 'PICKUP' AND s.stop_purpose = 'STANDARD'");
+    expect(sql).toContain("s.stop_type = 'DELIVERY' AND s.stop_purpose = 'STANDARD'");
+  });
+
   it('computes Gross Profit and Margin % per DATABASE_DESIGN.md §20 exactly', async () => {
     const { service } = buildService({
       $queryRaw: jest.fn().mockResolvedValue([
@@ -330,6 +346,25 @@ describe('ReportCatalogService.onTimePerformance', () => {
       excludedNoAppointment: 2,
     });
   });
+
+  // Return Product feature — a return delivery must never appear in either
+  // the evaluated or excluded-no-appointment on-time counts. Both the
+  // CARRIER and DISPATCHER groupBy branches issue two raw queries each
+  // (evaluated + excluded) — all four must carry the filter.
+  it.each(['CARRIER', 'DISPATCHER'])(
+    'filters every on-time query (groupBy=%s) to stopPurpose STANDARD',
+    async (groupBy) => {
+      const { service, tx } = buildService();
+
+      await service.onTimePerformance(ORG_ID, groupBy, {}, { page: 1, pageSize: 50 });
+
+      expect(tx.$queryRaw).toHaveBeenCalledTimes(2);
+      for (const call of tx.$queryRaw.mock.calls as [TemplateStringsArray][]) {
+        const sql = call[0].join('');
+        expect(sql).toContain("stop.stop_purpose = 'STANDARD'");
+      }
+    },
+  );
 });
 
 describe('ReportCatalogService.carrierPerformance — cost redaction (approved decision)', () => {

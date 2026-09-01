@@ -5,6 +5,7 @@ import {
   MembershipRoleName,
   Prisma,
   RiskStatus,
+  StopPurpose,
   StopType,
 } from '@prisma/client';
 import { PrismaService } from '../../../common/prisma/prisma.service';
@@ -63,6 +64,7 @@ interface StopDateRow {
   sequence: number;
   appointmentDatetime: Date | null;
   stopType: StopType;
+  stopPurpose: StopPurpose;
 }
 
 /**
@@ -70,9 +72,17 @@ interface StopDateRow {
  * `lastDeliveryDate` exactly (lowest-sequence PICKUP / highest-sequence
  * DELIVERY) — the user explicitly required this backend logic not
  * silently diverge into a min/max-appointmentDatetime approximation.
+ * Return Product feature — also filters to `stopPurpose: STANDARD`, so a
+ * return leg's stops never affect the Dispatch Board's Pickup/Delivery
+ * Date columns or sort.
  */
 function pickStopDate(stops: StopDateRow[], stopType: 'PICKUP' | 'DELIVERY'): Date | null {
-  const matching = stops.filter((s) => s.stopType === stopType);
+  // `?? 'STANDARD'` — same defensive treatment as
+  // LoadStatusDerivationService.deriveLoadStatus: a real DB row always has
+  // the schema default, this only guards a partial/malformed input.
+  const matching = stops.filter(
+    (s) => s.stopType === stopType && (s.stopPurpose ?? 'STANDARD') === 'STANDARD',
+  );
   if (matching.length === 0) return null;
   const picked =
     stopType === 'PICKUP'
@@ -175,8 +185,14 @@ export class LoadSearchService {
     stopType: 'PICKUP' | 'DELIVERY',
   ): Promise<Map<string, Date | null>> {
     const stops = await tx.stop.findMany({
-      where: { loadId: { in: loadIds }, stopType },
-      select: { loadId: true, sequence: true, appointmentDatetime: true, stopType: true },
+      where: { loadId: { in: loadIds }, stopType, stopPurpose: 'STANDARD' },
+      select: {
+        loadId: true,
+        sequence: true,
+        appointmentDatetime: true,
+        stopType: true,
+        stopPurpose: true,
+      },
     });
     const byLoad = new Map<string, StopDateRow[]>();
     for (const s of stops) {
@@ -304,10 +320,10 @@ export class LoadSearchService {
 
       const rows = shaped.map((l) => {
         const pickups = l.stops
-          .filter((s) => s.stopType === 'PICKUP')
+          .filter((s) => s.stopType === 'PICKUP' && s.stopPurpose === 'STANDARD')
           .sort((a, b) => a.sequence - b.sequence);
         const deliveries = l.stops
-          .filter((s) => s.stopType === 'DELIVERY')
+          .filter((s) => s.stopType === 'DELIVERY' && s.stopPurpose === 'STANDARD')
           .sort((a, b) => a.sequence - b.sequence);
         const origin = pickups[0];
         const destination = deliveries[deliveries.length - 1];
