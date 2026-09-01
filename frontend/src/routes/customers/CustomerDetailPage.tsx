@@ -6,8 +6,10 @@ import { CUSTOMER_STATUSES } from '@tms/shared-constants';
 import {
   customersApi,
   type ChangeCustomerStatusRequest,
+  type Customer,
   type UpdateCustomerRequest,
 } from '../../api';
+import { ApiError } from '../../api/errors';
 import { getStatusBadgeColor } from '../../components/ui/statusBadgeMap';
 import {
   Badge,
@@ -31,6 +33,31 @@ import { InvoicesTab } from './tabs/InvoicesTab';
 import '../shared/DetailPage.css';
 
 const STATUS_OPTIONS = CUSTOMER_STATUSES.map((s) => ({ value: s, label: s }));
+
+/**
+ * Only the fields `UpdateCustomerDto` actually declares — the global
+ * `ValidationPipe`'s `whitelist: true, forbidNonWhitelisted: true`
+ * (configure-app.ts) rejects the entire request if the submitted body
+ * carries any other property. `customer` (the full `GET /customers/:id`
+ * response) also has `id`/`organizationId`/`status`/`paymentTermsSource`/
+ * `createdByUserId`/`createdAt`/`updatedAt`/`contacts`/`locations`/
+ * `rateAgreements`, none of which are editable here — resetting the form
+ * with the raw entity would carry all of those into the PATCH body and
+ * the save would silently 400. Mirrors EditStopsModal's
+ * `stopToFormValue` pattern.
+ */
+function customerToFormValue(customer: Customer): UpdateCustomerRequest {
+  return {
+    legalName: customer.legalName,
+    billingAddressLine1: customer.billingAddressLine1,
+    billingCity: customer.billingCity,
+    billingState: customer.billingState,
+    billingZip: customer.billingZip,
+    primaryContactName: customer.primaryContactName,
+    primaryContactEmail: customer.primaryContactEmail,
+    primaryContactPhone: customer.primaryContactPhone,
+  };
+}
 
 export function CustomerDetailPage() {
   const { id = '' } = useParams();
@@ -56,10 +83,14 @@ export function CustomerDetailPage() {
   const statusForm = useForm<ChangeCustomerStatusRequest>();
 
   async function onSaveEdit(values: UpdateCustomerRequest) {
-    await customersApi.update(id, values);
-    await queryClient.invalidateQueries({ queryKey: ['customers', id] });
-    toast.success('Customer updated.');
-    setEditing(false);
+    try {
+      await customersApi.update(id, values);
+      await queryClient.invalidateQueries({ queryKey: ['customers', id] });
+      toast.success('Customer updated.');
+      setEditing(false);
+    } catch (error) {
+      toast.danger(error instanceof ApiError ? error.message : 'Something went wrong.');
+    }
   }
 
   async function onChangeStatus(values: ChangeCustomerStatusRequest) {
@@ -120,7 +151,7 @@ export function CustomerDetailPage() {
                 <Button
                   variant="secondary"
                   onClick={() => {
-                    editForm.reset(customer);
+                    editForm.reset(customerToFormValue(customer));
                     setEditing(true);
                   }}
                 >

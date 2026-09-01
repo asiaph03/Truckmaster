@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
-import type { UpdateCarrierRequest } from '../../api';
+import type { Carrier, UpdateCarrierRequest } from '../../api';
 import { carriersApi } from '../../api';
 import { ApiError } from '../../api/errors';
 import { getStatusBadgeColor } from '../../components/ui/statusBadgeMap';
@@ -29,6 +29,34 @@ import { TrailersTab } from './tabs/TrailersTab';
 import { FactoringTab } from './tabs/FactoringTab';
 import '../shared/DetailPage.css';
 
+/**
+ * Only the fields `UpdateCarrierDto` actually declares — the global
+ * `ValidationPipe`'s `whitelist: true, forbidNonWhitelisted: true`
+ * (configure-app.ts) rejects the entire request if the submitted body
+ * carries any other property. `carrier` (the full `GET /carriers/:id`
+ * response) also has `id`/`organizationId`/`mcNumber`/`dotNumber`/
+ * `status`/`assignmentEligible`/`ineligibilityReasons`/
+ * `createdByUserId`/`createdAt`/`contacts`/`insuranceRecords`/
+ * `fmcsaVerifications`/`serviceAreas`/`factoringInfo`/`drivers`/
+ * `trucks`/`trailers`, none of which are editable here — resetting the
+ * form with the raw entity would carry all of those into the PATCH body
+ * and the save would silently 400. Mirrors EditStopsModal's
+ * `stopToFormValue` pattern.
+ */
+function carrierToFormValue(carrier: Carrier): UpdateCarrierRequest {
+  return {
+    legalName: carrier.legalName,
+    dba: carrier.dba,
+    addressLine1: carrier.addressLine1,
+    city: carrier.city,
+    state: carrier.state,
+    zip: carrier.zip,
+    primaryContactName: carrier.primaryContactName,
+    primaryContactPhone: carrier.primaryContactPhone,
+    primaryContactEmail: carrier.primaryContactEmail,
+  };
+}
+
 export function CarrierDetailPage() {
   const { id = '' } = useParams();
   const { can } = usePermissions();
@@ -48,10 +76,14 @@ export function CarrierDetailPage() {
   const editForm = useForm<UpdateCarrierRequest>();
 
   async function onSaveEdit(values: UpdateCarrierRequest) {
-    await carriersApi.update(id, values);
-    await queryClient.invalidateQueries({ queryKey: ['carriers', id] });
-    toast.success('Carrier updated.');
-    setEditing(false);
+    try {
+      await carriersApi.update(id, values);
+      await queryClient.invalidateQueries({ queryKey: ['carriers', id] });
+      toast.success('Carrier updated.');
+      setEditing(false);
+    } catch (error) {
+      toast.danger(error instanceof ApiError ? error.message : 'Something went wrong.');
+    }
   }
 
   async function onActivate() {
@@ -113,7 +145,7 @@ export function CarrierDetailPage() {
             <Button
               variant="secondary"
               onClick={() => {
-                editForm.reset(carrier);
+                editForm.reset(carrierToFormValue(carrier));
                 setEditing(true);
               }}
             >
