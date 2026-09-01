@@ -19,23 +19,39 @@ import { PrismaClient } from '@prisma/client';
  */
 const SYSTEM_DOCUMENT_TYPES = [
   { code: 'W9', label: 'W9', category: 'CARRIER_COMPLIANCE', requiresReview: true },
-  { code: 'COI', label: 'Certificate of Insurance', category: 'CARRIER_COMPLIANCE', requiresReview: true },
+  {
+    code: 'COI',
+    label: 'Certificate of Insurance',
+    category: 'CARRIER_COMPLIANCE',
+    requiresReview: true,
+  },
   {
     code: 'CARRIER_AGREEMENT',
     label: 'Notice of Assignment',
     category: 'CARRIER_COMPLIANCE',
     requiresReview: true,
   },
-  { code: 'MC_AUTHORITY', label: 'MC Authority', category: 'CARRIER_COMPLIANCE', requiresReview: true },
+  {
+    code: 'MC_AUTHORITY',
+    label: 'MC Authority',
+    category: 'CARRIER_COMPLIANCE',
+    requiresReview: true,
+  },
   {
     code: 'FACTORING_NOA',
     label: 'Factoring Notice of Assignment',
     category: 'CARRIER_COMPLIANCE',
     requiresReview: false,
   },
-  { code: 'RATE_CONFIRMATION', label: 'Rate Confirmation', category: 'LOAD', requiresReview: false },
+  {
+    code: 'RATE_CONFIRMATION',
+    label: 'Rate Confirmation',
+    category: 'LOAD',
+    requiresReview: false,
+  },
   { code: 'BOL', label: 'Bill of Lading', category: 'LOAD', requiresReview: false },
   { code: 'POD', label: 'Proof of Delivery', category: 'LOAD', requiresReview: false },
+  { code: 'POP', label: 'Proof of Pickup', category: 'LOAD', requiresReview: false },
   { code: 'LUMPER_RECEIPT', label: 'Lumper Receipt', category: 'LOAD', requiresReview: false },
   { code: 'SCALE_TICKET', label: 'Scale Ticket', category: 'LOAD', requiresReview: false },
   {

@@ -9,6 +9,7 @@ import { QuoteLoadModule } from '../quote-load/quote-load.module';
 import { DocumentController } from './controllers/document.controller';
 import { CarrierDocumentsController } from './controllers/carrier-documents.controller';
 import { PodDocumentsController } from './controllers/pod-documents.controller';
+import { PopDocumentsController } from './controllers/pop-documents.controller';
 import { DocumentTypeController } from './controllers/document-type.controller';
 import { DocumentService } from './services/document.service';
 import { DocumentSearchService } from './services/document-search.service';
@@ -31,6 +32,7 @@ const MALWARE_SCAN_QUEUE_CONNECTION = 'MALWARE_SCAN_QUEUE_CONNECTION';
     DocumentController,
     CarrierDocumentsController,
     PodDocumentsController,
+    PopDocumentsController,
     DocumentTypeController,
   ],
   providers: [

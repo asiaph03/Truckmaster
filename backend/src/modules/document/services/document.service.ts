@@ -7,6 +7,7 @@ import { StorageService } from '../../../common/storage/storage.service';
 import { RequestContextStore } from '../../../common/tenant-context/request-context';
 import { CreateDocumentDto } from '../dto/create-document.dto';
 import { UploadPodDocumentDto } from '../dto/upload-pod-document.dto';
+import { UploadPopDocumentDto } from '../dto/upload-pop-document.dto';
 import { ReviewDocumentDto } from '../dto/review-document.dto';
 import {
   BusinessRuleError,
@@ -47,6 +48,17 @@ const POD_UPLOAD_ROLES: MembershipRoleName[] = [
   'DISPATCHER',
   'ACCOUNTING',
 ];
+
+/**
+ * The only two document type codes a Stop may ever receive, and which
+ * Stop.stopType each requires — POD (Workflow 7 §7.1, delivery-only) and
+ * POP, its symmetric pickup-only counterpart. Any other code against a
+ * STOP entity is rejected outright.
+ */
+const REQUIRED_STOP_TYPE_BY_DOCUMENT_CODE: Record<string, 'PICKUP' | 'DELIVERY' | undefined> = {
+  POD: 'DELIVERY',
+  POP: 'PICKUP',
+};
 
 /**
  * Entities whose existence can actually be validated (Invoice/
@@ -163,17 +175,26 @@ export class DocumentService {
       });
       if (!documentType) throw new NotFoundError('Document type not found.');
 
-      // Workflow 7 §7.1 — POD attaches only to a delivery Stop, and a Stop
-      // may only ever receive a POD-type document (no other document type
-      // has a defined Stop-level business process in any locked workflow).
+      // Workflow 7 §7.1 — POD attaches only to a delivery Stop; POP is the
+      // symmetric pickup-side equivalent, attaching only to a pickup Stop.
+      // A Stop may only ever receive a POD/POP-type document (no other
+      // document type has a defined Stop-level business process in any
+      // locked workflow) — REQUIRED_STOP_TYPE_BY_DOCUMENT_CODE is the
+      // single source of truth both PodDocumentsController and
+      // PopDocumentsController
+      // funnel through via their initiatePodUpload/initiatePopUpload
+      // wrappers, so this check can never drift between the two routes.
       if (dto.entityType === 'STOP') {
-        if (documentType.code !== 'POD') {
-          throw new BusinessRuleError('Only POD documents can be uploaded against a Stop.');
+        const requiredStopType = REQUIRED_STOP_TYPE_BY_DOCUMENT_CODE[documentType.code];
+        if (!requiredStopType) {
+          throw new BusinessRuleError('Only POD or POP documents can be uploaded against a Stop.');
         }
         const stop = await tx.stop.findFirst({ where: { id: dto.entityId, organizationId } });
-        if (stop?.stopType !== 'DELIVERY') {
+        if (stop?.stopType !== requiredStopType) {
           throw new BusinessRuleError(
-            'POD documents can only be uploaded against a delivery Stop.',
+            requiredStopType === 'DELIVERY'
+              ? 'POD documents can only be uploaded against a delivery Stop.'
+              : 'POP documents can only be uploaded against a pickup Stop.',
           );
         }
       }
@@ -229,12 +250,14 @@ export class DocumentService {
       // Workflow 7 §7.1/§7.3 — POD uploads use their own locked audit-event
       // names instead of the generic 'Document Uploaded', distinguishing a
       // brand-new POD from a replacement version of an already-documented
-      // stop.
-      const isPodUpload = dto.entityType === 'STOP' && documentType.code === 'POD';
-      const auditAction = isPodUpload
+      // stop. POP mirrors the identical naming convention (not itself
+      // locked by any workflow doc, but kept symmetric with POD).
+      const isStopUpload =
+        dto.entityType === 'STOP' && (documentType.code === 'POD' || documentType.code === 'POP');
+      const auditAction = isStopUpload
         ? documentFamilyId
-          ? 'POD Document Version Added'
-          : 'POD Uploaded'
+          ? `${documentType.code} Document Version Added`
+          : `${documentType.code} Uploaded`
         : 'Document Uploaded';
 
       await this.audit.record(tx, {
@@ -287,6 +310,41 @@ export class DocumentService {
     return this.initiateUpload(
       organizationId,
       { ...dto, entityType: 'STOP', entityId: stop.id, documentTypeId: podType.id },
+      actingUserId,
+    );
+  }
+
+  /**
+   * The PopDocumentsController entry point — symmetric pickup-side
+   * counterpart of `initiatePodUpload` immediately above, resolving the
+   * target pickup Stop and the seeded POP document type, then delegating
+   * entirely to the same `initiateUpload` (no duplicated upload/
+   * versioning/permission logic — identical "convenience wrapper, one
+   * implementation" pattern).
+   */
+  async initiatePopUpload(
+    organizationId: string,
+    loadId: string,
+    sequence: number,
+    dto: UploadPopDocumentDto,
+    actingUserId: string,
+  ) {
+    const { stop, popType } = await this.prisma.withTenantTransaction(
+      organizationId,
+      async (tx) => {
+        const stop = await tx.stop.findFirst({ where: { loadId, organizationId, sequence } });
+        if (!stop) throw new NotFoundError('Stop not found.');
+        const popType = await tx.documentTypeDefinition.findFirst({
+          where: { code: 'POP', OR: [{ organizationId }, { organizationId: null }] },
+        });
+        if (!popType) throw new NotFoundError('POP document type is not configured.');
+        return { stop, popType };
+      },
+    );
+
+    return this.initiateUpload(
+      organizationId,
+      { ...dto, entityType: 'STOP', entityId: stop.id, documentTypeId: popType.id },
       actingUserId,
     );
   }

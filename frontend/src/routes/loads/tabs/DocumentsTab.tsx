@@ -48,11 +48,14 @@ function ScanStatusCell({ doc, toast }: { doc: AppDocument; toast: ReturnType<ty
 
 /**
  * UI_UX_DESIGN.md §5.4.4 Documents tab. Two grouped tables: Load-level
- * documents (generic, `entityType=LOAD`) and POD per delivery Stop
- * (`entityType=STOP`, Workflow 7 §7.1) — the two document families never
- * overlap since POD is only ever uploaded via the per-stop route,
- * excluded from the Load-level type picker below. No review-status UI
- * here (Load-level document types are `NOT_APPLICABLE` for review).
+ * documents (generic, `entityType=LOAD`) and Proof of Pickup/Delivery per
+ * Stop (`entityType=STOP`) — a pickup Stop gets POP, a delivery Stop gets
+ * POD (Workflow 7 §7.1 for POD; POP is the symmetric pickup-side
+ * counterpart, document-tracking only, no locked-workflow milestone).
+ * These document families never overlap the Load-level table since both
+ * POD and POP are only ever uploaded via the per-stop route, excluded
+ * from the Load-level type picker below. No review-status UI here
+ * (Load-level document types are `NOT_APPLICABLE` for review).
  */
 export function DocumentsTab({ load }: { load: Load }) {
   const toast = useToast();
@@ -67,11 +70,17 @@ export function DocumentsTab({ load }: { load: Load }) {
     queryFn: () => documentsApi.list('LOAD', load.id),
   });
 
-  const uploadableTypes = loadDocTypes.filter((t) => t.code !== 'POD');
+  // POD and POP are each only ever uploaded via their own per-stop route
+  // below — never through this generic Load-level picker.
+  const uploadableTypes = loadDocTypes.filter((t) => t.code !== 'POD' && t.code !== 'POP');
   const currentDocs = loadDocuments.filter((d) => d.isCurrentVersion);
 
-  const deliveryStops = [...load.stops]
-    .filter((s) => s.stopType === 'DELIVERY')
+  // Strictly stopType-driven — never sequence/index/first/last — so any
+  // number of pickups and deliveries, in any order, each get their own
+  // row with the correct upload control. A Stop with type OTHER has no
+  // defined document type here and is intentionally omitted.
+  const podPopStops = [...load.stops]
+    .filter((s) => s.stopType === 'PICKUP' || s.stopType === 'DELIVERY')
     .sort((a, b) => a.sequence - b.sequence);
 
   return (
@@ -128,20 +137,27 @@ export function DocumentsTab({ load }: { load: Load }) {
       />
 
       <h2 className="detail-card-title" style={{ marginTop: 'var(--space-4)' }}>
-        POD by Delivery Stop
+        Proof of Pickup / Delivery by Stop
       </h2>
-      {deliveryStops.length === 0 ? (
-        <span className="detail-field-value">No delivery stops on this load.</span>
+      {podPopStops.length === 0 ? (
+        <span className="detail-field-value">No pickup or delivery stops on this load.</span>
       ) : (
-        deliveryStops.map((stop) => (
-          <PodStopRow key={stop.id} loadId={load.id} stop={stop} toast={toast} />
+        podPopStops.map((stop) => (
+          <StopDocumentRow key={stop.id} loadId={load.id} stop={stop} toast={toast} />
         ))
       )}
     </div>
   );
 }
 
-function PodStopRow({
+/**
+ * One row per pickup or delivery Stop — which document type applies, its
+ * label, and which upload API to call are all derived from `stop.stopType`
+ * alone (never sequence/index/first/last), so this single component
+ * correctly handles any number of pickups/deliveries in any order without
+ * a second, duplicated row implementation.
+ */
+function StopDocumentRow({
   loadId,
   stop,
   toast,
@@ -150,6 +166,13 @@ function PodStopRow({
   stop: Load['stops'][number];
   toast: ReturnType<typeof useToast>;
 }) {
+  const isPickup = stop.stopType === 'PICKUP';
+  const code = isPickup ? 'POP' : 'POD';
+  const docLabel = isPickup ? 'Proof of Pickup' : 'Proof of Delivery';
+  const upload = isPickup
+    ? documentsApi.uploadPopDocumentAndConfirm
+    : documentsApi.uploadPodDocumentAndConfirm;
+
   const { data: docs = [], refetch } = useQuery({
     queryKey: ['documents', 'STOP', stop.id],
     queryFn: () => documentsApi.list('STOP', stop.id),
@@ -162,6 +185,8 @@ function PodStopRow({
         <div>
           <div className="detail-field-label">
             Stop {stop.sequence} — {stop.city}, {stop.state}
+            {' — '}
+            {docLabel}
           </div>
           <div className="detail-field-value">
             {current ? `${current.fileName} (v${current.versionNumber})` : 'Not received.'}
@@ -170,14 +195,9 @@ function PodStopRow({
         <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center' }}>
           {current ? <ScanStatusCell doc={current} toast={toast} /> : null}
           <FileUploadField
-            label={current ? 'Replace' : 'Upload'}
+            label={current ? `Replace ${code}` : `Upload ${code}`}
             onUpload={(file) =>
-              documentsApi.uploadPodDocumentAndConfirm(
-                loadId,
-                stop.sequence,
-                { existingDocumentFamilyId: current?.id },
-                file,
-              )
+              upload(loadId, stop.sequence, { existingDocumentFamilyId: current?.id }, file)
             }
             onCheckScanStatus={(documentId) =>
               documentsApi.checkScanStatus('STOP', stop.id, documentId)

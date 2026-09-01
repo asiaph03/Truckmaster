@@ -73,6 +73,9 @@ export interface UploadPodDocumentRequest {
   existingDocumentFamilyId?: string;
 }
 
+/** Same shape as UploadPodDocumentRequest — the symmetric pickup-side (POP) request. */
+export type UploadPopDocumentRequest = UploadPodDocumentRequest;
+
 export interface InitiateUploadResponse {
   document: AppDocument;
   uploadUrl: string;
@@ -213,6 +216,12 @@ export const documentsApi = {
       body,
     }),
 
+  uploadPopDocument: (loadId: string, sequence: number, body: UploadPopDocumentRequest) =>
+    apiRequest<InitiateUploadResponse>(`/loads/${loadId}/stops/${sequence}/pop-documents`, {
+      method: 'POST',
+      body,
+    }),
+
   confirmUpload: (documentId: string) =>
     apiRequest<AppDocument>(`/documents/${documentId}/confirm`, { method: 'POST' }),
 
@@ -283,6 +292,24 @@ export const documentsApi = {
     file: File,
   ): Promise<string> => {
     const { document, uploadUrl } = await documentsApi.uploadPodDocument(loadId, sequence, {
+      ...meta,
+      fileName: file.name,
+      mimeType: file.type,
+      fileSizeBytes: file.size,
+    });
+    await documentsApi.putFileToUploadUrl(uploadUrl, file);
+    await documentsApi.confirmUpload(document.id);
+    return document.id;
+  },
+
+  /** Same two-phase orchestration, for a pickup Stop's POP. */
+  uploadPopDocumentAndConfirm: async (
+    loadId: string,
+    sequence: number,
+    meta: Omit<UploadPopDocumentRequest, 'fileSizeBytes' | 'fileName' | 'mimeType'>,
+    file: File,
+  ): Promise<string> => {
+    const { document, uploadUrl } = await documentsApi.uploadPopDocument(loadId, sequence, {
       ...meta,
       fileName: file.name,
       mimeType: file.type,

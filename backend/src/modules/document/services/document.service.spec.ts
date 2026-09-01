@@ -826,12 +826,12 @@ describe('DocumentService — Phase 5 POD/Stop uploads (Workflow 7 §7.1)', () =
     });
   });
 
-  it('rejects uploading a non-POD document type against a Stop', async () => {
+  it('rejects uploading an unrecognized document type (e.g. BOL) against a Stop', async () => {
     const { service } = buildService({ documentType: { id: 'bol-1', code: 'BOL' } });
     await RequestContextStore.run({ requestId: 'r3', roles: ['ADMIN'] }, async () => {
       await expect(
         service.initiateUpload(ORG_ID, { ...POD_UPLOAD_DTO, documentTypeId: 'bol-1' }, 'user-1'),
-      ).rejects.toThrow(/Only POD documents can be uploaded against a Stop/);
+      ).rejects.toThrow(/Only POD or POP documents can be uploaded against a Stop/);
     });
   });
 
@@ -870,6 +870,148 @@ describe('DocumentService — Phase 5 POD/Stop uploads (Workflow 7 §7.1)', () =
       expect.anything(),
       expect.objectContaining({ action: 'POD Document Version Added' }),
     );
+  });
+});
+
+describe('DocumentService — POP/Stop uploads (symmetric pickup-side counterpart of POD)', () => {
+  const ORG_ID = 'org-1';
+
+  function buildService(opts: {
+    stop?: Record<string, unknown> | null;
+    documentType?: Record<string, unknown>;
+    existingDocumentFamilyId?: string;
+  }) {
+    const stop =
+      'stop' in opts ? opts.stop : { id: 'stop-1', loadId: 'load-1', stopType: 'PICKUP' };
+    const documentType = opts.documentType ?? {
+      id: 'pop-type-1',
+      code: 'POP',
+      requiresReview: false,
+    };
+
+    const tx = {
+      stop: { findFirst: jest.fn().mockResolvedValue(stop) },
+      documentTypeDefinition: { findFirst: jest.fn().mockResolvedValue(documentType) },
+      document: {
+        findFirst: jest.fn().mockResolvedValue(
+          opts.existingDocumentFamilyId
+            ? {
+                id: 'prior-doc',
+                versionNumber: 1,
+                documentFamilyId: opts.existingDocumentFamilyId,
+              }
+            : null,
+        ),
+        create: jest.fn().mockImplementation(({ data }) => ({ id: 'doc-1', ...data })),
+        update: jest.fn().mockImplementation(({ data }) => ({ id: 'doc-1', ...data })),
+      },
+    };
+
+    const prisma = {
+      withTenantTransaction: jest
+        .fn()
+        .mockImplementation((_orgId: string, fn: (tx: unknown) => unknown) => fn(tx)),
+    };
+    const audit = { record: jest.fn().mockResolvedValue(undefined) };
+    const storage = {
+      buildDocumentKey: jest.fn().mockReturnValue('key'),
+      getUploadUrl: jest.fn().mockResolvedValue('https://upload-url.example'),
+    };
+    const carrierEligibility = {};
+    const loadPodStatus = { recalculatePodStatus: jest.fn().mockResolvedValue('PARTIAL') };
+    const scanQueue = { add: jest.fn() };
+
+    const service = new DocumentService(
+      prisma as never,
+      audit as never,
+      storage as never,
+      carrierEligibility as never,
+      loadPodStatus as never,
+      scanQueue as never,
+    );
+
+    return { service, tx, audit, loadPodStatus };
+  }
+
+  const POP_UPLOAD_DTO = {
+    entityType: 'STOP' as const,
+    entityId: 'stop-1',
+    documentTypeId: 'pop-type-1',
+    fileName: 'pop.pdf',
+    mimeType: 'application/pdf',
+    fileSizeBytes: 1024,
+  };
+
+  it('allows an Admin to upload a POP against a pickup Stop', async () => {
+    const { service } = buildService({});
+    await RequestContextStore.run({ requestId: 'r1', roles: ['ADMIN'] }, async () => {
+      await expect(service.initiateUpload(ORG_ID, POP_UPLOAD_DTO, 'user-1')).resolves.toBeDefined();
+    });
+  });
+
+  it('allows Accounting to upload a POP (reuses the identical STOP-entity role set as POD)', async () => {
+    const { service } = buildService({});
+    await RequestContextStore.run({ requestId: 'r2', roles: ['ACCOUNTING'] }, async () => {
+      await expect(service.initiateUpload(ORG_ID, POP_UPLOAD_DTO, 'user-1')).resolves.toBeDefined();
+    });
+  });
+
+  it('blocks Sales/Booking from uploading a POP', async () => {
+    const { service } = buildService({});
+    await RequestContextStore.run({ requestId: 'r3', roles: ['SALES_BOOKING'] }, async () => {
+      await expect(service.initiateUpload(ORG_ID, POP_UPLOAD_DTO, 'user-1')).rejects.toThrow(
+        /requires Admin, Operations Manager, Dispatcher, or Accounting/,
+      );
+    });
+  });
+
+  it('rejects a POP upload against a non-pickup (DELIVERY) Stop', async () => {
+    const { service } = buildService({
+      stop: { id: 'stop-1', loadId: 'load-1', stopType: 'DELIVERY' },
+    });
+    await RequestContextStore.run({ requestId: 'r4', roles: ['ADMIN'] }, async () => {
+      await expect(service.initiateUpload(ORG_ID, POP_UPLOAD_DTO, 'user-1')).rejects.toThrow(
+        /POP documents can only be uploaded against a pickup Stop/,
+      );
+    });
+  });
+
+  it("writes 'POP Uploaded' for a brand-new POP", async () => {
+    const { service, audit } = buildService({});
+    await RequestContextStore.run({ requestId: 'r5', roles: ['ADMIN'] }, async () => {
+      await service.initiateUpload(ORG_ID, POP_UPLOAD_DTO, 'user-1');
+    });
+    expect(audit.record).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ action: 'POP Uploaded' }),
+    );
+  });
+
+  it("writes 'POP Document Version Added' when replacing an existing POP", async () => {
+    const { service, audit } = buildService({ existingDocumentFamilyId: 'family-1' });
+    await RequestContextStore.run({ requestId: 'r6', roles: ['ADMIN'] }, async () => {
+      await service.initiateUpload(
+        ORG_ID,
+        { ...POP_UPLOAD_DTO, existingDocumentFamilyId: 'family-1' },
+        'user-1',
+      );
+    });
+    expect(audit.record).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ action: 'POP Document Version Added' }),
+    );
+  });
+
+  it('never triggers pod_status recalculation for a POP upload (POP has no milestone)', async () => {
+    const { service, loadPodStatus } = buildService({});
+    await RequestContextStore.run({ requestId: 'r7', roles: ['ADMIN'] }, async () => {
+      await service.initiateUpload(ORG_ID, POP_UPLOAD_DTO, 'user-1');
+    });
+    // initiateUpload itself never calls recalculatePodStatus for any
+    // upload — recalculation only happens from applyScanResult once a
+    // scan result is known (see the class's own doc comment) — asserting
+    // it here pins that POP introduces no new call site into initiateUpload.
+    expect(loadPodStatus.recalculatePodStatus).not.toHaveBeenCalled();
   });
 });
 
