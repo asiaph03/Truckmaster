@@ -95,7 +95,7 @@ describe('InitiateReturnModal — Return Product feature', () => {
         city: 'Chicago',
         state: 'IL',
         zip: '60601',
-        appointmentDatetime: '',
+        appointmentDatetime: undefined,
         contactName: '',
         contactPhone: '',
         notes: '',
@@ -106,12 +106,89 @@ describe('InitiateReturnModal — Return Product feature', () => {
         city: 'Dallas',
         state: 'TX',
         zip: '75201',
-        appointmentDatetime: '',
+        appointmentDatetime: undefined,
         contactName: '',
         contactPhone: '',
         notes: '',
       },
     });
     await waitFor(() => expect(initiated).toBe(true));
+  });
+
+  describe('appointmentDatetime — blank must not become an invalid empty-string date', () => {
+    // Regression test: the backend's `@IsOptional() @IsDateString()` only
+    // skips validation for undefined/null, not '' — an untouched
+    // datetime-local input submits '', which the backend previously
+    // rejected as "not a valid ISO 8601 date string", blocking Initiate
+    // Return whenever the (optional) Appointment field was left blank.
+    // Caught by a real production smoke test.
+
+    async function submitAndGetBody(
+      appointments: { pickup?: string; delivery?: string } = {},
+    ): Promise<Record<string, unknown>> {
+      let receivedBody: Record<string, unknown> | undefined;
+      server.use(
+        http.post('/api/v1/loads/load-1/stops/return', async ({ request }) => {
+          receivedBody = (await request.json()) as Record<string, unknown>;
+          return HttpResponse.json(
+            {
+              stops: [
+                { id: 's3', sequence: 3, stopType: 'PICKUP', stopPurpose: 'RETURN' },
+                { id: 's4', sequence: 4, stopType: 'DELIVERY', stopPurpose: 'RETURN' },
+              ],
+              load: { id: 'load-1', status: 'DELIVERED' },
+            },
+            { status: 201 },
+          );
+        }),
+      );
+
+      render(
+        <InitiateReturnModal open loadId="load-1" onClose={() => {}} onInitiated={() => {}} />,
+      );
+      fillReturnPickup();
+      fillReturnDelivery();
+      if (appointments.pickup) setField('pickup-appointment', appointments.pickup);
+      if (appointments.delivery) setField('delivery-appointment', appointments.delivery);
+      clickInitiateReturn();
+
+      await waitFor(() => expect(receivedBody).toBeDefined());
+      return receivedBody!;
+    }
+
+    it('both appointment fields left blank — request omits/undefined them, and the call still succeeds', async () => {
+      const body = await submitAndGetBody();
+      const pickup = body.pickupStop as Record<string, unknown>;
+      const delivery = body.deliveryStop as Record<string, unknown>;
+      expect(pickup.appointmentDatetime).toBeUndefined();
+      expect(delivery.appointmentDatetime).toBeUndefined();
+    });
+
+    it('pickup appointment populated — the entered value is preserved, delivery stays undefined', async () => {
+      const body = await submitAndGetBody({ pickup: '2026-09-15T14:30' });
+      const pickup = body.pickupStop as Record<string, unknown>;
+      const delivery = body.deliveryStop as Record<string, unknown>;
+      expect(pickup.appointmentDatetime).toBe('2026-09-15T14:30');
+      expect(delivery.appointmentDatetime).toBeUndefined();
+    });
+
+    it('delivery appointment populated — the entered value is preserved, pickup stays undefined', async () => {
+      const body = await submitAndGetBody({ delivery: '2026-09-16T09:00' });
+      const pickup = body.pickupStop as Record<string, unknown>;
+      const delivery = body.deliveryStop as Record<string, unknown>;
+      expect(pickup.appointmentDatetime).toBeUndefined();
+      expect(delivery.appointmentDatetime).toBe('2026-09-16T09:00');
+    });
+
+    it('both appointments populated — both entered values are preserved', async () => {
+      const body = await submitAndGetBody({
+        pickup: '2026-09-15T14:30',
+        delivery: '2026-09-16T09:00',
+      });
+      const pickup = body.pickupStop as Record<string, unknown>;
+      const delivery = body.deliveryStop as Record<string, unknown>;
+      expect(pickup.appointmentDatetime).toBe('2026-09-15T14:30');
+      expect(delivery.appointmentDatetime).toBe('2026-09-16T09:00');
+    });
   });
 });

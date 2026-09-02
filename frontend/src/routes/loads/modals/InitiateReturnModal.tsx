@@ -33,7 +33,22 @@ export function InitiateReturnModal({
 
   async function onSubmit(values: InitiateReturnRequest) {
     try {
-      await loadsApi.initiateReturn(loadId, values);
+      // `appointmentDatetime` is an optional `@IsDateString()` field on
+      // the backend — `@IsOptional()` there only skips validation for
+      // undefined/null, not '', so an untouched datetime-local input
+      // (which submits '') gets rejected as "not a valid ISO 8601 date
+      // string" unless stripped to undefined here (same fix as
+      // StopsTrackingTab.tsx's onLogCheckCall).
+      await loadsApi.initiateReturn(loadId, {
+        pickupStop: {
+          ...values.pickupStop,
+          appointmentDatetime: values.pickupStop.appointmentDatetime || undefined,
+        },
+        deliveryStop: {
+          ...values.deliveryStop,
+          appointmentDatetime: values.deliveryStop.appointmentDatetime || undefined,
+        },
+      });
       toast.success('Return initiated.');
       reset();
       onInitiated();
