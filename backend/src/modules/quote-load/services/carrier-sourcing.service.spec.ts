@@ -397,11 +397,20 @@ describe('CarrierSourcingService.generateRateConfirmation — Workflow 5 §5.7',
 describe('CarrierSourcingService — Driver Dispatch Email feature', () => {
   const DRIVER_ID = 'driver-1';
 
-  function cleanRateConfDoc(overrides: Record<string, unknown> = {}) {
+  /**
+   * The ORIGINAL, user-uploaded Rate Confirmation — `generationStatus:
+   * null` is the discriminator that separates it from the system-
+   * generated carrier-facing document (which always has a non-null
+   * generationStatus). Both share the exact same document TYPE
+   * ('RATE_CONFIRMATION') and `entityType:'LOAD', entityId:loadId`
+   * scoping.
+   */
+  function cleanUploadedRateConfDoc(overrides: Record<string, unknown> = {}) {
     return {
-      id: 'rate-conf-doc-1',
-      fileName: 'Rate Confirmation - LOAD-000001.pdf',
-      generationStatus: 'COMPLETE',
+      id: 'uploaded-rate-conf-doc-1',
+      fileName: 'Nurana RC 2434269.pdf',
+      fileStorageKey: 'org_org-1/documents/uploaded-rate-conf-doc-1',
+      generationStatus: null,
       scanStatus: 'CLEAN',
       mimeType: 'application/pdf',
       ...overrides,
@@ -463,7 +472,7 @@ describe('CarrierSourcingService — Driver Dispatch Email feature', () => {
           organizationId: ORG_ID,
           carrierId: CARRIER_ID,
         },
-        rateConfDoc: cleanRateConfDoc(),
+        rateConfDoc: cleanUploadedRateConfDoc(),
       });
 
       const preview = await service.previewDriverDispatchEmail(ORG_ID, LOAD_ID);
@@ -478,7 +487,7 @@ describe('CarrierSourcingService — Driver Dispatch Email feature', () => {
       const { service } = buildService({
         load: dispatchedLoad(),
         driver: { id: DRIVER_ID, email: null, organizationId: ORG_ID, carrierId: CARRIER_ID },
-        rateConfDoc: cleanRateConfDoc(),
+        rateConfDoc: cleanUploadedRateConfDoc(),
       });
 
       const preview = await service.previewDriverDispatchEmail(ORG_ID, LOAD_ID);
@@ -495,7 +504,7 @@ describe('CarrierSourcingService — Driver Dispatch Email feature', () => {
           },
         }),
         driver: null,
-        rateConfDoc: cleanRateConfDoc(),
+        rateConfDoc: cleanUploadedRateConfDoc(),
       });
 
       const preview = await service.previewDriverDispatchEmail(ORG_ID, LOAD_ID);
@@ -510,7 +519,7 @@ describe('CarrierSourcingService — Driver Dispatch Email feature', () => {
         // tx.driver.findFirst is scoped by carrierId in the where-clause; a driver
         // that doesn't match that scope is correctly modeled as "not found".
         driver: null,
-        rateConfDoc: cleanRateConfDoc(),
+        rateConfDoc: cleanUploadedRateConfDoc(),
       });
 
       const preview = await service.previewDriverDispatchEmail(ORG_ID, LOAD_ID);
@@ -560,7 +569,7 @@ describe('CarrierSourcingService — Driver Dispatch Email feature', () => {
           organizationId: ORG_ID,
           carrierId: CARRIER_ID,
         },
-        rateConfDoc: cleanRateConfDoc(),
+        rateConfDoc: cleanUploadedRateConfDoc(),
       });
 
       const preview = await service.previewDriverDispatchEmail(ORG_ID, LOAD_ID);
@@ -577,7 +586,7 @@ describe('CarrierSourcingService — Driver Dispatch Email feature', () => {
           organizationId: ORG_ID,
           carrierId: CARRIER_ID,
         },
-        rateConfDoc: cleanRateConfDoc(),
+        rateConfDoc: cleanUploadedRateConfDoc(),
       });
 
       const preview = await service.previewDriverDispatchEmail(ORG_ID, LOAD_ID);
@@ -596,7 +605,7 @@ describe('CarrierSourcingService — Driver Dispatch Email feature', () => {
           organizationId: ORG_ID,
           carrierId: CARRIER_ID,
         },
-        rateConfDoc: cleanRateConfDoc(),
+        rateConfDoc: cleanUploadedRateConfDoc(),
       });
 
       const preview = await service.previewDriverDispatchEmail(ORG_ID, LOAD_ID);
@@ -629,7 +638,7 @@ describe('CarrierSourcingService — Driver Dispatch Email feature', () => {
           organizationId: ORG_ID,
           carrierId: CARRIER_ID,
         },
-        rateConfDoc: cleanRateConfDoc(),
+        rateConfDoc: cleanUploadedRateConfDoc(),
       });
 
       const preview = await service.previewDriverDispatchEmail(ORG_ID, LOAD_ID);
@@ -638,8 +647,8 @@ describe('CarrierSourcingService — Driver Dispatch Email feature', () => {
     });
   });
 
-  describe('Rate Confirmation attachment resolution', () => {
-    it('resolves the canonical RATE_CONFIRMATION document, org- and Load-scoped, current version only', async () => {
+  describe('Uploaded Rate Confirmation attachment resolution (preview)', () => {
+    it('resolves the uploaded (generationStatus: null) RATE_CONFIRMATION document, org- and Load-scoped, current version only, most recent first', async () => {
       const { service, tx } = buildService({
         load: dispatchedLoad(),
         driver: {
@@ -648,13 +657,13 @@ describe('CarrierSourcingService — Driver Dispatch Email feature', () => {
           organizationId: ORG_ID,
           carrierId: CARRIER_ID,
         },
-        rateConfDoc: cleanRateConfDoc(),
+        rateConfDoc: cleanUploadedRateConfDoc(),
       });
 
       const preview = await service.previewDriverDispatchEmail(ORG_ID, LOAD_ID);
 
       expect(preview.attachmentAvailable).toBe(true);
-      expect(preview.attachmentFileName).toBe('Rate Confirmation - LOAD-000001.pdf');
+      expect(preview.attachmentFileName).toBe('Nurana RC 2434269.pdf');
       expect(tx.document.findFirst).toHaveBeenCalledWith({
         where: {
           organizationId: ORG_ID,
@@ -662,45 +671,17 @@ describe('CarrierSourcingService — Driver Dispatch Email feature', () => {
           entityId: LOAD_ID,
           documentTypeId: 'doctype-1',
           isCurrentVersion: true,
+          generationStatus: null,
         },
+        orderBy: { uploadedAt: 'desc' },
       });
     });
 
-    it('is unavailable when generationStatus is not COMPLETE', async () => {
-      const { service } = buildService({
-        load: dispatchedLoad(),
-        driver: {
-          id: DRIVER_ID,
-          email: 'julia@carrier.test',
-          organizationId: ORG_ID,
-          carrierId: CARRIER_ID,
-        },
-        rateConfDoc: cleanRateConfDoc({ generationStatus: 'PENDING' }),
-      });
-
-      const preview = await service.previewDriverDispatchEmail(ORG_ID, LOAD_ID);
-
-      expect(preview.attachmentAvailable).toBe(false);
-    });
-
-    it('is unavailable when the document is not a PDF', async () => {
-      const { service } = buildService({
-        load: dispatchedLoad(),
-        driver: {
-          id: DRIVER_ID,
-          email: 'julia@carrier.test',
-          organizationId: ORG_ID,
-          carrierId: CARRIER_ID,
-        },
-        rateConfDoc: cleanRateConfDoc({ mimeType: 'image/png' }),
-      });
-
-      const preview = await service.previewDriverDispatchEmail(ORG_ID, LOAD_ID);
-
-      expect(preview.attachmentAvailable).toBe(false);
-    });
-
-    it('is unavailable when no Rate Confirmation document exists yet', async () => {
+    it('is unavailable when the current-version RATE_CONFIRMATION is the system-generated one (generationStatus non-null) — never falls back to it', async () => {
+      // The query itself filters generationStatus: null, so a generated-
+      // only document is correctly modeled as "not found" by the mock —
+      // this is what the prior test's query-shape assertion proves is
+      // actually sent to Postgres.
       const { service } = buildService({
         load: dispatchedLoad(),
         driver: {
@@ -717,6 +698,76 @@ describe('CarrierSourcingService — Driver Dispatch Email feature', () => {
       expect(preview.attachmentAvailable).toBe(false);
       expect(preview.attachmentFileName).toBeNull();
     });
+
+    it('is unavailable when the uploaded document has not passed malware scanning (non-CLEAN)', async () => {
+      const { service } = buildService({
+        load: dispatchedLoad(),
+        driver: {
+          id: DRIVER_ID,
+          email: 'julia@carrier.test',
+          organizationId: ORG_ID,
+          carrierId: CARRIER_ID,
+        },
+        rateConfDoc: cleanUploadedRateConfDoc({ scanStatus: 'PENDING' }),
+      });
+
+      const preview = await service.previewDriverDispatchEmail(ORG_ID, LOAD_ID);
+
+      expect(preview.attachmentAvailable).toBe(false);
+    });
+
+    it('is unavailable when the uploaded document is not a PDF', async () => {
+      const { service } = buildService({
+        load: dispatchedLoad(),
+        driver: {
+          id: DRIVER_ID,
+          email: 'julia@carrier.test',
+          organizationId: ORG_ID,
+          carrierId: CARRIER_ID,
+        },
+        rateConfDoc: cleanUploadedRateConfDoc({ mimeType: 'image/png' }),
+      });
+
+      const preview = await service.previewDriverDispatchEmail(ORG_ID, LOAD_ID);
+
+      expect(preview.attachmentAvailable).toBe(false);
+    });
+
+    it('is unavailable when no uploaded Rate Confirmation document exists at all', async () => {
+      const { service } = buildService({
+        load: dispatchedLoad(),
+        driver: {
+          id: DRIVER_ID,
+          email: 'julia@carrier.test',
+          organizationId: ORG_ID,
+          carrierId: CARRIER_ID,
+        },
+        rateConfDoc: null,
+      });
+
+      const preview = await service.previewDriverDispatchEmail(ORG_ID, LOAD_ID);
+
+      expect(preview.attachmentAvailable).toBe(false);
+      expect(preview.attachmentFileName).toBeNull();
+    });
+
+    it('is unavailable when the Rate Confirmation document type itself is not configured (seed not applied)', async () => {
+      const { service } = buildService({
+        load: dispatchedLoad(),
+        driver: {
+          id: DRIVER_ID,
+          email: 'julia@carrier.test',
+          organizationId: ORG_ID,
+          carrierId: CARRIER_ID,
+        },
+        documentType: null,
+        rateConfDoc: cleanUploadedRateConfDoc(),
+      });
+
+      const preview = await service.previewDriverDispatchEmail(ORG_ID, LOAD_ID);
+
+      expect(preview.attachmentAvailable).toBe(false);
+    });
   });
 
   describe('sendDriverDispatchEmail', () => {
@@ -729,36 +780,207 @@ describe('CarrierSourcingService — Driver Dispatch Email feature', () => {
           organizationId: ORG_ID,
           carrierId: CARRIER_ID,
         },
-        rateConfDoc: cleanRateConfDoc(),
+        rateConfDoc: cleanUploadedRateConfDoc(),
         ...overrides,
       });
     }
 
-    it('enqueues the email job with the driver-on-file recipient, exact subject/body, and the attachment document reference', async () => {
-      const { service, emailQueue, audit } = buildDispatchService();
+    describe('checkbox ON (attachRateConfirmation: true)', () => {
+      it('attaches the uploaded RATE_CONFIRMATION document — never the generated one, never both', async () => {
+        const { service, tx, emailQueue, audit } = buildDispatchService();
 
-      const result = await service.sendDriverDispatchEmail(ORG_ID, LOAD_ID, {}, USER_ID);
+        const result = await service.sendDriverDispatchEmail(
+          ORG_ID,
+          LOAD_ID,
+          { attachRateConfirmation: true },
+          USER_ID,
+        );
 
-      expect(result.recipientEmail).toBe('julia@carrier.test');
-      expect(emailQueue.add).toHaveBeenCalledWith(
-        'send',
-        expect.objectContaining({
-          to: 'julia@carrier.test',
-          subject: 'Dispatch Details — Load #LOAD-000001',
-          organizationId: ORG_ID,
-          entityType: 'Load',
-          entityId: LOAD_ID,
-          attachmentDocumentId: 'rate-conf-doc-1',
-        }),
-        expect.anything(),
+        expect(result.recipientEmail).toBe('julia@carrier.test');
+        expect(tx.document.findFirst).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: expect.objectContaining({ generationStatus: null }),
+          }),
+        );
+        expect(emailQueue.add).toHaveBeenCalledWith(
+          'send',
+          expect.objectContaining({
+            to: 'julia@carrier.test',
+            subject: 'Dispatch Details — Load #LOAD-000001',
+            organizationId: ORG_ID,
+            entityType: 'Load',
+            entityId: LOAD_ID,
+            attachmentDocumentId: 'uploaded-rate-conf-doc-1',
+          }),
+          expect.anything(),
+        );
+        const jobData = emailQueue.add.mock.calls[0][1];
+        expect(jobData.attachmentDocumentId).not.toBe('rate-conf-doc-1'); // not the generated id
+        expect(audit.record).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.objectContaining({
+            action: 'Driver Dispatch Email Sent',
+            newValue: expect.objectContaining({
+              recipientSource: 'driver-on-file',
+              documentId: 'uploaded-rate-conf-doc-1',
+            }),
+          }),
+        );
+      });
+
+      it('fails clearly, without sending, when no eligible uploaded Rate Confirmation exists (only a generated one, or none at all) — never falls back to it', async () => {
+        const { service, emailQueue } = buildDispatchService({ rateConfDoc: null });
+
+        await expect(
+          service.sendDriverDispatchEmail(
+            ORG_ID,
+            LOAD_ID,
+            { attachRateConfirmation: true },
+            USER_ID,
+          ),
+        ).rejects.toThrow(BusinessRuleError);
+        expect(emailQueue.add).not.toHaveBeenCalled();
+      });
+
+      it('fails clearly for a directly-booked/existing Load with no uploaded Rate Confirmation on file', async () => {
+        const { service, emailQueue } = buildDispatchService({ rateConfDoc: null });
+
+        const error = await service
+          .sendDriverDispatchEmail(ORG_ID, LOAD_ID, { attachRateConfirmation: true }, USER_ID)
+          .catch((e: unknown) => e);
+        expect(error).toBeInstanceOf(BusinessRuleError);
+        expect((error as Error).message).toMatch(/not available/i);
+        expect(emailQueue.add).not.toHaveBeenCalled();
+      });
+
+      it('rejects when the only current-version document is non-CLEAN', async () => {
+        const { service, emailQueue } = buildDispatchService({
+          rateConfDoc: cleanUploadedRateConfDoc({ scanStatus: 'INFECTED' }),
+        });
+
+        await expect(
+          service.sendDriverDispatchEmail(
+            ORG_ID,
+            LOAD_ID,
+            { attachRateConfirmation: true },
+            USER_ID,
+          ),
+        ).rejects.toThrow(BusinessRuleError);
+        expect(emailQueue.add).not.toHaveBeenCalled();
+      });
+
+      it('rejects when the only current-version document is not a PDF', async () => {
+        const { service, emailQueue } = buildDispatchService({
+          rateConfDoc: cleanUploadedRateConfDoc({ mimeType: 'image/png' }),
+        });
+
+        await expect(
+          service.sendDriverDispatchEmail(
+            ORG_ID,
+            LOAD_ID,
+            { attachRateConfirmation: true },
+            USER_ID,
+          ),
+        ).rejects.toThrow(BusinessRuleError);
+        expect(emailQueue.add).not.toHaveBeenCalled();
+      });
+
+      it('most recently uploaded matching document wins (deterministic ordering, asserted via the query itself)', async () => {
+        const { service, tx } = buildDispatchService();
+
+        await service.sendDriverDispatchEmail(
+          ORG_ID,
+          LOAD_ID,
+          { attachRateConfirmation: true },
+          USER_ID,
+        );
+
+        expect(tx.document.findFirst).toHaveBeenCalledWith(
+          expect.objectContaining({ orderBy: { uploadedAt: 'desc' } }),
+        );
+      });
+
+      it('never converts the dispatch text itself into the attachment — body stays text, attachment is always the resolved documentId', async () => {
+        const { service, emailQueue } = buildDispatchService();
+
+        await service.sendDriverDispatchEmail(
+          ORG_ID,
+          LOAD_ID,
+          { attachRateConfirmation: true },
+          USER_ID,
+        );
+
+        const jobData = emailQueue.add.mock.calls[0][1];
+        expect(typeof jobData.body).toBe('string');
+        expect(jobData.attachmentDocumentId).toBe('uploaded-rate-conf-doc-1');
+        expect(jobData).not.toHaveProperty('attachments');
+      });
+    });
+
+    describe('checkbox OFF (attachRateConfirmation: false)', () => {
+      it('sends with no attachment and never queries for one at all', async () => {
+        const { service, tx, emailQueue } = buildDispatchService();
+
+        const result = await service.sendDriverDispatchEmail(
+          ORG_ID,
+          LOAD_ID,
+          { attachRateConfirmation: false },
+          USER_ID,
+        );
+
+        expect(result.recipientEmail).toBe('julia@carrier.test');
+        expect(tx.document.findFirst).not.toHaveBeenCalled();
+        const jobData = emailQueue.add.mock.calls[0][1];
+        expect(jobData).not.toHaveProperty('attachmentDocumentId');
+      });
+
+      it('sends successfully even when only a generated Rate Confirmation exists (no uploaded one) — no error, no attachment', async () => {
+        const { service, tx } = buildDispatchService({ rateConfDoc: null });
+
+        const result = await service.sendDriverDispatchEmail(
+          ORG_ID,
+          LOAD_ID,
+          { attachRateConfirmation: false },
+          USER_ID,
+        );
+
+        expect(result.recipientEmail).toBe('julia@carrier.test');
+        expect(tx.document.findFirst).not.toHaveBeenCalled();
+      });
+
+      it('succeeds for a directly-booked/existing Load with no uploaded Rate Confirmation on file at all', async () => {
+        const { service, emailQueue } = buildDispatchService({ rateConfDoc: null });
+
+        await expect(
+          service.sendDriverDispatchEmail(
+            ORG_ID,
+            LOAD_ID,
+            { attachRateConfirmation: false },
+            USER_ID,
+          ),
+        ).resolves.toBeDefined();
+        expect(emailQueue.add).toHaveBeenCalled();
+      });
+    });
+
+    it('recipient resolution is unaffected by the attachment checkbox: driver-on-file wins regardless', async () => {
+      const { service } = buildDispatchService();
+
+      const onResult = await service.sendDriverDispatchEmail(
+        ORG_ID,
+        LOAD_ID,
+        { attachRateConfirmation: true },
+        USER_ID,
       );
-      expect(audit.record).toHaveBeenCalledWith(
-        expect.anything(),
-        expect.objectContaining({
-          action: 'Driver Dispatch Email Sent',
-          newValue: expect.objectContaining({ recipientSource: 'driver-on-file' }),
-        }),
+      const offResult = await service.sendDriverDispatchEmail(
+        ORG_ID,
+        LOAD_ID,
+        { attachRateConfirmation: false },
+        USER_ID,
       );
+
+      expect(onResult.recipientEmail).toBe('julia@carrier.test');
+      expect(offResult.recipientEmail).toBe('julia@carrier.test');
     });
 
     it('accepts a manual recipient email as a one-time override when no driver email is on file, and does not persist it', async () => {
@@ -769,7 +991,7 @@ describe('CarrierSourcingService — Driver Dispatch Email feature', () => {
       const result = await service.sendDriverDispatchEmail(
         ORG_ID,
         LOAD_ID,
-        { manualRecipientEmail: 'dispatcher-override@example.com' },
+        { manualRecipientEmail: 'dispatcher-override@example.com', attachRateConfirmation: false },
         USER_ID,
       );
 
@@ -796,9 +1018,14 @@ describe('CarrierSourcingService — Driver Dispatch Email feature', () => {
         driver: { id: DRIVER_ID, email: null, organizationId: ORG_ID, carrierId: CARRIER_ID },
       });
 
-      await expect(service.sendDriverDispatchEmail(ORG_ID, LOAD_ID, {}, USER_ID)).rejects.toThrow(
-        BusinessRuleError,
-      );
+      await expect(
+        service.sendDriverDispatchEmail(
+          ORG_ID,
+          LOAD_ID,
+          { attachRateConfirmation: false },
+          USER_ID,
+        ),
+      ).rejects.toThrow(BusinessRuleError);
       expect(emailQueue.add).not.toHaveBeenCalled();
     });
 
@@ -813,18 +1040,28 @@ describe('CarrierSourcingService — Driver Dispatch Email feature', () => {
         driver: { id: DRIVER_ID, email: null, organizationId: ORG_ID, carrierId: CARRIER_ID },
       });
 
-      await expect(service.sendDriverDispatchEmail(ORG_ID, LOAD_ID, {}, USER_ID)).rejects.toThrow(
-        BusinessRuleError,
-      );
+      await expect(
+        service.sendDriverDispatchEmail(
+          ORG_ID,
+          LOAD_ID,
+          { attachRateConfirmation: false },
+          USER_ID,
+        ),
+      ).rejects.toThrow(BusinessRuleError);
       expect(emailQueue.add).not.toHaveBeenCalled();
     });
 
     it('rejects a cross-carrier/unauthorized driver — no email resolved, no manual override supplied', async () => {
       const { service, emailQueue } = buildDispatchService({ driver: null });
 
-      await expect(service.sendDriverDispatchEmail(ORG_ID, LOAD_ID, {}, USER_ID)).rejects.toThrow(
-        BusinessRuleError,
-      );
+      await expect(
+        service.sendDriverDispatchEmail(
+          ORG_ID,
+          LOAD_ID,
+          { attachRateConfirmation: false },
+          USER_ID,
+        ),
+      ).rejects.toThrow(BusinessRuleError);
       expect(emailQueue.add).not.toHaveBeenCalled();
     });
 
@@ -833,52 +1070,15 @@ describe('CarrierSourcingService — Driver Dispatch Email feature', () => {
         load: dispatchedLoad({ dispatchRecord: null }),
       });
 
-      await expect(service.sendDriverDispatchEmail(ORG_ID, LOAD_ID, {}, USER_ID)).rejects.toThrow(
-        BusinessRuleError,
-      );
+      await expect(
+        service.sendDriverDispatchEmail(
+          ORG_ID,
+          LOAD_ID,
+          { attachRateConfirmation: false },
+          USER_ID,
+        ),
+      ).rejects.toThrow(BusinessRuleError);
       expect(emailQueue.add).not.toHaveBeenCalled();
-    });
-
-    it('prevents sending when the Rate Confirmation attachment is unavailable (missing document)', async () => {
-      const { service, emailQueue } = buildDispatchService({ rateConfDoc: null });
-
-      await expect(service.sendDriverDispatchEmail(ORG_ID, LOAD_ID, {}, USER_ID)).rejects.toThrow(
-        BusinessRuleError,
-      );
-      expect(emailQueue.add).not.toHaveBeenCalled();
-    });
-
-    it('prevents sending when the Rate Confirmation document is not yet COMPLETE', async () => {
-      const { service, emailQueue } = buildDispatchService({
-        rateConfDoc: cleanRateConfDoc({ generationStatus: 'PENDING' }),
-      });
-
-      await expect(service.sendDriverDispatchEmail(ORG_ID, LOAD_ID, {}, USER_ID)).rejects.toThrow(
-        BusinessRuleError,
-      );
-      expect(emailQueue.add).not.toHaveBeenCalled();
-    });
-
-    it('prevents sending when the resolved document is not a PDF', async () => {
-      const { service, emailQueue } = buildDispatchService({
-        rateConfDoc: cleanRateConfDoc({ mimeType: 'image/png' }),
-      });
-
-      await expect(service.sendDriverDispatchEmail(ORG_ID, LOAD_ID, {}, USER_ID)).rejects.toThrow(
-        BusinessRuleError,
-      );
-      expect(emailQueue.add).not.toHaveBeenCalled();
-    });
-
-    it('never converts the dispatch text into the attachment — the attachment is always the resolved documentId, body is text only', async () => {
-      const { service, emailQueue } = buildDispatchService();
-
-      await service.sendDriverDispatchEmail(ORG_ID, LOAD_ID, {}, USER_ID);
-
-      const jobData = emailQueue.add.mock.calls[0][1];
-      expect(typeof jobData.body).toBe('string');
-      expect(jobData.attachmentDocumentId).toBe('rate-conf-doc-1');
-      expect(jobData).not.toHaveProperty('attachments');
     });
 
     it('does not affect the existing Rate Confirmation generation/email route — generateRateConfirmation behavior unchanged', async () => {

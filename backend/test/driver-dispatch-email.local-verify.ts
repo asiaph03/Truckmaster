@@ -63,7 +63,7 @@ describe('Driver Dispatch Email — local isolated-environment verification', ()
   let coiTypeId: string;
   let carrierAgreementTypeId: string;
   let mcAuthorityTypeId: string;
-  let intakeDocTypeId: string;
+  let rateConfirmationTypeId: string;
 
   beforeAll(async () => {
     // Defense in depth — refuse to run at all against anything that
@@ -133,11 +133,11 @@ describe('Driver Dispatch Email — local isolated-environment verification', ()
     );
     [w9TypeId, coiTypeId, carrierAgreementTypeId, mcAuthorityTypeId] = types.map((t) => t.id);
 
-    const intakeType = await prisma.documentTypeDefinition.findFirst({
-      where: { code: 'RATE_CONFIRMATION_INTAKE' },
+    const rateConfType = await prisma.documentTypeDefinition.findFirst({
+      where: { code: 'RATE_CONFIRMATION' },
     });
-    if (!intakeType) throw new Error('RATE_CONFIRMATION_INTAKE document type is not seeded.');
-    intakeDocTypeId = intakeType.id;
+    if (!rateConfType) throw new Error('RATE_CONFIRMATION document type is not seeded.');
+    rateConfirmationTypeId = rateConfType.id;
 
     const superAdminAgent = await withCsrf(request.agent(app.getHttpServer()));
     await superAdminAgent
@@ -416,42 +416,62 @@ describe('Driver Dispatch Email — local isolated-environment verification', ()
     return { documentId: doc.id, fileStorageKey: doc.fileStorageKey, fileName: doc.fileName };
   }
 
-  /** A decoy RATE_CONFIRMATION_INTAKE document on the same Load — proves resolution is by document TYPE, never accidentally by "any PDF on this Load". */
-  async function createDecoyIntakeDocument(
+  /**
+   * The ORIGINAL, user-uploaded Rate Confirmation PDF — goes through the
+   * exact same generic Load-level upload flow DocumentsTab.tsx uses
+   * (`POST /documents` → PUT the real bytes → `POST /documents/:id/confirm`
+   * → real malware scan), under the SAME 'RATE_CONFIRMATION' type code as
+   * the system-generated one. `generationStatus` stays null (never set by
+   * this path) — that is the only thing that distinguishes it from the
+   * generated document at the same entityType/entityId/documentTypeId.
+   */
+  async function uploadRateConfirmationDocument(
     loadId: string,
-    uploadedByUserId: string,
-  ): Promise<void> {
-    await prisma.withTenantTransaction(orgId, (tx) =>
-      tx.document.create({
-        data: {
-          organizationId: orgId,
-          entityType: 'LOAD',
-          entityId: loadId,
-          documentTypeId: intakeDocTypeId,
-          fileStorageKey: `org_${orgId}/documents/decoy-intake.pdf`,
-          fileName: 'DECOY-uploaded-intake.pdf',
-          fileSizeBytes: 999,
-          mimeType: 'application/pdf',
-          versionNumber: 1,
-          isCurrentVersion: true,
-          scanStatus: 'CLEAN',
-          scannedAt: new Date(),
-          scanProvider: 'test-double',
-          reviewStatus: 'NOT_APPLICABLE',
-          uploadedByUserId,
-        },
-      }),
+    fileName: string,
+    content: Buffer,
+  ): Promise<{ documentId: string; fileStorageKey: string; fileName: string }> {
+    const initiateRes = await adminAgent
+      .post(`${API}/documents`)
+      .send({
+        entityType: 'LOAD',
+        entityId: loadId,
+        documentTypeId: rateConfirmationTypeId,
+        fileName,
+        mimeType: 'application/pdf',
+        fileSizeBytes: content.length,
+      })
+      .expect(201);
+    const documentId: string = initiateRes.body.document.id;
+
+    await fetch(initiateRes.body.uploadUrl, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/pdf' },
+      body: content as BodyInit,
+    });
+    await adminAgent.post(`${API}/documents/${documentId}/confirm`).expect(200);
+    expect(await waitForScanStatus(documentId)).toBe('CLEAN');
+
+    const doc = await prisma.withTenantTransaction(orgId, (tx) =>
+      tx.document.findUniqueOrThrow({ where: { id: documentId } }),
     );
+    expect(doc.generationStatus).toBeNull();
+    return { documentId: doc.id, fileStorageKey: doc.fileStorageKey, fileName: doc.fileName };
   }
 
-  it('resolves the driver email from sourceDriverId, sends via the real pipeline with the exact formatter output and the real generated Rate Confirmation PDF as an attachment (never the intake document)', async () => {
+  it('checkbox ON: attaches the uploaded RATE_CONFIRMATION PDF, byte-for-byte — the generated RATE_CONFIRMATION (decoy) is never selected', async () => {
     const carrierId = await createEligibleCarrier('happy');
     const { loadId, loadNumber } = await createBookedLoad('happy');
-    const rateConf = await progressToRateConfirmation(loadId, carrierId);
+    // The generated document — a real decoy that must never be attached.
+    const generatedRateConf = await progressToRateConfirmation(loadId, carrierId);
 
-    // Decoy — must never be selected as the attachment.
-    const meRes = await adminAgent.get(`${API}/auth/me`).expect(200);
-    await createDecoyIntakeDocument(loadId, meRes.body.id);
+    // The ORIGINAL uploaded document — real, different bytes than the
+    // generated PDF, uploaded through the exact same generic Load-level
+    // flow DocumentsTab.tsx uses.
+    const uploadedRateConf = await uploadRateConfirmationDocument(
+      loadId,
+      'Nurana RC 2434269.pdf',
+      Buffer.from('%PDF-1.4 this is the ORIGINAL uploaded rate confirmation, not generated'),
+    );
 
     const driverRes = await adminAgent
       .post(`${API}/carriers/${carrierId}/drivers`)
@@ -492,15 +512,15 @@ describe('Driver Dispatch Email — local isolated-environment verification', ()
     // Unapproved dispatcher free-text must never leak into the email.
     expect(preview.body.body).not.toContain('Driver must call 30 min out.');
 
-    // --- (9)/(10) attachment resolves to the canonical RATE_CONFIRMATION doc, not the intake decoy ---
+    // --- attachment resolves to the UPLOADED doc, never the generated decoy ---
     expect(preview.body.attachmentAvailable).toBe(true);
-    expect(preview.body.attachmentFileName).toBe(rateConf.fileName);
-    expect(preview.body.attachmentFileName).not.toBe('DECOY-uploaded-intake.pdf');
+    expect(preview.body.attachmentFileName).toBe(uploadedRateConf.fileName);
+    expect(preview.body.attachmentFileName).not.toBe(generatedRateConf.fileName);
 
-    // --- send ---
+    // --- send, checkbox ON ---
     const sendRes = await adminAgent
       .post(`${API}/loads/${loadId}/send-driver-dispatch-email`)
-      .send({})
+      .send({ attachRateConfirmation: true })
       .expect(200);
     expect(sendRes.body.recipientEmail).toBe('julia.driver@local-verify-driver.test');
 
@@ -510,27 +530,127 @@ describe('Driver Dispatch Email — local isolated-environment verification', ()
     expect(sent.subject).toBe(preview.body.subject);
     expect(sent.body).toBe(preview.body.body);
 
-    // --- (11)/(12)/(13) attachment passed through the queue/worker correctly ---
+    // --- attachment passed through the queue/worker correctly ---
     expect(sent.attachments).toHaveLength(1);
     const attachment = sent.attachments![0];
-    expect(attachment.filename).toBe(rateConf.fileName);
+    expect(attachment.filename).toBe(uploadedRateConf.fileName);
+    expect(attachment.filename).not.toBe(generatedRateConf.fileName);
     expect(attachment.contentType).toBe('application/pdf');
 
     // The worker resolved these bytes via StorageService.getObject(fileStorageKey)
-    // — independently re-fetch the same key and confirm byte-for-byte equality,
-    // proving the real generated PDF (not a placeholder) made it all the way
-    // through Document -> S3 -> EmailSendWorker -> IEmailSender.
-    const independentlyFetched = await storage.getObject(rateConf.fileStorageKey);
-    expect(attachment.content.equals(independentlyFetched)).toBe(true);
+    // — independently re-fetch the UPLOADED document's own key and confirm
+    // byte-for-byte equality, proving the real uploaded PDF (not the
+    // generated one, not a placeholder) made it all the way through
+    // Document -> S3 -> EmailSendWorker -> IEmailSender.
+    const uploadedBytes = await storage.getObject(uploadedRateConf.fileStorageKey);
+    expect(attachment.content.equals(uploadedBytes)).toBe(true);
     expect(attachment.content.length).toBeGreaterThan(0);
-    // A real pdfkit-generated PDF starts with the standard PDF header.
     expect(attachment.content.subarray(0, 5).toString('latin1')).toBe('%PDF-');
+
+    // --- the generated document's bytes are explicitly NOT what was attached ---
+    const generatedBytes = await storage.getObject(generatedRateConf.fileStorageKey);
+    expect(attachment.content.equals(generatedBytes)).toBe(false);
 
     // --- carrier email never used as a fallback for THIS Load's driver dispatch email ---
     const carrier = await prisma.withTenantTransaction(orgId, (tx) =>
       tx.carrier.findUniqueOrThrow({ where: { id: carrierId } }),
     );
     expect(sent.to).not.toBe(carrier.primaryContactEmail);
+  }, 30000);
+
+  it('checkbox OFF: sends with no attachment at all — neither the uploaded nor the generated document is queried or attached', async () => {
+    const carrierId = await createEligibleCarrier('checkbox-off');
+    const { loadId } = await createBookedLoad('checkbox-off');
+    await progressToRateConfirmation(loadId, carrierId);
+    await uploadRateConfirmationDocument(
+      loadId,
+      'Nurana RC 2434269.pdf',
+      Buffer.from('%PDF-1.4 uploaded rate confirmation for checkbox-off test'),
+    );
+
+    const driverRes = await adminAgent
+      .post(`${API}/carriers/${carrierId}/drivers`)
+      .send({
+        firstName: 'Julia',
+        lastName: 'Ramos',
+        phone: '(773) 870-1332',
+        email: 'julia.checkbox-off@local-verify-driver.test',
+      })
+      .expect(201);
+
+    await adminAgent
+      .post(`${API}/loads/${loadId}/dispatch`)
+      .send({
+        driverName: 'Julia',
+        driverPhone: '(773) 870-1332',
+        truckNumber: 'T-1',
+        trailerNumber: 'TR-1',
+        sourceDriverId: driverRes.body.id,
+      })
+      .expect(200);
+
+    await adminAgent
+      .post(`${API}/loads/${loadId}/send-driver-dispatch-email`)
+      .send({ attachRateConfirmation: false })
+      .expect(200);
+
+    const sent = await lastEmailTo('julia.checkbox-off@local-verify-driver.test');
+    expect(sent.attachments).toBeUndefined();
+  }, 30000);
+
+  it('checkbox ON with no uploaded Rate Confirmation on file (only the generated one exists): clear business-rule error, no email sent, never falls back to the generated document', async () => {
+    const carrierId = await createEligibleCarrier('missing-upload');
+    const { loadId } = await createBookedLoad('missing-upload');
+    // Only the generated document exists — no manual upload at all. This
+    // is also the realistic "directly-booked Load" shape, since every
+    // dispatched Load already has a generated Rate Confirmation (the
+    // Dispatch gate requires one) but not every Load has an uploaded one.
+    await progressToRateConfirmation(loadId, carrierId);
+
+    const driverRes = await adminAgent
+      .post(`${API}/carriers/${carrierId}/drivers`)
+      .send({
+        firstName: 'Julia',
+        lastName: 'Ramos',
+        phone: '(773) 870-1332',
+        email: 'julia.missing-upload@local-verify-driver.test',
+      })
+      .expect(201);
+
+    await adminAgent
+      .post(`${API}/loads/${loadId}/dispatch`)
+      .send({
+        driverName: 'Julia',
+        driverPhone: '(773) 870-1332',
+        truckNumber: 'T-1',
+        trailerNumber: 'TR-1',
+        sourceDriverId: driverRes.body.id,
+      })
+      .expect(200);
+
+    const preview = await adminAgent
+      .get(`${API}/loads/${loadId}/driver-dispatch-email-preview`)
+      .expect(200);
+    expect(preview.body.attachmentAvailable).toBe(false);
+    expect(preview.body.attachmentFileName).toBeNull();
+
+    const before = capturedEmails.length;
+    const rejected = await adminAgent
+      .post(`${API}/loads/${loadId}/send-driver-dispatch-email`)
+      .send({ attachRateConfirmation: true })
+      .expect(422);
+    expect(rejected.body.error.code).toBe('BUSINESS_RULE_ERROR');
+    expect(rejected.body.error.message).toMatch(/not available/i);
+    expect(capturedEmails.length).toBe(before);
+
+    // Checkbox OFF for the very same Load still succeeds — the missing
+    // upload never blocks a no-attachment send.
+    await adminAgent
+      .post(`${API}/loads/${loadId}/send-driver-dispatch-email`)
+      .send({ attachRateConfirmation: false })
+      .expect(200);
+    const sent = await lastEmailTo('julia.missing-upload@local-verify-driver.test');
+    expect(sent.attachments).toBeUndefined();
   }, 30000);
 
   it('when the driver has no email on file, requires a manual one-time recipient and never falls back to the carrier email', async () => {
@@ -563,14 +683,17 @@ describe('Driver Dispatch Email — local isolated-environment verification', ()
     // --- (5) sending with no override is rejected, never silently uses the carrier email ---
     const rejected = await adminAgent
       .post(`${API}/loads/${loadId}/send-driver-dispatch-email`)
-      .send({})
+      .send({ attachRateConfirmation: false })
       .expect(422);
     expect(rejected.body.error.code).toBe('BUSINESS_RULE_ERROR');
 
     // --- manual one-time override works and is what actually gets sent ---
     const sendRes = await adminAgent
       .post(`${API}/loads/${loadId}/send-driver-dispatch-email`)
-      .send({ manualRecipientEmail: 'manual-override@local-verify-driver.test' })
+      .send({
+        manualRecipientEmail: 'manual-override@local-verify-driver.test',
+        attachRateConfirmation: false,
+      })
       .expect(200);
     expect(sendRes.body.recipientEmail).toBe('manual-override@local-verify-driver.test');
 
@@ -590,7 +713,7 @@ describe('Driver Dispatch Email — local isolated-environment verification', ()
     const before = capturedEmails.length;
     await adminAgent
       .post(`${API}/loads/${loadId}/send-driver-dispatch-email`)
-      .send({ manualRecipientEmail: 'not-an-email' })
+      .send({ manualRecipientEmail: 'not-an-email', attachRateConfirmation: false })
       .expect(400);
     expect(capturedEmails.length).toBe(before);
   }, 30000);

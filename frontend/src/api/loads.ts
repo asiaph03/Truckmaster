@@ -330,6 +330,14 @@ export interface DriverDispatchEmailPreview {
 export interface SendDriverDispatchEmailRequest {
   /** One-time override only — used (and required) when no on-file driver email exists; never persisted. */
   manualRecipientEmail?: string;
+  /**
+   * Required — the server is the actual gate, never just the frontend
+   * checkbox. When true, the original uploaded Rate Confirmation PDF
+   * must resolve and validate or the send fails; when false, no
+   * attachment is looked up or queued at all (never falls back to the
+   * generated Rate Confirmation either way).
+   */
+  attachRateConfirmation: boolean;
 }
 
 export interface DispatchLoadRequest {
@@ -532,7 +540,7 @@ export const loadsApi = {
   previewDriverDispatchEmail: (id: string) =>
     apiRequest<DriverDispatchEmailPreview>(`/loads/${id}/driver-dispatch-email-preview`),
 
-  sendDriverDispatchEmail: (id: string, body?: SendDriverDispatchEmailRequest) =>
+  sendDriverDispatchEmail: (id: string, body: SendDriverDispatchEmailRequest) =>
     apiRequest<{ recipientEmail: string }>(`/loads/${id}/send-driver-dispatch-email`, {
       method: 'POST',
       body,

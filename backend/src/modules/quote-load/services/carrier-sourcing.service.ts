@@ -444,12 +444,16 @@ export class CarrierSourcingService {
     loadId: string,
   ): Promise<DriverDispatchEmailPreview> {
     const ctx = await this.resolveDriverDispatchContext(organizationId, loadId);
+    const uploadedRateConfDoc = await this.resolveUploadedRateConfirmationDocument(
+      organizationId,
+      loadId,
+    );
     return {
       recipientEmail: ctx.recipientEmail,
       subject: ctx.message.subject,
       body: ctx.message.body,
-      attachmentAvailable: ctx.attachmentAvailable,
-      attachmentFileName: ctx.attachmentFileName,
+      attachmentAvailable: Boolean(uploadedRateConfDoc),
+      attachmentFileName: uploadedRateConfDoc?.fileName ?? null,
     };
   }
 
@@ -472,10 +476,21 @@ export class CarrierSourcingService {
   ): Promise<{ recipientEmail: string }> {
     const ctx = await this.resolveDriverDispatchContext(organizationId, loadId);
 
-    if (!ctx.attachmentAvailable || !ctx.attachmentDocumentId) {
-      throw new BusinessRuleError(
-        'The Rate Confirmation PDF for this Load is not available yet — the dispatch email cannot be sent without it.',
+    // Attachment is entirely optional and entirely gated by the caller's
+    // explicit flag — never resolved/looked up at all when false, and
+    // never falls back to the generated Rate Confirmation either way.
+    let attachmentDocumentId: string | undefined;
+    if (dto.attachRateConfirmation) {
+      const uploadedRateConfDoc = await this.resolveUploadedRateConfirmationDocument(
+        organizationId,
+        loadId,
       );
+      if (!uploadedRateConfDoc) {
+        throw new BusinessRuleError(
+          'The original uploaded Rate Confirmation PDF for this Load is not available — the dispatch email cannot be sent with the attachment requested.',
+        );
+      }
+      attachmentDocumentId = uploadedRateConfDoc.id;
     }
 
     const recipientEmail = ctx.recipientEmail ?? dto.manualRecipientEmail;
@@ -492,7 +507,7 @@ export class CarrierSourcingService {
       organizationId,
       entityType: 'Load',
       entityId: loadId,
-      attachmentDocumentId: ctx.attachmentDocumentId,
+      ...(attachmentDocumentId ? { attachmentDocumentId } : {}),
     };
     await this.emailQueue.add('send', jobData, EMAIL_JOB_OPTIONS);
 
@@ -503,7 +518,7 @@ export class CarrierSourcingService {
         entityType: 'Load',
         entityId: loadId,
         newValue: {
-          documentId: ctx.attachmentDocumentId,
+          documentId: attachmentDocumentId ?? null,
           sentTo: recipientEmail,
           recipientSource: ctx.recipientEmail ? 'driver-on-file' : 'manual-override',
         },
@@ -531,9 +546,6 @@ export class CarrierSourcingService {
   ): Promise<{
     recipientEmail: string | null;
     message: DriverDispatchMessage;
-    attachmentAvailable: boolean;
-    attachmentDocumentId: string | undefined;
-    attachmentFileName: string | null;
   }> {
     return this.prisma.withTenantTransaction(organizationId, async (tx) => {
       const load = await tx.load.findFirst({
@@ -567,31 +579,6 @@ export class CarrierSourcingService {
         if (driver?.email) recipientEmail = driver.email;
       }
 
-      const documentType = await tx.documentTypeDefinition.findFirst({
-        where: {
-          code: RATE_CONFIRMATION_DOCUMENT_TYPE_CODE,
-          OR: [{ organizationId }, { organizationId: null }],
-        },
-      });
-      const rateConfDoc = documentType
-        ? await tx.document.findFirst({
-            where: {
-              organizationId,
-              entityType: 'LOAD',
-              entityId: loadId,
-              documentTypeId: documentType.id,
-              isCurrentVersion: true,
-            },
-          })
-        : null;
-
-      const attachmentAvailable = Boolean(
-        rateConfDoc &&
-        rateConfDoc.generationStatus === 'COMPLETE' &&
-        rateConfDoc.scanStatus === 'CLEAN' &&
-        rateConfDoc.mimeType === 'application/pdf',
-      );
-
       const pickupStop = load.stops.find((s) => s.stopType === 'PICKUP') ?? load.stops[0];
 
       const message = buildDriverDispatchMessage({
@@ -616,12 +603,62 @@ export class CarrierSourcingService {
         pickupStopNotes: pickupStop?.notes ?? null,
       });
 
+      return { recipientEmail, message };
+    });
+  }
+
+  /**
+   * Driver Dispatch Email feature — the ORIGINAL, user-uploaded Rate
+   * Confirmation PDF for this Load (never the system-generated carrier-
+   * facing one, and never RATE_CONFIRMATION_INTAKE, which has no
+   * reliable Load association at all). Both the generated and an
+   * uploaded document share the exact same `RATE_CONFIRMATION` type code
+   * and `entityType: 'LOAD', entityId: loadId` scoping — the ONLY
+   * reliable discriminator is `generationStatus`, which the codebase
+   * already guarantees is set only by the three system-generation call
+   * sites and left `null` for every user-uploaded document (see
+   * Document.generationStatus's own doc comment in schema.prisma).
+   * `orderBy: uploadedAt desc` is a deliberate defensive tie-breaker for
+   * a known, pre-existing, out-of-scope-here gap: the generic Load-level
+   * document uploader (DocumentsTab.tsx) does not pass
+   * `existingDocumentFamilyId`, so a re-upload does not deactivate a
+   * prior current-version row — this can leave more than one row
+   * `isCurrentVersion: true` for the same type. Taking the most recently
+   * uploaded one is the least-surprising choice without touching that
+   * unrelated versioning gap.
+   */
+  private async resolveUploadedRateConfirmationDocument(
+    organizationId: string,
+    loadId: string,
+  ): Promise<{ id: string; fileName: string; fileStorageKey: string; mimeType: string } | null> {
+    return this.prisma.withTenantTransaction(organizationId, async (tx) => {
+      const documentType = await tx.documentTypeDefinition.findFirst({
+        where: {
+          code: RATE_CONFIRMATION_DOCUMENT_TYPE_CODE,
+          OR: [{ organizationId }, { organizationId: null }],
+        },
+      });
+      if (!documentType) return null;
+
+      const doc = await tx.document.findFirst({
+        where: {
+          organizationId,
+          entityType: 'LOAD',
+          entityId: loadId,
+          documentTypeId: documentType.id,
+          isCurrentVersion: true,
+          generationStatus: null,
+        },
+        orderBy: { uploadedAt: 'desc' },
+      });
+      if (!doc) return null;
+      if (doc.scanStatus !== 'CLEAN' || doc.mimeType !== 'application/pdf') return null;
+
       return {
-        recipientEmail,
-        message,
-        attachmentAvailable,
-        attachmentDocumentId: rateConfDoc?.id,
-        attachmentFileName: rateConfDoc?.fileName ?? null,
+        id: doc.id,
+        fileName: doc.fileName,
+        fileStorageKey: doc.fileStorageKey,
+        mimeType: doc.mimeType,
       };
     });
   }

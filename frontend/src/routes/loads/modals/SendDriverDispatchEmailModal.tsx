@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { z } from 'zod';
 import { loadsApi } from '../../../api';
 import { ApiError } from '../../../api/errors';
-import { Badge, Button, Modal, TextField } from '../../../components/ui';
+import { Badge, Button, Modal, TextField, Toggle } from '../../../components/ui';
 import { useToast } from '../../../components/ui/toastStore';
 
 const emailSchema = z.string().email('Enter a valid email address.');
@@ -20,6 +20,12 @@ const emailSchema = z.string().email('Enter a valid email address.');
  * email was resolved, is validated before Send is enabled, and is never
  * persisted anywhere by this modal — it is sent once, as part of this one
  * request, and forgotten.
+ *
+ * The "Attach Original Rate Confirmation" toggle controls
+ * `attachRateConfirmation` — always sent explicitly, since the server is
+ * the real gate (never trusts this checkbox alone). `preview.attachmentAvailable`
+ * now describes the ORIGINAL user-uploaded Rate Confirmation (never the
+ * system-generated one, which this feature never attaches).
  */
 export function SendDriverDispatchEmailModal({
   open,
@@ -35,6 +41,7 @@ export function SendDriverDispatchEmailModal({
   const toast = useToast();
   const [manualEmail, setManualEmail] = useState('');
   const [manualEmailError, setManualEmailError] = useState<string | null>(null);
+  const [attachRateConfirmation, setAttachRateConfirmation] = useState(false);
   const [sending, setSending] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
 
@@ -56,6 +63,13 @@ export function SendDriverDispatchEmailModal({
     }
   }, [open]);
 
+  // Default the toggle to checked only once we know an eligible uploaded
+  // Rate Confirmation actually exists — re-evaluated each time a fresh
+  // preview loads (e.g. reopening the modal for a different Load).
+  useEffect(() => {
+    if (preview) setAttachRateConfirmation(preview.attachmentAvailable);
+  }, [preview]);
+
   const hasDriverEmail = Boolean(preview?.recipientEmail);
 
   async function onSend() {
@@ -72,7 +86,10 @@ export function SendDriverDispatchEmailModal({
 
     setSending(true);
     try {
-      await loadsApi.sendDriverDispatchEmail(loadId, { manualRecipientEmail });
+      await loadsApi.sendDriverDispatchEmail(loadId, {
+        manualRecipientEmail,
+        attachRateConfirmation,
+      });
       toast.success('Driver dispatch email sent.');
       onSent();
     } catch (error) {
@@ -82,10 +99,7 @@ export function SendDriverDispatchEmailModal({
     }
   }
 
-  const canSend =
-    !isLoading &&
-    Boolean(preview?.attachmentAvailable) &&
-    (hasDriverEmail || manualEmail.trim().length > 0);
+  const canSend = !isLoading && (hasDriverEmail || manualEmail.trim().length > 0);
 
   return (
     <Modal
@@ -161,11 +175,18 @@ export function SendDriverDispatchEmailModal({
           </div>
 
           <div style={{ marginTop: 'var(--space-3)' }}>
-            {preview.attachmentAvailable ? (
-              <Badge label={`Attachment: ${preview.attachmentFileName}`} color="neutral" />
-            ) : (
-              <Badge label="Rate Confirmation PDF not available yet — cannot send" color="danger" />
-            )}
+            <Toggle
+              label="Attach Original Rate Confirmation"
+              checked={attachRateConfirmation}
+              onChange={(e) => setAttachRateConfirmation(e.target.checked)}
+            />
+            <div style={{ marginTop: 'var(--space-2)' }}>
+              {preview.attachmentAvailable ? (
+                <Badge label={`Attachment: ${preview.attachmentFileName}`} color="neutral" />
+              ) : (
+                <Badge label="Original uploaded Rate Confirmation not available" color="danger" />
+              )}
+            </div>
           </div>
         </>
       ) : null}
