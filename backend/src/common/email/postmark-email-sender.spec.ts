@@ -61,4 +61,47 @@ describe('PostmarkEmailSender', () => {
     await expect(sender.send(MESSAGE)).rejects.toThrow(/500/);
     restore();
   });
+
+  it('sends no Attachments field when none are provided, matching prior request bodies exactly', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ ErrorCode: 0, Message: 'OK' }),
+    });
+    const { sender, restore } = buildSender(fetchImpl as never);
+
+    await sender.send(MESSAGE);
+
+    const body = JSON.parse((fetchImpl.mock.calls[0][1] as RequestInit).body as string);
+    expect(body).not.toHaveProperty('Attachments');
+    restore();
+  });
+
+  it('passes attachments through as base64-encoded Attachments entries', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ ErrorCode: 0, Message: 'OK' }),
+    });
+    const { sender, restore } = buildSender(fetchImpl as never);
+
+    await sender.send({
+      ...MESSAGE,
+      attachments: [
+        {
+          filename: 'Rate Confirmation - LOAD-17278.pdf',
+          content: Buffer.from('pdf-bytes'),
+          contentType: 'application/pdf',
+        },
+      ],
+    });
+
+    const body = JSON.parse((fetchImpl.mock.calls[0][1] as RequestInit).body as string);
+    expect(body.Attachments).toEqual([
+      {
+        Name: 'Rate Confirmation - LOAD-17278.pdf',
+        Content: Buffer.from('pdf-bytes').toString('base64'),
+        ContentType: 'application/pdf',
+      },
+    ]);
+    restore();
+  });
 });

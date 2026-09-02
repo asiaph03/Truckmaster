@@ -22,6 +22,7 @@ import { LogSourcingAttemptDto } from '../dto/log-sourcing-attempt.dto';
 import { AssignCarrierDto } from '../dto/assign-carrier.dto';
 import { CarrierRejectedDto } from '../dto/carrier-rejected.dto';
 import { GenerateRateConfirmationDto } from '../dto/generate-rate-confirmation.dto';
+import { SendDriverDispatchEmailDto } from '../dto/send-driver-dispatch-email.dto';
 import { DispatchLoadDto } from '../dto/dispatch-load.dto';
 import { UpdateDispatchDto } from '../dto/update-dispatch.dto';
 import { StopTimestampDto } from '../dto/stop-timestamp.dto';
@@ -422,6 +423,29 @@ export class LoadController {
     const organizationId = RequestContextStore.requireOrganizationId();
     const actingUserId = RequestContextStore.requireUserId();
     return this.carrierSourcing.generateRateConfirmation(organizationId, id, dto, actingUserId);
+  }
+
+  // --- Driver Dispatch Email feature — a separate action from Rate
+  // Confirmation generation/email above; does not touch that route or
+  // its carrier-email recipient logic. ------------------------------
+
+  @Get(':id/driver-dispatch-email-preview')
+  @Roles(...SOURCING_DISPATCH_ROLES)
+  previewDriverDispatchEmail(@Param('id', ParseUUIDPipe) id: string) {
+    const organizationId = RequestContextStore.requireOrganizationId();
+    return this.carrierSourcing.previewDriverDispatchEmail(organizationId, id);
+  }
+
+  @Post(':id/send-driver-dispatch-email')
+  @Roles(...SOURCING_DISPATCH_ROLES)
+  @HttpCode(200)
+  sendDriverDispatchEmail(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: SendDriverDispatchEmailDto,
+  ) {
+    const organizationId = RequestContextStore.requireOrganizationId();
+    const actingUserId = RequestContextStore.requireUserId();
+    return this.carrierSourcing.sendDriverDispatchEmail(organizationId, id, dto, actingUserId);
   }
 
   // --- Phase 4: Dispatch (Workflow 6) ---------------------------------

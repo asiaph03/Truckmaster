@@ -14,6 +14,7 @@ import { LogSourcingAttemptDto } from '../dto/log-sourcing-attempt.dto';
 import { AssignCarrierDto } from '../dto/assign-carrier.dto';
 import { CarrierRejectedDto } from '../dto/carrier-rejected.dto';
 import { GenerateRateConfirmationDto } from '../dto/generate-rate-confirmation.dto';
+import { SendDriverDispatchEmailDto } from '../dto/send-driver-dispatch-email.dto';
 import {
   BusinessRuleError,
   EligibilityError,
@@ -25,6 +26,21 @@ import {
   RATE_CONFIRMATION_JOB_OPTIONS,
   RateConfirmationJobData,
 } from './rate-confirmation.constants';
+import {
+  buildDriverDispatchMessage,
+  DriverDispatchMessage,
+} from '../utils/driver-dispatch-message';
+
+const RATE_CONFIRMATION_DOCUMENT_TYPE_CODE = 'RATE_CONFIRMATION';
+
+export interface DriverDispatchEmailPreview {
+  /** null when no email is on file for the assigned driver — the frontend must then collect a one-time manual override. */
+  recipientEmail: string | null;
+  subject: string;
+  body: string;
+  attachmentAvailable: boolean;
+  attachmentFileName: string | null;
+}
 
 @Injectable()
 export class CarrierSourcingService {
@@ -411,5 +427,202 @@ export class CarrierSourcingService {
     }
 
     return load;
+  }
+
+  /**
+   * Driver Dispatch Email feature — read-only preview. Returns exactly
+   * the subject/body the SEND action would use (same
+   * buildDriverDispatchMessage call, same recipient-resolution logic) so
+   * there is never a "preview says one thing, send does another" gap —
+   * one formatter, one resolution path, used by both. Never enqueues
+   * anything, never persists anything; safe to call as often as the UI
+   * wants (e.g. every time the tab renders) purely to decide which UI
+   * state to show (driver email already known vs. ask the dispatcher).
+   */
+  async previewDriverDispatchEmail(
+    organizationId: string,
+    loadId: string,
+  ): Promise<DriverDispatchEmailPreview> {
+    const ctx = await this.resolveDriverDispatchContext(organizationId, loadId);
+    return {
+      recipientEmail: ctx.recipientEmail,
+      subject: ctx.message.subject,
+      body: ctx.message.body,
+      attachmentAvailable: ctx.attachmentAvailable,
+      attachmentFileName: ctx.attachmentFileName,
+    };
+  }
+
+  /**
+   * Driver Dispatch Email feature — a separate action from
+   * generateRateConfirmation above; does not touch that method, its
+   * route, or the carrier-email recipient logic in any way. The
+   * recipient and message are BOTH re-resolved here server-side — a
+   * `manualRecipientEmail` on the DTO is only ever used as a one-time
+   * override when no on-file driver email was found, and is never
+   * persisted to Driver/DispatchRecord or anywhere else. The carrier's
+   * email is never considered as a fallback recipient under any
+   * circumstance.
+   */
+  async sendDriverDispatchEmail(
+    organizationId: string,
+    loadId: string,
+    dto: SendDriverDispatchEmailDto,
+    actingUserId: string,
+  ): Promise<{ recipientEmail: string }> {
+    const ctx = await this.resolveDriverDispatchContext(organizationId, loadId);
+
+    if (!ctx.attachmentAvailable || !ctx.attachmentDocumentId) {
+      throw new BusinessRuleError(
+        'The Rate Confirmation PDF for this Load is not available yet — the dispatch email cannot be sent without it.',
+      );
+    }
+
+    const recipientEmail = ctx.recipientEmail ?? dto.manualRecipientEmail;
+    if (!recipientEmail) {
+      throw new BusinessRuleError(
+        'No email is on file for the assigned driver — provide a recipient email for this one-time send.',
+      );
+    }
+
+    const jobData: EmailJobData = {
+      to: recipientEmail,
+      subject: ctx.message.subject,
+      body: ctx.message.body,
+      organizationId,
+      entityType: 'Load',
+      entityId: loadId,
+      attachmentDocumentId: ctx.attachmentDocumentId,
+    };
+    await this.emailQueue.add('send', jobData, EMAIL_JOB_OPTIONS);
+
+    await this.prisma.withTenantTransaction(organizationId, (tx) =>
+      this.audit.record(tx, {
+        organizationId,
+        action: 'Driver Dispatch Email Sent',
+        entityType: 'Load',
+        entityId: loadId,
+        newValue: {
+          documentId: ctx.attachmentDocumentId,
+          sentTo: recipientEmail,
+          recipientSource: ctx.recipientEmail ? 'driver-on-file' : 'manual-override',
+        },
+        actorUserId: actingUserId,
+      }),
+    );
+
+    return { recipientEmail };
+  }
+
+  /**
+   * Shared by preview and send — resolves the Load/DispatchRecord/
+   * assigned-driver-email/canonical-Rate-Confirmation-document context
+   * once, in one tenant-scoped transaction. `sourceDriverId` is the only
+   * path to a driver email (never a client-supplied driver id — the
+   * frontend cannot choose an arbitrary driver), and that driver is
+   * additionally required to belong to both this organization AND the
+   * Load's own assigned carrier — a driver record from a different
+   * carrier (even in the same org) is never treated as this Load's
+   * driver.
+   */
+  private async resolveDriverDispatchContext(
+    organizationId: string,
+    loadId: string,
+  ): Promise<{
+    recipientEmail: string | null;
+    message: DriverDispatchMessage;
+    attachmentAvailable: boolean;
+    attachmentDocumentId: string | undefined;
+    attachmentFileName: string | null;
+  }> {
+    return this.prisma.withTenantTransaction(organizationId, async (tx) => {
+      const load = await tx.load.findFirst({
+        where: { id: loadId, organizationId },
+        include: {
+          assignedCarrier: true,
+          customer: true,
+          dispatchRecord: true,
+          stops: { orderBy: { sequence: 'asc' } },
+        },
+      });
+      if (!load) throw new NotFoundError('Load not found.');
+      if (!load.dispatchRecord) {
+        throw new BusinessRuleError(
+          'This Load has not been dispatched yet — a dispatch record is required before sending a driver dispatch email.',
+        );
+      }
+      if (!load.assignedCarrier) {
+        throw new BusinessRuleError('This Load has no assigned carrier on record.');
+      }
+
+      let recipientEmail: string | null = null;
+      if (load.dispatchRecord.sourceDriverId) {
+        const driver = await tx.driver.findFirst({
+          where: {
+            id: load.dispatchRecord.sourceDriverId,
+            organizationId,
+            carrierId: load.assignedCarrierId ?? undefined,
+          },
+        });
+        if (driver?.email) recipientEmail = driver.email;
+      }
+
+      const documentType = await tx.documentTypeDefinition.findFirst({
+        where: {
+          code: RATE_CONFIRMATION_DOCUMENT_TYPE_CODE,
+          OR: [{ organizationId }, { organizationId: null }],
+        },
+      });
+      const rateConfDoc = documentType
+        ? await tx.document.findFirst({
+            where: {
+              organizationId,
+              entityType: 'LOAD',
+              entityId: loadId,
+              documentTypeId: documentType.id,
+              isCurrentVersion: true,
+            },
+          })
+        : null;
+
+      const attachmentAvailable = Boolean(
+        rateConfDoc &&
+        rateConfDoc.generationStatus === 'COMPLETE' &&
+        rateConfDoc.scanStatus === 'CLEAN' &&
+        rateConfDoc.mimeType === 'application/pdf',
+      );
+
+      const pickupStop = load.stops.find((s) => s.stopType === 'PICKUP') ?? load.stops[0];
+
+      const message = buildDriverDispatchMessage({
+        loadNumber: load.loadNumber,
+        carrierLegalName: load.assignedCarrier.legalName,
+        customerLegalName: load.customer.legalName,
+        driverName: load.dispatchRecord.driverName,
+        driverPhone: load.dispatchRecord.driverPhone,
+        customerPoNumber: load.customerPoNumber,
+        customerRate: load.customerRate !== null ? load.customerRate.toString() : null,
+        stops: load.stops.map((s) => ({
+          stopType: s.stopType,
+          companyName: s.companyName,
+          addressLine1: s.addressLine1,
+          city: s.city,
+          state: s.state,
+          zip: s.zip,
+          appointmentDatetime: s.appointmentDatetime ? s.appointmentDatetime.toISOString() : null,
+          contactName: s.contactName,
+          contactPhone: s.contactPhone,
+        })),
+        pickupStopNotes: pickupStop?.notes ?? null,
+      });
+
+      return {
+        recipientEmail,
+        message,
+        attachmentAvailable,
+        attachmentDocumentId: rateConfDoc?.id,
+        attachmentFileName: rateConfDoc?.fileName ?? null,
+      };
+    });
   }
 }

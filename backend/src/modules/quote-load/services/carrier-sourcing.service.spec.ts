@@ -16,6 +16,8 @@ function buildService(opts: {
   carrier?: Record<string, unknown> | null;
   eligibility?: { eligible: boolean; reasons: string[] };
   documentType?: Record<string, unknown> | null;
+  driver?: Record<string, unknown> | null;
+  rateConfDoc?: Record<string, unknown> | null;
 }) {
   const tx = {
     load: {
@@ -28,6 +30,9 @@ function buildService(opts: {
     },
     carrier: {
       findFirst: jest.fn().mockResolvedValue('carrier' in opts ? opts.carrier : { id: CARRIER_ID }),
+    },
+    driver: {
+      findFirst: jest.fn().mockResolvedValue('driver' in opts ? opts.driver : null),
     },
     carrierSourcingAttempt: {
       create: jest.fn().mockImplementation(({ data }) => ({ id: 'attempt-1', ...data })),
@@ -46,6 +51,7 @@ function buildService(opts: {
     document: {
       create: jest.fn().mockImplementation(({ data }) => ({ id: 'doc-1', ...data })),
       update: jest.fn().mockImplementation(({ data }) => ({ id: 'doc-1', ...data })),
+      findFirst: jest.fn().mockResolvedValue('rateConfDoc' in opts ? opts.rateConfDoc : null),
     },
     chargeTypeDefinition: {
       findFirst: jest.fn().mockResolvedValue({ id: 'linehaul-type-1', code: 'LINEHAUL' }),
@@ -385,5 +391,516 @@ describe('CarrierSourcingService.generateRateConfirmation — Workflow 5 §5.7',
     await expect(
       service.generateRateConfirmation(ORG_ID, LOAD_ID, {}, USER_ID),
     ).resolves.toBeDefined();
+  });
+});
+
+describe('CarrierSourcingService — Driver Dispatch Email feature', () => {
+  const DRIVER_ID = 'driver-1';
+
+  function cleanRateConfDoc(overrides: Record<string, unknown> = {}) {
+    return {
+      id: 'rate-conf-doc-1',
+      fileName: 'Rate Confirmation - LOAD-000001.pdf',
+      generationStatus: 'COMPLETE',
+      scanStatus: 'CLEAN',
+      mimeType: 'application/pdf',
+      ...overrides,
+    };
+  }
+
+  function dispatchedLoad(overrides: Record<string, unknown> = {}) {
+    return {
+      id: LOAD_ID,
+      loadNumber: 'LOAD-000001',
+      status: 'DISPATCHED',
+      assignedCarrierId: CARRIER_ID,
+      assignedCarrier: { legalName: 'MG CARGO INC' },
+      customer: { legalName: 'Basciani Express' },
+      customerPoNumber: '120-25370',
+      customerRate: '950.00',
+      dispatchRecord: {
+        sourceDriverId: DRIVER_ID,
+        driverName: 'Julia',
+        driverPhone: '(773) 870-1332',
+      },
+      stops: [
+        {
+          stopType: 'PICKUP',
+          companyName: 'I Love Produce',
+          addressLine1: '15 Commerce Blvd',
+          city: 'West Grove',
+          state: 'PA',
+          zip: '19390',
+          appointmentDatetime: null,
+          contactName: 'Eric Frasse',
+          contactPhone: '(610) 212-1201',
+          notes: 'Reefer Ref#: MR2\nInternal Order#: 56631',
+        },
+        {
+          stopType: 'DELIVERY',
+          companyName: 'Jetro % Americold',
+          addressLine1: '501 Kentile Rd',
+          city: 'South Plainfield',
+          state: 'NJ',
+          zip: '07080',
+          appointmentDatetime: null,
+          contactName: null,
+          contactPhone: '(908) 756-6242',
+          notes: null,
+        },
+      ],
+      ...overrides,
+    };
+  }
+
+  describe('previewDriverDispatchEmail / recipient resolution', () => {
+    it('resolves the recipient email from dispatchRecord.sourceDriverId', async () => {
+      const { service, tx } = buildService({
+        load: dispatchedLoad(),
+        driver: {
+          id: DRIVER_ID,
+          email: 'julia@carrier.test',
+          organizationId: ORG_ID,
+          carrierId: CARRIER_ID,
+        },
+        rateConfDoc: cleanRateConfDoc(),
+      });
+
+      const preview = await service.previewDriverDispatchEmail(ORG_ID, LOAD_ID);
+
+      expect(preview.recipientEmail).toBe('julia@carrier.test');
+      expect(tx.driver.findFirst).toHaveBeenCalledWith({
+        where: { id: DRIVER_ID, organizationId: ORG_ID, carrierId: CARRIER_ID },
+      });
+    });
+
+    it('returns null recipientEmail when the driver has no email on file', async () => {
+      const { service } = buildService({
+        load: dispatchedLoad(),
+        driver: { id: DRIVER_ID, email: null, organizationId: ORG_ID, carrierId: CARRIER_ID },
+        rateConfDoc: cleanRateConfDoc(),
+      });
+
+      const preview = await service.previewDriverDispatchEmail(ORG_ID, LOAD_ID);
+
+      expect(preview.recipientEmail).toBeNull();
+    });
+
+    it('never falls back to the carrier email as a recipient, even though it is loaded on assignedCarrier', async () => {
+      const { service } = buildService({
+        load: dispatchedLoad({
+          assignedCarrier: {
+            legalName: 'MG CARGO INC',
+            primaryContactEmail: 'dispatch@carrier.test',
+          },
+        }),
+        driver: null,
+        rateConfDoc: cleanRateConfDoc(),
+      });
+
+      const preview = await service.previewDriverDispatchEmail(ORG_ID, LOAD_ID);
+
+      expect(preview.recipientEmail).toBeNull();
+      expect(preview.recipientEmail).not.toBe('dispatch@carrier.test');
+    });
+
+    it('rejects a driver belonging to a different carrier (cross-carrier / unauthorized driver)', async () => {
+      const { service, tx } = buildService({
+        load: dispatchedLoad(),
+        // tx.driver.findFirst is scoped by carrierId in the where-clause; a driver
+        // that doesn't match that scope is correctly modeled as "not found".
+        driver: null,
+        rateConfDoc: cleanRateConfDoc(),
+      });
+
+      const preview = await service.previewDriverDispatchEmail(ORG_ID, LOAD_ID);
+
+      expect(preview.recipientEmail).toBeNull();
+      expect(tx.driver.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({ where: expect.objectContaining({ carrierId: CARRIER_ID }) }),
+      );
+    });
+
+    it('rejects a Load with no dispatchRecord (not yet dispatched)', async () => {
+      const { service } = buildService({
+        load: dispatchedLoad({ dispatchRecord: null }),
+      });
+
+      await expect(service.previewDriverDispatchEmail(ORG_ID, LOAD_ID)).rejects.toThrow(
+        BusinessRuleError,
+      );
+    });
+
+    it('rejects a Load with no assigned carrier on record', async () => {
+      const { service } = buildService({
+        load: dispatchedLoad({ assignedCarrier: null }),
+      });
+
+      await expect(service.previewDriverDispatchEmail(ORG_ID, LOAD_ID)).rejects.toThrow(
+        BusinessRuleError,
+      );
+    });
+
+    it('throws NotFoundError for a nonexistent load', async () => {
+      const { service } = buildService({ load: null });
+
+      await expect(service.previewDriverDispatchEmail(ORG_ID, LOAD_ID)).rejects.toThrow(
+        NotFoundError,
+      );
+    });
+  });
+
+  describe('previewDriverDispatchEmail / message content', () => {
+    it('generates the exact subject "Dispatch Details — Load #<loadNumber>"', async () => {
+      const { service } = buildService({
+        load: dispatchedLoad({ loadNumber: 'LOAD-000042' }),
+        driver: {
+          id: DRIVER_ID,
+          email: 'julia@carrier.test',
+          organizationId: ORG_ID,
+          carrierId: CARRIER_ID,
+        },
+        rateConfDoc: cleanRateConfDoc(),
+      });
+
+      const preview = await service.previewDriverDispatchEmail(ORG_ID, LOAD_ID);
+
+      expect(preview.subject).toBe('Dispatch Details — Load #LOAD-000042');
+    });
+
+    it('produces a clean body with no undefined/null placeholders when optional fields are missing', async () => {
+      const { service } = buildService({
+        load: dispatchedLoad({ customerPoNumber: null, customerRate: null }),
+        driver: {
+          id: DRIVER_ID,
+          email: 'julia@carrier.test',
+          organizationId: ORG_ID,
+          carrierId: CARRIER_ID,
+        },
+        rateConfDoc: cleanRateConfDoc(),
+      });
+
+      const preview = await service.previewDriverDispatchEmail(ORG_ID, LOAD_ID);
+
+      expect(preview.body).not.toMatch(/undefined/i);
+      expect(preview.body).not.toMatch(/\bnull\b/i);
+      expect(preview.body).not.toContain('PO:');
+    });
+
+    it('maps approved pickup-stop Notes fields (Reefer Ref#, Internal Order#) into the message', async () => {
+      const { service } = buildService({
+        load: dispatchedLoad(),
+        driver: {
+          id: DRIVER_ID,
+          email: 'julia@carrier.test',
+          organizationId: ORG_ID,
+          carrierId: CARRIER_ID,
+        },
+        rateConfDoc: cleanRateConfDoc(),
+      });
+
+      const preview = await service.previewDriverDispatchEmail(ORG_ID, LOAD_ID);
+
+      expect(preview.body).toContain('🔑 Reefer Ref#: MR2');
+      expect(preview.body).toContain('📋 Order #: 56631');
+    });
+
+    it('never injects an unrelated/unapproved dispatcher note left in the same Notes field', async () => {
+      const { service } = buildService({
+        load: dispatchedLoad({
+          stops: [
+            {
+              stopType: 'PICKUP',
+              companyName: 'I Love Produce',
+              addressLine1: '15 Commerce Blvd',
+              city: 'West Grove',
+              state: 'PA',
+              zip: '19390',
+              appointmentDatetime: null,
+              contactName: 'Eric Frasse',
+              contactPhone: '(610) 212-1201',
+              notes: 'Reefer Ref#: MR2\nCall the dock before arrival.',
+            },
+          ],
+        }),
+        driver: {
+          id: DRIVER_ID,
+          email: 'julia@carrier.test',
+          organizationId: ORG_ID,
+          carrierId: CARRIER_ID,
+        },
+        rateConfDoc: cleanRateConfDoc(),
+      });
+
+      const preview = await service.previewDriverDispatchEmail(ORG_ID, LOAD_ID);
+
+      expect(preview.body).not.toContain('Call the dock before arrival.');
+    });
+  });
+
+  describe('Rate Confirmation attachment resolution', () => {
+    it('resolves the canonical RATE_CONFIRMATION document, org- and Load-scoped, current version only', async () => {
+      const { service, tx } = buildService({
+        load: dispatchedLoad(),
+        driver: {
+          id: DRIVER_ID,
+          email: 'julia@carrier.test',
+          organizationId: ORG_ID,
+          carrierId: CARRIER_ID,
+        },
+        rateConfDoc: cleanRateConfDoc(),
+      });
+
+      const preview = await service.previewDriverDispatchEmail(ORG_ID, LOAD_ID);
+
+      expect(preview.attachmentAvailable).toBe(true);
+      expect(preview.attachmentFileName).toBe('Rate Confirmation - LOAD-000001.pdf');
+      expect(tx.document.findFirst).toHaveBeenCalledWith({
+        where: {
+          organizationId: ORG_ID,
+          entityType: 'LOAD',
+          entityId: LOAD_ID,
+          documentTypeId: 'doctype-1',
+          isCurrentVersion: true,
+        },
+      });
+    });
+
+    it('is unavailable when generationStatus is not COMPLETE', async () => {
+      const { service } = buildService({
+        load: dispatchedLoad(),
+        driver: {
+          id: DRIVER_ID,
+          email: 'julia@carrier.test',
+          organizationId: ORG_ID,
+          carrierId: CARRIER_ID,
+        },
+        rateConfDoc: cleanRateConfDoc({ generationStatus: 'PENDING' }),
+      });
+
+      const preview = await service.previewDriverDispatchEmail(ORG_ID, LOAD_ID);
+
+      expect(preview.attachmentAvailable).toBe(false);
+    });
+
+    it('is unavailable when the document is not a PDF', async () => {
+      const { service } = buildService({
+        load: dispatchedLoad(),
+        driver: {
+          id: DRIVER_ID,
+          email: 'julia@carrier.test',
+          organizationId: ORG_ID,
+          carrierId: CARRIER_ID,
+        },
+        rateConfDoc: cleanRateConfDoc({ mimeType: 'image/png' }),
+      });
+
+      const preview = await service.previewDriverDispatchEmail(ORG_ID, LOAD_ID);
+
+      expect(preview.attachmentAvailable).toBe(false);
+    });
+
+    it('is unavailable when no Rate Confirmation document exists yet', async () => {
+      const { service } = buildService({
+        load: dispatchedLoad(),
+        driver: {
+          id: DRIVER_ID,
+          email: 'julia@carrier.test',
+          organizationId: ORG_ID,
+          carrierId: CARRIER_ID,
+        },
+        rateConfDoc: null,
+      });
+
+      const preview = await service.previewDriverDispatchEmail(ORG_ID, LOAD_ID);
+
+      expect(preview.attachmentAvailable).toBe(false);
+      expect(preview.attachmentFileName).toBeNull();
+    });
+  });
+
+  describe('sendDriverDispatchEmail', () => {
+    function buildDispatchService(overrides: Parameters<typeof buildService>[0] = {}) {
+      return buildService({
+        load: dispatchedLoad(),
+        driver: {
+          id: DRIVER_ID,
+          email: 'julia@carrier.test',
+          organizationId: ORG_ID,
+          carrierId: CARRIER_ID,
+        },
+        rateConfDoc: cleanRateConfDoc(),
+        ...overrides,
+      });
+    }
+
+    it('enqueues the email job with the driver-on-file recipient, exact subject/body, and the attachment document reference', async () => {
+      const { service, emailQueue, audit } = buildDispatchService();
+
+      const result = await service.sendDriverDispatchEmail(ORG_ID, LOAD_ID, {}, USER_ID);
+
+      expect(result.recipientEmail).toBe('julia@carrier.test');
+      expect(emailQueue.add).toHaveBeenCalledWith(
+        'send',
+        expect.objectContaining({
+          to: 'julia@carrier.test',
+          subject: 'Dispatch Details — Load #LOAD-000001',
+          organizationId: ORG_ID,
+          entityType: 'Load',
+          entityId: LOAD_ID,
+          attachmentDocumentId: 'rate-conf-doc-1',
+        }),
+        expect.anything(),
+      );
+      expect(audit.record).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          action: 'Driver Dispatch Email Sent',
+          newValue: expect.objectContaining({ recipientSource: 'driver-on-file' }),
+        }),
+      );
+    });
+
+    it('accepts a manual recipient email as a one-time override when no driver email is on file, and does not persist it', async () => {
+      const { service, tx, emailQueue, audit } = buildDispatchService({
+        driver: { id: DRIVER_ID, email: null, organizationId: ORG_ID, carrierId: CARRIER_ID },
+      });
+
+      const result = await service.sendDriverDispatchEmail(
+        ORG_ID,
+        LOAD_ID,
+        { manualRecipientEmail: 'dispatcher-override@example.com' },
+        USER_ID,
+      );
+
+      expect(result.recipientEmail).toBe('dispatcher-override@example.com');
+      expect(emailQueue.add).toHaveBeenCalledWith(
+        'send',
+        expect.objectContaining({ to: 'dispatcher-override@example.com' }),
+        expect.anything(),
+      );
+      expect(audit.record).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          newValue: expect.objectContaining({ recipientSource: 'manual-override' }),
+        }),
+      );
+      // Never written back to the Driver record.
+      expect(tx.driver.findFirst).not.toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.anything() }),
+      );
+    });
+
+    it('rejects when neither a driver email nor a manual override is available', async () => {
+      const { service, emailQueue } = buildDispatchService({
+        driver: { id: DRIVER_ID, email: null, organizationId: ORG_ID, carrierId: CARRIER_ID },
+      });
+
+      await expect(service.sendDriverDispatchEmail(ORG_ID, LOAD_ID, {}, USER_ID)).rejects.toThrow(
+        BusinessRuleError,
+      );
+      expect(emailQueue.add).not.toHaveBeenCalled();
+    });
+
+    it('never falls back to the carrier email, even with no driver email and no manual override', async () => {
+      const { service, emailQueue } = buildDispatchService({
+        load: dispatchedLoad({
+          assignedCarrier: {
+            legalName: 'MG CARGO INC',
+            primaryContactEmail: 'dispatch@carrier.test',
+          },
+        }),
+        driver: { id: DRIVER_ID, email: null, organizationId: ORG_ID, carrierId: CARRIER_ID },
+      });
+
+      await expect(service.sendDriverDispatchEmail(ORG_ID, LOAD_ID, {}, USER_ID)).rejects.toThrow(
+        BusinessRuleError,
+      );
+      expect(emailQueue.add).not.toHaveBeenCalled();
+    });
+
+    it('rejects a cross-carrier/unauthorized driver — no email resolved, no manual override supplied', async () => {
+      const { service, emailQueue } = buildDispatchService({ driver: null });
+
+      await expect(service.sendDriverDispatchEmail(ORG_ID, LOAD_ID, {}, USER_ID)).rejects.toThrow(
+        BusinessRuleError,
+      );
+      expect(emailQueue.add).not.toHaveBeenCalled();
+    });
+
+    it('rejects a non-dispatched Load (no dispatchRecord)', async () => {
+      const { service, emailQueue } = buildDispatchService({
+        load: dispatchedLoad({ dispatchRecord: null }),
+      });
+
+      await expect(service.sendDriverDispatchEmail(ORG_ID, LOAD_ID, {}, USER_ID)).rejects.toThrow(
+        BusinessRuleError,
+      );
+      expect(emailQueue.add).not.toHaveBeenCalled();
+    });
+
+    it('prevents sending when the Rate Confirmation attachment is unavailable (missing document)', async () => {
+      const { service, emailQueue } = buildDispatchService({ rateConfDoc: null });
+
+      await expect(service.sendDriverDispatchEmail(ORG_ID, LOAD_ID, {}, USER_ID)).rejects.toThrow(
+        BusinessRuleError,
+      );
+      expect(emailQueue.add).not.toHaveBeenCalled();
+    });
+
+    it('prevents sending when the Rate Confirmation document is not yet COMPLETE', async () => {
+      const { service, emailQueue } = buildDispatchService({
+        rateConfDoc: cleanRateConfDoc({ generationStatus: 'PENDING' }),
+      });
+
+      await expect(service.sendDriverDispatchEmail(ORG_ID, LOAD_ID, {}, USER_ID)).rejects.toThrow(
+        BusinessRuleError,
+      );
+      expect(emailQueue.add).not.toHaveBeenCalled();
+    });
+
+    it('prevents sending when the resolved document is not a PDF', async () => {
+      const { service, emailQueue } = buildDispatchService({
+        rateConfDoc: cleanRateConfDoc({ mimeType: 'image/png' }),
+      });
+
+      await expect(service.sendDriverDispatchEmail(ORG_ID, LOAD_ID, {}, USER_ID)).rejects.toThrow(
+        BusinessRuleError,
+      );
+      expect(emailQueue.add).not.toHaveBeenCalled();
+    });
+
+    it('never converts the dispatch text into the attachment — the attachment is always the resolved documentId, body is text only', async () => {
+      const { service, emailQueue } = buildDispatchService();
+
+      await service.sendDriverDispatchEmail(ORG_ID, LOAD_ID, {}, USER_ID);
+
+      const jobData = emailQueue.add.mock.calls[0][1];
+      expect(typeof jobData.body).toBe('string');
+      expect(jobData.attachmentDocumentId).toBe('rate-conf-doc-1');
+      expect(jobData).not.toHaveProperty('attachments');
+    });
+
+    it('does not affect the existing Rate Confirmation generation/email route — generateRateConfirmation behavior unchanged', async () => {
+      const { service, emailQueue, tx } = buildDispatchService({
+        load: {
+          id: LOAD_ID,
+          loadNumber: 'LOAD-000001',
+          status: 'CARRIER_ASSIGNED',
+          assignedCarrierId: CARRIER_ID,
+          carrierRate: { toString: () => '2000.00' },
+          assignedCarrier: { primaryContactEmail: 'dispatch@carrier.test' },
+        },
+      });
+
+      await service.generateRateConfirmation(ORG_ID, LOAD_ID, { sendEmail: true }, USER_ID);
+
+      expect(emailQueue.add).toHaveBeenCalledWith(
+        'send',
+        expect.objectContaining({ to: 'dispatch@carrier.test' }),
+        expect.anything(),
+      );
+      expect(tx.document.create).toHaveBeenCalled();
+    });
   });
 });

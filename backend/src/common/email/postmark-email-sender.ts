@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AppConfig } from '../../config/configuration';
-import { IEmailSender } from './email-sender.interface';
+import { EmailAttachment, IEmailSender } from './email-sender.interface';
 
 const POSTMARK_SEND_URL = 'https://api.postmarkapp.com/email';
 
@@ -22,7 +22,12 @@ interface PostmarkResponse {
 export class PostmarkEmailSender implements IEmailSender {
   constructor(private readonly config: ConfigService<AppConfig>) {}
 
-  async send(message: { to: string; subject: string; body: string }): Promise<void> {
+  async send(message: {
+    to: string;
+    subject: string;
+    body: string;
+    attachments?: EmailAttachment[];
+  }): Promise<void> {
     const { apiKey, fromAddress } = this.config.get('postmark', { infer: true })!;
 
     const response = await fetch(POSTMARK_SEND_URL, {
@@ -37,6 +42,19 @@ export class PostmarkEmailSender implements IEmailSender {
         To: message.to,
         Subject: message.subject,
         TextBody: message.body,
+        // Driver Dispatch Email feature — omitted entirely (not just
+        // empty) when there's nothing to attach, so every existing
+        // attachment-less send's request body is byte-for-byte
+        // unchanged from before this feature existed.
+        ...(message.attachments && message.attachments.length > 0
+          ? {
+              Attachments: message.attachments.map((a) => ({
+                Name: a.filename,
+                Content: a.content.toString('base64'),
+                ContentType: a.contentType,
+              })),
+            }
+          : {}),
       }),
     });
 

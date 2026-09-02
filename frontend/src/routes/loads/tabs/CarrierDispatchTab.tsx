@@ -18,6 +18,7 @@ import { formatDateShort } from '../loadDerived';
 import { DispatchModal } from '../modals/DispatchModal';
 import { GenerateRateConfirmationModal } from '../modals/GenerateRateConfirmationModal';
 import { LogSourcingAttemptModal } from '../modals/LogSourcingAttemptModal';
+import { SendDriverDispatchEmailModal } from '../modals/SendDriverDispatchEmailModal';
 import '../../shared/DetailPage.css';
 
 /** UI_UX_DESIGN.md §5.4.4 Carrier & Dispatch tab. */
@@ -31,6 +32,7 @@ export function CarrierDispatchTab({ load, onChanged }: { load: Load; onChanged:
   const [rejectSubmitting, setRejectSubmitting] = useState(false);
   const [generatingRateConfirmation, setGeneratingRateConfirmation] = useState(false);
   const [editingDispatch, setEditingDispatch] = useState(false);
+  const [sendingDriverDispatchEmail, setSendingDriverDispatchEmail] = useState(false);
 
   const { data: carriers = [] } = useQuery({
     queryKey: ['carriers', {}],
@@ -217,6 +219,15 @@ export function CarrierDispatchTab({ load, onChanged }: { load: Load; onChanged:
         ) : (
           <span className="detail-field-value">Not yet dispatched.</span>
         )}
+        {canAct && load.dispatchRecord ? (
+          <Button
+            size="sm"
+            style={{ marginTop: 'var(--space-3)' }}
+            onClick={() => setSendingDriverDispatchEmail(true)}
+          >
+            Send Driver Dispatch Email
+          </Button>
+        ) : null}
       </div>
 
       <LogSourcingAttemptModal
@@ -259,6 +270,15 @@ export function CarrierDispatchTab({ load, onChanged }: { load: Load; onChanged:
         onClose={() => setEditingDispatch(false)}
         onDispatched={() => {
           setEditingDispatch(false);
+          onChanged();
+        }}
+      />
+      <SendDriverDispatchEmailModal
+        open={sendingDriverDispatchEmail}
+        loadId={load.id}
+        onClose={() => setSendingDriverDispatchEmail(false)}
+        onSent={() => {
+          setSendingDriverDispatchEmail(false);
           onChanged();
         }}
       />

@@ -25,16 +25,28 @@ describe('EmailSendWorker', () => {
     entityId: 'membership-1',
   };
 
-  function buildWorker(sendImpl: jest.Mock) {
+  function buildWorker(
+    sendImpl: jest.Mock,
+    options: { document?: Record<string, unknown> | null; getObjectImpl?: jest.Mock } = {},
+  ) {
     capturedProcessor = undefined;
     const redis = { duplicate: jest.fn().mockReturnValue({ quit: jest.fn() }) };
     const emailSender = { send: sendImpl };
     const audit = { record: jest.fn().mockResolvedValue(undefined) };
-    const tx = {};
+    const tx = {
+      document: {
+        findFirst: jest
+          .fn()
+          .mockResolvedValue(options.document === undefined ? null : options.document),
+      },
+    };
     const prisma = {
       withTenantTransaction: jest
         .fn()
         .mockImplementation((_orgId: string, fn: (tx: unknown) => unknown) => fn(tx)),
+    };
+    const storage = {
+      getObject: options.getObjectImpl ?? jest.fn().mockResolvedValue(Buffer.from('pdf-bytes')),
     };
 
     const worker = new EmailSendWorker(
@@ -42,11 +54,12 @@ describe('EmailSendWorker', () => {
       emailSender as never,
       prisma as never,
       audit as never,
+      storage as never,
     );
     worker.onModuleInit();
     if (!capturedProcessor) throw new Error('Worker processor was not captured');
     const processor: Processor = capturedProcessor;
-    return { processor, emailSender, audit, prisma };
+    return { processor, emailSender, audit, prisma, storage, tx };
   }
 
   it('sends via the injected IEmailSender and writes no audit entry on success', async () => {
@@ -104,5 +117,80 @@ describe('EmailSendWorker', () => {
         }),
       }),
     );
+  });
+
+  describe('attachment resolution', () => {
+    const DOCUMENT = {
+      id: 'doc-1',
+      organizationId: 'org-1',
+      fileName: 'Rate Confirmation - LOAD-17278.pdf',
+      fileStorageKey: 'org_org-1/documents/doc-1.pdf',
+      mimeType: 'application/pdf',
+    };
+
+    it('existing attachment-less jobs still send with no attachments field, unchanged', async () => {
+      const sendImpl = jest.fn().mockResolvedValue(undefined);
+      const { processor, emailSender } = buildWorker(sendImpl);
+
+      await processor({ data: JOB_DATA, attemptsMade: 0, opts: { attempts: 3 } });
+
+      const callArgs = emailSender.send.mock.calls[0][0];
+      expect(callArgs).not.toHaveProperty('attachments');
+    });
+
+    it('resolves the document and passes it as an attachment when attachmentDocumentId is set', async () => {
+      const sendImpl = jest.fn().mockResolvedValue(undefined);
+      const getObjectImpl = jest.fn().mockResolvedValue(Buffer.from('pdf-bytes'));
+      const { processor, emailSender, tx } = buildWorker(sendImpl, {
+        document: DOCUMENT,
+        getObjectImpl,
+      });
+
+      const data = { ...JOB_DATA, attachmentDocumentId: 'doc-1' };
+      await processor({ data, attemptsMade: 0, opts: { attempts: 3 } });
+
+      expect(tx.document.findFirst).toHaveBeenCalledWith({
+        where: { id: 'doc-1', organizationId: 'org-1' },
+      });
+      expect(getObjectImpl).toHaveBeenCalledWith(DOCUMENT.fileStorageKey);
+      expect(emailSender.send).toHaveBeenCalledWith({
+        to: data.to,
+        subject: data.subject,
+        body: data.body,
+        attachments: [
+          {
+            filename: DOCUMENT.fileName,
+            content: Buffer.from('pdf-bytes'),
+            contentType: DOCUMENT.mimeType,
+          },
+        ],
+      });
+    });
+
+    it('throws (and does not send) when the referenced document is not found', async () => {
+      const sendImpl = jest.fn().mockResolvedValue(undefined);
+      const { processor, emailSender } = buildWorker(sendImpl, { document: null });
+
+      const data = { ...JOB_DATA, attachmentDocumentId: 'missing-doc' };
+      await expect(processor({ data, attemptsMade: 0, opts: { attempts: 3 } })).rejects.toThrow(
+        /missing-doc/,
+      );
+      expect(emailSender.send).not.toHaveBeenCalled();
+    });
+
+    it('throws (and does not send) when the storage object cannot be retrieved', async () => {
+      const sendImpl = jest.fn().mockResolvedValue(undefined);
+      const getObjectImpl = jest.fn().mockRejectedValue(new Error('storage unavailable'));
+      const { processor, emailSender } = buildWorker(sendImpl, {
+        document: DOCUMENT,
+        getObjectImpl,
+      });
+
+      const data = { ...JOB_DATA, attachmentDocumentId: 'doc-1' };
+      await expect(processor({ data, attemptsMade: 0, opts: { attempts: 3 } })).rejects.toThrow(
+        'storage unavailable',
+      );
+      expect(emailSender.send).not.toHaveBeenCalled();
+    });
   });
 });

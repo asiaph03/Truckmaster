@@ -314,6 +314,24 @@ export interface GenerateRateConfirmationRequest {
   sendEmail?: boolean;
 }
 
+/**
+ * Driver Dispatch Email feature — read-only preview, backed by the exact
+ * same deterministic formatter/recipient-resolution the send action uses
+ * server-side, so this is always byte-identical to what would be sent.
+ */
+export interface DriverDispatchEmailPreview {
+  recipientEmail: string | null;
+  subject: string;
+  body: string;
+  attachmentAvailable: boolean;
+  attachmentFileName: string | null;
+}
+
+export interface SendDriverDispatchEmailRequest {
+  /** One-time override only — used (and required) when no on-file driver email exists; never persisted. */
+  manualRecipientEmail?: string;
+}
+
 export interface DispatchLoadRequest {
   driverName: string;
   driverPhone: string;
@@ -510,6 +528,15 @@ export const loadsApi = {
 
   generateRateConfirmation: (id: string, body?: GenerateRateConfirmationRequest) =>
     apiRequest<Load>(`/loads/${id}/generate-rate-confirmation`, { method: 'POST', body }),
+
+  previewDriverDispatchEmail: (id: string) =>
+    apiRequest<DriverDispatchEmailPreview>(`/loads/${id}/driver-dispatch-email-preview`),
+
+  sendDriverDispatchEmail: (id: string, body?: SendDriverDispatchEmailRequest) =>
+    apiRequest<{ recipientEmail: string }>(`/loads/${id}/send-driver-dispatch-email`, {
+      method: 'POST',
+      body,
+    }),
 
   dispatch: (id: string, body: DispatchLoadRequest) =>
     apiRequest<Load>(`/loads/${id}/dispatch`, { method: 'POST', body }),

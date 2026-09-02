@@ -17,6 +17,15 @@ export interface EmailJobData {
   organizationId: string;
   entityType: string;
   entityId: string;
+  /**
+   * Driver Dispatch Email feature — a safe reference only (never the PDF
+   * bytes themselves) so large binary data never goes into Redis.
+   * EmailSendWorker resolves this Document (organization-scoped) and
+   * reads its bytes from StorageService at send time. Optional — absent
+   * for every existing email (invitations, carrier Rate Confirmation,
+   * etc.), which continue exactly as before.
+   */
+  attachmentDocumentId?: string;
 }
 
 /** Frontend Phase 16 — same approved retry policy as the other two background integrations. */
