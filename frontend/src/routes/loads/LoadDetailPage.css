@@ -28,6 +28,14 @@
   border-bottom: none;
 }
 
+.load-stop-mini-row-clickable {
+  cursor: pointer;
+}
+
+.load-stop-mini-row-clickable:hover {
+  background: var(--neutral-50);
+}
+
 .load-stop-mini-company {
   color: var(--neutral-800);
   font-size: var(--text-small-size);

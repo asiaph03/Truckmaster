@@ -1,6 +1,14 @@
 import { useState } from 'react';
 import { useForm } from 'react-hook-form';
-import { loadsApi, type Load, type LogCheckCallRequest, type RiskStatus } from '../../../api';
+import { useQuery } from '@tanstack/react-query';
+import {
+  loadsApi,
+  membershipsApi,
+  type CheckCall,
+  type Load,
+  type LogCheckCallRequest,
+  type RiskStatus,
+} from '../../../api';
 import { ApiError } from '../../../api/errors';
 import { getStatusBadgeColor } from '../../../components/ui/statusBadgeMap';
 import {
@@ -8,6 +16,7 @@ import {
   Button,
   DataTable,
   DatePicker,
+  Drawer,
   Modal,
   ModalFooter,
   Select,
@@ -58,11 +67,27 @@ export function StopsTrackingTab({ load, onChanged }: { load: Load; onChanged: (
   const [pendingRisk, setPendingRisk] = useState<RiskStatus | null>(null);
   const [riskReason, setRiskReason] = useState('');
   const [savingRisk, setSavingRisk] = useState(false);
+  const [selectedCheckCall, setSelectedCheckCall] = useState<CheckCall | null>(null);
+
+  const { data: memberships = [] } = useQuery({
+    queryKey: ['memberships'],
+    queryFn: () => membershipsApi.list(),
+  });
+  const userName = (id: string) => memberships.find((m) => m.userId === id)?.user.name ?? id;
 
   const sortedStops = [...load.stops].sort((a, b) => a.sequence - b.sequence);
   const sortedCheckCalls = [...load.checkCalls].sort(
     (a, b) => new Date(b.occurredAt).getTime() - new Date(a.occurredAt).getTime(),
   );
+
+  // Every field on this record is already returned by `GET /loads/:id`
+  // (LoadService.findById includes `checkCalls: true`, the full model) —
+  // the drawer reads directly from the Load already loaded by this page,
+  // no separate detail request.
+  function checkCallLocation(cc: CheckCall): string {
+    const cityState = [cc.locationCity, cc.locationState].filter(Boolean).join(', ');
+    return [cityState, cc.locationZip].filter(Boolean).join(' ') || '—';
+  }
 
   async function recordStop(sequence: number, kind: 'arrival' | 'departure') {
     setRecordingStopSeq(sequence);
@@ -241,7 +266,11 @@ export function StopsTrackingTab({ load, onChanged }: { load: Load; onChanged: (
           <span className="detail-field-value">No check calls logged yet.</span>
         ) : (
           sortedCheckCalls.map((cc) => (
-            <div key={cc.id} className="load-stop-mini-row">
+            <div
+              key={cc.id}
+              className="load-stop-mini-row load-stop-mini-row-clickable"
+              onClick={() => setSelectedCheckCall(cc)}
+            >
               <span className="load-stop-mini-time">{formatBusinessDateTime(cc.occurredAt)}</span>
               <span>{cc.contactMethod}</span>
               <span className="load-stop-mini-location">{cc.personContacted}</span>
@@ -340,6 +369,84 @@ export function StopsTrackingTab({ load, onChanged }: { load: Load; onChanged: (
           <Textarea label="Notes" {...checkCallForm.register('notes')} rows={2} />
         </form>
       </Modal>
+
+      <Drawer
+        open={selectedCheckCall !== null}
+        title="Check Call Details"
+        onClose={() => setSelectedCheckCall(null)}
+      >
+        {selectedCheckCall ? (
+          <div>
+            <div className="detail-card-grid">
+              <div>
+                <div className="detail-field-label">Date & Time</div>
+                <div className="detail-field-value">
+                  {formatBusinessDateTime(selectedCheckCall.occurredAt, {
+                    year: 'numeric',
+                    month: 'short',
+                    day: 'numeric',
+                    hour: 'numeric',
+                    minute: '2-digit',
+                  })}
+                </div>
+              </div>
+              <div>
+                <div className="detail-field-label">Driver</div>
+                <div className="detail-field-value">{selectedCheckCall.personContacted || '—'}</div>
+              </div>
+              <div>
+                <div className="detail-field-label">Location</div>
+                <div className="detail-field-value">{checkCallLocation(selectedCheckCall)}</div>
+              </div>
+              <div>
+                <div className="detail-field-label">Status</div>
+                <div className="detail-field-value">
+                  <Badge
+                    label={selectedCheckCall.onTimeStatus.replace('_', ' ')}
+                    color={selectedCheckCall.onTimeStatus === 'LATE' ? 'warning' : 'neutral'}
+                  />
+                </div>
+              </div>
+            </div>
+
+            <hr
+              style={{
+                border: 'none',
+                borderTop: '1px solid var(--neutral-200)',
+                margin: 'var(--space-4) 0',
+              }}
+            />
+
+            <div className="detail-card-grid">
+              <div>
+                <div className="detail-field-label">Load</div>
+                <div className="detail-field-value">{load.loadNumber}</div>
+              </div>
+              <div>
+                <div className="detail-field-label">Contact Method</div>
+                <div className="detail-field-value">{selectedCheckCall.contactMethod || '—'}</div>
+              </div>
+              <div>
+                <div className="detail-field-label">ETA</div>
+                <div className="detail-field-value">
+                  {formatBusinessDateTime(selectedCheckCall.eta)}
+                </div>
+              </div>
+              <div>
+                <div className="detail-field-label">Logged By</div>
+                <div className="detail-field-value">
+                  {userName(selectedCheckCall.loggedByUserId)}
+                </div>
+              </div>
+            </div>
+
+            <div style={{ marginTop: 'var(--space-3)' }}>
+              <div className="detail-field-label">Notes</div>
+              <div className="detail-field-value">{selectedCheckCall.notes || '—'}</div>
+            </div>
+          </div>
+        ) : null}
+      </Drawer>
 
       <InitiateReturnModal
         open={initiatingReturn}
