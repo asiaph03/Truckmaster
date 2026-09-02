@@ -19,6 +19,7 @@ function load(overrides: Record<string, unknown> = {}) {
     riskStatus: 'NORMAL',
     assignedCarrierId: undefined,
     assignedDispatcherId: undefined,
+    assignedDriverName: null,
     stops: [
       { id: 's1', sequence: 1, stopType: 'PICKUP', city: 'Dallas', state: 'TX', status: 'PENDING' },
       {
@@ -275,5 +276,293 @@ describe('DispatchBoardPage — Frontend Phase 18 (bulk Export + bulk Assign Car
     expect(params.has('pickupFrom')).toBe(true);
     expect(params.has('pickupTo')).toBe(true);
     clickSpy.mockRestore();
+  });
+});
+
+describe('DispatchBoardPage — Dispatch Board Driver visibility', () => {
+  beforeEach(() => {
+    useSessionStore.setState({ roles: ['ADMIN'] });
+  });
+
+  const JOHN = load({
+    id: 'load-john',
+    loadNumber: 'LOAD-000010',
+    assignedDriverName: 'John Smith',
+  });
+  const JANE = load({
+    id: 'load-jane',
+    loadNumber: 'LOAD-000020',
+    assignedDriverName: 'Jane Doe',
+  });
+  const UNASSIGNED = load({
+    id: 'load-unassigned',
+    loadNumber: 'LOAD-000030',
+    assignedDriverName: null,
+  });
+
+  describe('search', () => {
+    it('still matches by Load #', async () => {
+      mockBaseHandlers([JOHN, JANE]);
+      renderPage();
+      await waitFor(() => expect(screen.getByText('LOAD-000010')).toBeInTheDocument());
+
+      fireEvent.change(screen.getByPlaceholderText('Search Load #, Customer, or Driver…'), {
+        target: { value: 'LOAD-000010' },
+      });
+
+      expect(screen.getByText('LOAD-000010')).toBeInTheDocument();
+      expect(screen.queryByText('LOAD-000020')).not.toBeInTheDocument();
+    });
+
+    it('still matches by Customer', async () => {
+      mockBaseHandlers([JOHN, JANE]);
+      renderPage();
+      await waitFor(() => expect(screen.getByText('LOAD-000010')).toBeInTheDocument());
+
+      fireEvent.change(screen.getByPlaceholderText('Search Load #, Customer, or Driver…'), {
+        target: { value: 'acme' },
+      });
+
+      // Both fixtures share the same mocked customer, so both still match.
+      expect(screen.getByText('LOAD-000010')).toBeInTheDocument();
+      expect(screen.getByText('LOAD-000020')).toBeInTheDocument();
+    });
+
+    it('matches driver full name', async () => {
+      mockBaseHandlers([JOHN, JANE]);
+      renderPage();
+      await waitFor(() => expect(screen.getByText('LOAD-000010')).toBeInTheDocument());
+
+      fireEvent.change(screen.getByPlaceholderText('Search Load #, Customer, or Driver…'), {
+        target: { value: 'John Smith' },
+      });
+
+      expect(screen.getByText('LOAD-000010')).toBeInTheDocument();
+      expect(screen.queryByText('LOAD-000020')).not.toBeInTheDocument();
+    });
+
+    it('matches driver first name only', async () => {
+      mockBaseHandlers([JOHN, JANE]);
+      renderPage();
+      await waitFor(() => expect(screen.getByText('LOAD-000010')).toBeInTheDocument());
+
+      fireEvent.change(screen.getByPlaceholderText('Search Load #, Customer, or Driver…'), {
+        target: { value: 'John' },
+      });
+
+      expect(screen.getByText('LOAD-000010')).toBeInTheDocument();
+      expect(screen.queryByText('LOAD-000020')).not.toBeInTheDocument();
+    });
+
+    it('matches driver last name only', async () => {
+      mockBaseHandlers([JOHN, JANE]);
+      renderPage();
+      await waitFor(() => expect(screen.getByText('LOAD-000010')).toBeInTheDocument());
+
+      fireEvent.change(screen.getByPlaceholderText('Search Load #, Customer, or Driver…'), {
+        target: { value: 'Smith' },
+      });
+
+      expect(screen.getByText('LOAD-000010')).toBeInTheDocument();
+      expect(screen.queryByText('LOAD-000020')).not.toBeInTheDocument();
+    });
+
+    it('matches a partial, case-insensitive driver name substring', async () => {
+      mockBaseHandlers([JOHN, JANE]);
+      renderPage();
+      await waitFor(() => expect(screen.getByText('LOAD-000010')).toBeInTheDocument());
+
+      fireEvent.change(screen.getByPlaceholderText('Search Load #, Customer, or Driver…'), {
+        target: { value: 'HN SM' }, // spans "Jo[hn s]mith", upper case vs "John Smith"
+      });
+
+      expect(screen.getByText('LOAD-000010')).toBeInTheDocument();
+      expect(screen.queryByText('LOAD-000020')).not.toBeInTheDocument();
+    });
+
+    it('a Load with no assigned driver never breaks search and is simply excluded from a driver-name query', async () => {
+      mockBaseHandlers([JOHN, UNASSIGNED]);
+      renderPage();
+      await waitFor(() => expect(screen.getByText('LOAD-000010')).toBeInTheDocument());
+
+      fireEvent.change(screen.getByPlaceholderText('Search Load #, Customer, or Driver…'), {
+        target: { value: 'John' },
+      });
+      expect(screen.getByText('LOAD-000010')).toBeInTheDocument();
+      expect(screen.queryByText('LOAD-000030')).not.toBeInTheDocument();
+
+      // Clearing the search still renders the unassigned load normally.
+      fireEvent.change(screen.getByPlaceholderText('Search Load #, Customer, or Driver…'), {
+        target: { value: '' },
+      });
+      expect(screen.getByText('LOAD-000030')).toBeInTheDocument();
+    });
+  });
+
+  describe('table view', () => {
+    it('shows the assigned driver name in the Driver column', async () => {
+      mockBaseHandlers([JOHN]);
+      renderPage();
+      await waitFor(() => expect(screen.getByText('LOAD-000010')).toBeInTheDocument());
+
+      expect(screen.getByText('John Smith')).toBeInTheDocument();
+    });
+
+    it('shows "Unassigned" in the Driver column when no driver is assigned (distinct from the Dispatcher column, which is also unassigned)', async () => {
+      // A membership is mocked and assigned as dispatcher so the
+      // Dispatcher column shows a real name here, not its own
+      // "Unassigned" fallback — isolating the assertion to the Driver
+      // column specifically rather than an ambiguous page-wide match.
+      const MEMBERSHIP = { userId: 'user-1', user: { name: 'Jane Dispatcher' } };
+      server.use(
+        http.get('/api/v1/loads', () =>
+          HttpResponse.json([{ ...UNASSIGNED, assignedDispatcherId: 'user-1' }]),
+        ),
+        http.get('/api/v1/customers', () => HttpResponse.json([CUSTOMER])),
+        http.get('/api/v1/carriers', () => HttpResponse.json([CARRIER])),
+        http.get('/api/v1/memberships', () => HttpResponse.json([MEMBERSHIP])),
+      );
+      renderPage();
+      await waitFor(() => expect(screen.getByText('LOAD-000030')).toBeInTheDocument());
+
+      const row = screen.getByText('LOAD-000030').closest('tr') as HTMLElement;
+      const cellTexts = Array.from(row.querySelectorAll('td')).map((td) => td.textContent);
+      expect(cellTexts).toContain('Unassigned'); // Driver
+      expect(cellTexts).toContain('Jane Dispatcher'); // Dispatcher, distinctly resolved
+    });
+  });
+
+  describe('kanban view', () => {
+    it('shows the assigned driver name on the card', async () => {
+      mockBaseHandlers([JOHN]);
+      renderPage();
+      await waitFor(() => expect(screen.getByText('LOAD-000010')).toBeInTheDocument());
+
+      fireEvent.click(screen.getByText('Kanban'));
+
+      await waitFor(() => expect(screen.getByText('Driver: John Smith')).toBeInTheDocument());
+    });
+
+    it('shows "Unassigned" on the card when no driver is assigned', async () => {
+      mockBaseHandlers([UNASSIGNED]);
+      renderPage();
+      await waitFor(() => expect(screen.getByText('LOAD-000030')).toBeInTheDocument());
+
+      fireEvent.click(screen.getByText('Kanban'));
+
+      await waitFor(() => expect(screen.getByText('Driver: Unassigned')).toBeInTheDocument());
+    });
+  });
+
+  describe('calendar view', () => {
+    const scheduledLoad = load({
+      id: 'load-scheduled',
+      loadNumber: 'LOAD-000040',
+      assignedDriverName: 'John Smith',
+      stops: [
+        {
+          id: 's1',
+          sequence: 1,
+          stopType: 'PICKUP',
+          city: 'Dallas',
+          state: 'TX',
+          status: 'PENDING',
+          appointmentDatetime: new Date().toISOString(),
+        },
+      ],
+    });
+    const scheduledUnassigned = load({
+      id: 'load-scheduled-unassigned',
+      loadNumber: 'LOAD-000050',
+      assignedDriverName: null,
+      stops: [
+        {
+          id: 's1',
+          sequence: 1,
+          stopType: 'PICKUP',
+          city: 'Bedford Park',
+          state: 'IL',
+          status: 'PENDING',
+          appointmentDatetime: new Date().toISOString(),
+        },
+      ],
+    });
+
+    it('shows the assigned driver name on the event', async () => {
+      mockBaseHandlers([scheduledLoad]);
+      renderPage();
+      await waitFor(() => expect(screen.getByText('LOAD-000040')).toBeInTheDocument());
+      fireEvent.click(screen.getByText('Calendar'));
+
+      await waitFor(() => expect(screen.getAllByText('LOAD-000040').length).toBeGreaterThan(0));
+      expect(screen.getByText('John Smith')).toBeInTheDocument();
+    });
+
+    it('shows "Unassigned" on the event when no driver is assigned (distinct from the carrier "Unassigned" badge on the same card)', async () => {
+      mockBaseHandlers([scheduledUnassigned]);
+      renderPage();
+      fireEvent.click(screen.getByText('Calendar'));
+
+      await waitFor(() => expect(screen.getByText('LOAD-000050')).toBeInTheDocument());
+      const eventCard = screen.getByText('LOAD-000050').closest('.calendar-event') as HTMLElement;
+      expect(eventCard).not.toBeNull();
+      const driverLine = eventCard.querySelector('.calendar-event-driver');
+      expect(driverLine?.textContent).toBe('Unassigned');
+    });
+  });
+
+  describe('filter combination', () => {
+    it('driver search narrows results while a quick filter is simultaneously active', async () => {
+      const todayJohn = load({
+        id: 'load-today-john',
+        loadNumber: 'LOAD-000060',
+        assignedDriverName: 'John Smith',
+        stops: [
+          {
+            id: 's1',
+            sequence: 1,
+            stopType: 'PICKUP',
+            stopPurpose: 'STANDARD',
+            city: 'Dallas',
+            state: 'TX',
+            status: 'PENDING',
+            appointmentDatetime: new Date().toISOString(),
+          },
+        ],
+      });
+      const todayJane = load({
+        id: 'load-today-jane',
+        loadNumber: 'LOAD-000070',
+        assignedDriverName: 'Jane Doe',
+        stops: [
+          {
+            id: 's1',
+            sequence: 1,
+            stopType: 'PICKUP',
+            stopPurpose: 'STANDARD',
+            city: 'Dallas',
+            state: 'TX',
+            status: 'PENDING',
+            appointmentDatetime: new Date().toISOString(),
+          },
+        ],
+      });
+      mockBaseHandlers([todayJohn, todayJane]);
+      renderPage();
+      await waitFor(() => expect(screen.getByText('LOAD-000060')).toBeInTheDocument());
+
+      fireEvent.click(screen.getByText('Today'));
+      // Both loads have a today pickup, so the quick filter alone keeps both.
+      expect(screen.getByText('LOAD-000060')).toBeInTheDocument();
+      expect(screen.getByText('LOAD-000070')).toBeInTheDocument();
+
+      fireEvent.change(screen.getByPlaceholderText('Search Load #, Customer, or Driver…'), {
+        target: { value: 'John' },
+      });
+
+      // The quick filter and the driver search both remain in effect together.
+      expect(screen.getByText('LOAD-000060')).toBeInTheDocument();
+      expect(screen.queryByText('LOAD-000070')).not.toBeInTheDocument();
+    });
   });
 });

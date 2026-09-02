@@ -294,6 +294,9 @@ export function KanbanBoard({
                             </span>
                           ) : null}
                         </div>
+                        <div className="kanban-card-driver">
+                          Driver: {load.assignedDriverName ?? 'Unassigned'}
+                        </div>
                         <div
                           className={`kanban-card-date ${urgent ? 'kanban-card-date-urgent' : ''}`}
                         >

@@ -133,6 +133,12 @@
   justify-content: center;
 }
 
+.kanban-card-driver {
+  font-size: var(--text-caption-size);
+  color: var(--neutral-500);
+  margin-top: var(--space-1);
+}
+
 .kanban-card-date {
   font-size: var(--text-caption-size);
   color: var(--neutral-500);

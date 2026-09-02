@@ -132,6 +132,11 @@
   margin-top: 2px;
 }
 
+.calendar-event-driver {
+  color: var(--neutral-500);
+  font-size: var(--text-caption-size);
+}
+
 .calendar-event-location {
   color: var(--neutral-500);
 }

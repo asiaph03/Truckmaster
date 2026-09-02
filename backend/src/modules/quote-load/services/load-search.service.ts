@@ -220,7 +220,18 @@ export class LoadSearchService {
       const where = this.buildWhere(organizationId, filters);
       const total = await tx.load.count({ where });
 
-      let items: (Load & { stops: unknown[] })[];
+      // Load Search shares the LoadSummary contract with the Dispatch
+      // Board's `GET /loads` (LoadService.list) — same narrowed
+      // dispatchRecord.sourceDriver relation (firstName/lastName only,
+      // never the full Driver row), reused across all three sort
+      // branches below so every returned row carries `assignedDriverName`.
+      let items: (Load & {
+        stops: unknown[];
+        dispatchRecord: {
+          driverName: string | null;
+          sourceDriver: { firstName: string; lastName: string } | null;
+        } | null;
+      })[];
 
       if (filters.sort === 'pickupDate' || filters.sort === 'deliveryDate') {
         const idRows = await tx.load.findMany({ where, select: { id: true } });
@@ -242,14 +253,24 @@ export class LoadSearchService {
         const pageIds = sortedIds.slice((page - 1) * pageSize, (page - 1) * pageSize + pageSize);
         const fetched = await tx.load.findMany({
           where: { id: { in: pageIds } },
-          include: { stops: true },
+          include: {
+            stops: true,
+            dispatchRecord: {
+              include: { sourceDriver: { select: { firstName: true, lastName: true } } },
+            },
+          },
         });
         const byId = new Map(fetched.map((l) => [l.id, l]));
         items = pageIds.map((id) => byId.get(id)).filter((l): l is (typeof fetched)[number] => !!l);
       } else if (filters.sort === 'loadNumber') {
         items = await tx.load.findMany({
           where,
-          include: { stops: true },
+          include: {
+            stops: true,
+            dispatchRecord: {
+              include: { sourceDriver: { select: { firstName: true, lastName: true } } },
+            },
+          },
           orderBy: { loadNumber: filters.sortDirection ?? 'asc' },
           skip: (page - 1) * pageSize,
           take: pageSize,
@@ -257,15 +278,34 @@ export class LoadSearchService {
       } else {
         items = await tx.load.findMany({
           where,
-          include: { stops: true },
+          include: {
+            stops: true,
+            dispatchRecord: {
+              include: { sourceDriver: { select: { firstName: true, lastName: true } } },
+            },
+          },
           orderBy: { createdAt: 'desc' },
           skip: (page - 1) * pageSize,
           take: pageSize,
         });
       }
 
+      // Same precedence as LoadService.list(): live sourceDriver name wins
+      // over the DispatchRecord.driverName snapshot wins over null. Only
+      // the resolved string is returned — dispatchRecord itself is
+      // stripped here, never forwarded to the client.
+      const withDriverName = items.map((item) => {
+        const { dispatchRecord, ...rest } = item;
+        const assignedDriverName = dispatchRecord
+          ? dispatchRecord.sourceDriver
+            ? `${dispatchRecord.sourceDriver.firstName} ${dispatchRecord.sourceDriver.lastName}`
+            : dispatchRecord.driverName
+          : null;
+        return { ...rest, assignedDriverName };
+      });
+
       return {
-        items: shapeFinancialFieldsList(items, actingRoles, actingUserId),
+        items: shapeFinancialFieldsList(withDriverName, actingRoles, actingUserId),
         total,
         page,
         pageSize,

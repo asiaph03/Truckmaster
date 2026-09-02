@@ -230,17 +230,29 @@ export function DispatchBoardPage() {
     id ? (carriers.find((c) => c.id === id)?.legalName ?? id) : '—';
   const dispatcherName = (id?: string) =>
     id ? (memberships.find((m) => m.userId === id)?.user.name ?? id) : 'Unassigned';
+  // One consistent resolver reused by Table, Kanban, Calendar, and search
+  // alike — `assignedDriverName` is already fully resolved server-side
+  // (LoadService.list: live sourceDriver name when linked, else the
+  // DispatchRecord's own snapshotted name for a manually-typed dispatch),
+  // this just supplies the display fallback for "never dispatched".
+  const driverName = (l: LoadSummary) => l.assignedDriverName ?? 'Unassigned';
+  // Shared by every view's search filter below — Load #, Customer, and
+  // Driver (full name, first name, last name, or any partial substring,
+  // since it's a plain case-insensitive substring match against the
+  // already-resolved full name). A Load with no assigned driver simply
+  // never matches on the driver clause — the loadNumber/customer clauses
+  // still work normally for it.
+  const matchesSearch = (l: LoadSummary, q: string) =>
+    l.loadNumber.toLowerCase().includes(q) ||
+    customerName(l.customerId).toLowerCase().includes(q) ||
+    (l.assignedDriverName ?? '').toLowerCase().includes(q);
 
   const filtered = useMemo(() => {
     let rows = loads;
     if (!status) rows = rows.filter((l) => l.status !== 'CLOSED');
     if (search.trim()) {
       const q = search.trim().toLowerCase();
-      rows = rows.filter(
-        (l) =>
-          l.loadNumber.toLowerCase().includes(q) ||
-          customerName(l.customerId).toLowerCase().includes(q),
-      );
+      rows = rows.filter((l) => matchesSearch(l, q));
     }
     if (quickFilter === 'pickups4h')
       rows = rows.filter((l) => isWithinHours(firstPickupDate(l.stops), 4));
@@ -276,11 +288,7 @@ export function DispatchBoardPage() {
   const kanbanFiltered = useMemo(() => {
     if (!search.trim()) return loads;
     const q = search.trim().toLowerCase();
-    return loads.filter(
-      (l) =>
-        l.loadNumber.toLowerCase().includes(q) ||
-        customerName(l.customerId).toLowerCase().includes(q),
-    );
+    return loads.filter((l) => matchesSearch(l, q));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loads, search, customers]);
 
@@ -293,11 +301,7 @@ export function DispatchBoardPage() {
     const notClosed = loads.filter((l) => l.status !== 'CLOSED');
     if (!search.trim()) return notClosed;
     const q = search.trim().toLowerCase();
-    return notClosed.filter(
-      (l) =>
-        l.loadNumber.toLowerCase().includes(q) ||
-        customerName(l.customerId).toLowerCase().includes(q),
-    );
+    return notClosed.filter((l) => matchesSearch(l, q));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loads, search, customers]);
 
@@ -361,7 +365,7 @@ export function DispatchBoardPage() {
         <div className="list-page-search">
           <Search size={14} strokeWidth={1.5} />
           <input
-            placeholder="Search Load # or Customer…"
+            placeholder="Search Load #, Customer, or Driver…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
@@ -527,6 +531,7 @@ export function DispatchBoardPage() {
                 ) : null,
             },
             { key: 'carrier', header: 'Carrier', render: (r) => carrierName(r.assignedCarrierId) },
+            { key: 'driver', header: 'Driver', render: (r) => driverName(r) },
             {
               key: 'dispatcher',
               header: 'Dispatcher',

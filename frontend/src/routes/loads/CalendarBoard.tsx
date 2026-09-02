@@ -288,6 +288,9 @@ export function CalendarBoard({
                             ) : null}
                           </div>
                           <div className="calendar-event-load">{event.load.loadNumber}</div>
+                          <div className="calendar-event-driver">
+                            {event.load.assignedDriverName ?? 'Unassigned'}
+                          </div>
                           <div className="calendar-event-location">
                             {event.stop.city}, {event.stop.state}
                           </div>

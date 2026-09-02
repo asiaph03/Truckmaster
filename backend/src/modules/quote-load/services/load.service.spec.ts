@@ -30,6 +30,7 @@ const BASE_STOPS = [
 function buildService(opts: {
   customer?: { id: string; status: string } | null;
   rateMatch?: { rateAgreementId: string | null; rateSource: string } | null;
+  loads?: Record<string, unknown>[];
 }) {
   const customerLookupResult =
     'customer' in opts ? opts.customer : { id: CUSTOMER_ID, status: 'ACTIVE' };
@@ -39,7 +40,7 @@ function buildService(opts: {
     },
     load: {
       findFirst: jest.fn(),
-      findMany: jest.fn().mockResolvedValue([]),
+      findMany: jest.fn().mockResolvedValue(opts.loads ?? []),
       create: jest.fn().mockImplementation(({ data }) => ({
         ...data,
         id: 'load-1',
@@ -96,14 +97,35 @@ function buildService(opts: {
 }
 
 describe('LoadService.list — Frontend Phase 3 gap-fix (Dispatch Board Table View)', () => {
-  it('includes stops on every row (Origin/Destination + Pickup/Delivery Date columns need them)', async () => {
+  it('includes stops and dispatchRecord.sourceDriver on every row (Origin/Destination + Pickup/Delivery Date + Driver columns need them)', async () => {
     const { service, tx } = buildService({});
 
     await service.list(ORG_ID, USER_ID, ['ADMIN']);
 
     expect(tx.load.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ include: { stops: true } }),
+      expect.objectContaining({
+        include: {
+          stops: true,
+          dispatchRecord: {
+            include: { sourceDriver: { select: { firstName: true, lastName: true } } },
+          },
+        },
+      }),
     );
+  });
+
+  it('narrows the sourceDriver relation to a select of only firstName/lastName — never the full Driver row', async () => {
+    const { service, tx } = buildService({});
+
+    await service.list(ORG_ID, USER_ID, ['ADMIN']);
+
+    const call = tx.load.findMany.mock.calls[0][0];
+    expect(call.include.dispatchRecord.include.sourceDriver).toEqual({
+      select: { firstName: true, lastName: true },
+    });
+    // Explicitly not a bare `true` (which would fetch every Driver column
+    // — phone/email/licenseNumber/notes/organizationId/carrierId).
+    expect(call.include.dispatchRecord.include.sourceDriver).not.toBe(true);
   });
 
   it('applies carrierId, dispatcherId, and equipmentType filters when provided, alongside the existing status/customerId ones', async () => {
@@ -139,6 +161,123 @@ describe('LoadService.list — Frontend Phase 3 gap-fix (Dispatch Board Table Vi
     expect(call.where).not.toHaveProperty('assignedCarrierId');
     expect(call.where).not.toHaveProperty('assignedDispatcherId');
     expect(call.where).not.toHaveProperty('equipmentType');
+  });
+});
+
+describe('LoadService.list — Dispatch Board Driver visibility', () => {
+  const BASE_LOAD_ROW = {
+    id: 'load-1',
+    loadNumber: 'LOAD-000001',
+    stops: [],
+  };
+
+  it('resolves assignedDriverName from the live sourceDriver record when the dispatch is linked to one (never the stale snapshot)', async () => {
+    const { service, tx } = buildService({
+      loads: [
+        {
+          ...BASE_LOAD_ROW,
+          dispatchRecord: {
+            driverName: 'Old Snapshotted Name', // must NOT win when sourceDriver is present
+            sourceDriverId: 'driver-1',
+            sourceDriver: { id: 'driver-1', firstName: 'Julia', lastName: 'Ramos' },
+          },
+        },
+      ],
+    });
+
+    const [load] = await service.list(ORG_ID, USER_ID, ['ADMIN']);
+
+    expect((load as { assignedDriverName: string | null }).assignedDriverName).toBe('Julia Ramos');
+    expect(tx.load.findMany).toHaveBeenCalled();
+  });
+
+  it('falls back to the DispatchRecord’s own snapshotted driverName for a manually-typed dispatch (no linked Driver record)', async () => {
+    const { service } = buildService({
+      loads: [
+        {
+          ...BASE_LOAD_ROW,
+          dispatchRecord: {
+            driverName: 'Manually Typed Driver',
+            sourceDriverId: null,
+            sourceDriver: null,
+          },
+        },
+      ],
+    });
+
+    const [load] = await service.list(ORG_ID, USER_ID, ['ADMIN']);
+
+    expect((load as { assignedDriverName: string | null }).assignedDriverName).toBe(
+      'Manually Typed Driver',
+    );
+  });
+
+  it('assignedDriverName is null when the Load has never been dispatched', async () => {
+    const { service } = buildService({
+      loads: [{ ...BASE_LOAD_ROW, dispatchRecord: null }],
+    });
+
+    const [load] = await service.list(ORG_ID, USER_ID, ['ADMIN']);
+
+    expect((load as { assignedDriverName: string | null }).assignedDriverName).toBeNull();
+  });
+
+  it('never exposes the raw dispatchRecord/sourceDriver objects in the response — only the resolved assignedDriverName string', async () => {
+    const { service } = buildService({
+      loads: [
+        {
+          ...BASE_LOAD_ROW,
+          dispatchRecord: {
+            driverName: 'Julia Ramos',
+            sourceDriverId: 'driver-1',
+            sourceDriver: {
+              id: 'driver-1',
+              firstName: 'Julia',
+              lastName: 'Ramos',
+              phone: '555-0000',
+              licenseNumber: 'DL123',
+            },
+          },
+        },
+      ],
+    });
+
+    const [load] = await service.list(ORG_ID, USER_ID, ['ADMIN']);
+
+    expect(load).not.toHaveProperty('dispatchRecord');
+    expect((load as { assignedDriverName: string | null }).assignedDriverName).toBe('Julia Ramos');
+  });
+
+  it('resolves every row within the same organization-scoped transaction as the rest of the query — never a second, unscoped read', async () => {
+    const { service, tx } = buildService({
+      loads: [
+        {
+          ...BASE_LOAD_ROW,
+          id: 'load-1',
+          dispatchRecord: {
+            driverName: 'Julia Ramos',
+            sourceDriverId: 'driver-1',
+            sourceDriver: { id: 'driver-1', firstName: 'Julia', lastName: 'Ramos' },
+          },
+        },
+        {
+          ...BASE_LOAD_ROW,
+          id: 'load-2',
+          loadNumber: 'LOAD-000002',
+          dispatchRecord: null,
+        },
+      ],
+    });
+
+    const loads = await service.list(ORG_ID, USER_ID, ['ADMIN']);
+
+    // Both rows resolved from the single findMany call's own include —
+    // no per-row driver lookup, so no possibility of a cross-tenant leak
+    // via an unscoped follow-up query.
+    expect(tx.load.findMany).toHaveBeenCalledTimes(1);
+    expect(
+      loads.map((l) => (l as { assignedDriverName: string | null }).assignedDriverName),
+    ).toEqual(['Julia Ramos', null]);
   });
 });
 

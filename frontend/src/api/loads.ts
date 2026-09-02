@@ -189,6 +189,15 @@ export interface LoadSummary {
   podStatus: PodStatus;
   createdAt: string;
   stops: Stop[];
+  /**
+   * Dispatch Board Driver visibility — resolved server-side
+   * (LoadService.list): the live sourceDriver's current name when the
+   * dispatch is linked to a real Driver record, else the DispatchRecord's
+   * own snapshotted driverName for a manually-typed dispatch, else `null`
+   * when the Load has never been dispatched. Render `null` as
+   * "Unassigned" — never displayed as a raw null/empty string.
+   */
+  assignedDriverName: string | null;
 }
 
 export interface LoadListFilters {

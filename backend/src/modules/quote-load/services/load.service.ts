@@ -172,11 +172,45 @@ export class LoadService {
         // returned bare Load rows with no way to render them short of an
         // N+1 fetch per row. Mirrors findById's own `stops: true`
         // include exactly — same shape, no new projection invented.
-        include: { stops: true },
+        //
+        // Dispatch Board Driver visibility — `dispatchRecord.sourceDriver`
+        // is the existing DispatchSourceDriver relation (Phase 4); reused
+        // exactly as-is, never duplicated. `sourceDriver` is narrowed to a
+        // `select` of only firstName/lastName — the two fields the display
+        // name actually needs — so phone/email/licenseNumber/notes/
+        // organizationId/carrierId are never even fetched from Postgres,
+        // not just never returned. Consumed below to compute
+        // `assignedDriverName`, then `dispatchRecord` itself is dropped
+        // from the response entirely — the list endpoint exposes one
+        // resolved string, never the nested DispatchRecord/Driver objects.
+        include: {
+          stops: true,
+          dispatchRecord: {
+            include: { sourceDriver: { select: { firstName: true, lastName: true } } },
+          },
+        },
         orderBy: { createdAt: 'desc' },
       }),
     );
-    return shapeFinancialFieldsList(loads, actingRoles, actingUserId);
+    // One consistent driver-resolution rule, computed once here, reused by
+    // Table/Kanban/Calendar and by driver search alike: a live
+    // `sourceDriver` (when the dispatch was linked to a real Driver record)
+    // always wins over the snapshotted `driverName`, since the Driver's
+    // current name may have changed since dispatch — a manually-typed
+    // dispatch (no sourceDriverId) falls back to its own snapshotted name.
+    // `null` (never assigned) is left for the caller to render as
+    // "Unassigned", matching every other resolver in this response shape
+    // (e.g. `dispatcherName`).
+    const withDriverName = loads.map((load) => {
+      const { dispatchRecord, ...rest } = load;
+      const assignedDriverName = dispatchRecord
+        ? dispatchRecord.sourceDriver
+          ? `${dispatchRecord.sourceDriver.firstName} ${dispatchRecord.sourceDriver.lastName}`
+          : dispatchRecord.driverName
+        : null;
+      return { ...rest, assignedDriverName };
+    });
+    return shapeFinancialFieldsList(withDriverName, actingRoles, actingUserId);
   }
 
   /**

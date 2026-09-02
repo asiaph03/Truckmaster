@@ -286,6 +286,153 @@ describe('LoadSearchService.search — financial redaction', () => {
   });
 });
 
+describe('LoadSearchService.search — assignedDriverName (LoadSummary contract parity with GET /loads)', () => {
+  it('resolves assignedDriverName to the live sourceDriver name when a Driver is linked to the dispatch', async () => {
+    const loadFindMany = jest.fn().mockResolvedValue([
+      load({
+        dispatchRecord: {
+          driverName: 'Stale Snapshot Name',
+          sourceDriver: { firstName: 'Jane', lastName: 'Smith' },
+        },
+      }),
+    ]);
+    const { service } = buildService({ loadFindMany });
+
+    const result = await service.search(ORG_ID, USER_ID, ['ADMIN'], {}, { page: 1, pageSize: 50 });
+
+    expect(result.items[0]).toEqual(expect.objectContaining({ assignedDriverName: 'Jane Smith' }));
+  });
+
+  it('falls back to DispatchRecord.driverName when the dispatch has no linked Driver', async () => {
+    const loadFindMany = jest
+      .fn()
+      .mockResolvedValue([
+        load({ dispatchRecord: { driverName: 'Manually Typed Name', sourceDriver: null } }),
+      ]);
+    const { service } = buildService({ loadFindMany });
+
+    const result = await service.search(ORG_ID, USER_ID, ['ADMIN'], {}, { page: 1, pageSize: 50 });
+
+    expect(result.items[0]).toEqual(
+      expect.objectContaining({ assignedDriverName: 'Manually Typed Name' }),
+    );
+  });
+
+  it('returns assignedDriverName: null when the load has never been dispatched', async () => {
+    const loadFindMany = jest.fn().mockResolvedValue([load({ dispatchRecord: null })]);
+    const { service } = buildService({ loadFindMany });
+
+    const result = await service.search(ORG_ID, USER_ID, ['ADMIN'], {}, { page: 1, pageSize: 50 });
+
+    expect(result.items[0]).toEqual(expect.objectContaining({ assignedDriverName: null }));
+  });
+
+  it('never exposes the raw dispatchRecord (or nested Driver) object on a search result row', async () => {
+    const loadFindMany = jest.fn().mockResolvedValue([
+      load({
+        dispatchRecord: {
+          driverName: 'X',
+          sourceDriver: { firstName: 'Jane', lastName: 'Smith' },
+        },
+      }),
+    ]);
+    const { service } = buildService({ loadFindMany });
+
+    const result = await service.search(ORG_ID, USER_ID, ['ADMIN'], {}, { page: 1, pageSize: 50 });
+
+    expect(result.items[0]).not.toHaveProperty('dispatchRecord');
+  });
+
+  it('narrows the sourceDriver relation to select firstName/lastName only (never the full Driver row) on the default createdAt-sort branch, in a single scoped query', async () => {
+    const loadFindMany = jest.fn().mockResolvedValue([]);
+    const { service, tx } = buildService({ loadFindMany });
+
+    await service.search(ORG_ID, USER_ID, ['ADMIN'], {}, { page: 1, pageSize: 50 });
+
+    expect(tx.load.findMany).toHaveBeenCalledTimes(1);
+    const call = (tx.load.findMany as jest.Mock).mock.calls[0][0];
+    expect(call.where).toEqual(expect.objectContaining({ organizationId: ORG_ID }));
+    expect(call.include).toEqual({
+      stops: true,
+      dispatchRecord: {
+        include: { sourceDriver: { select: { firstName: true, lastName: true } } },
+      },
+    });
+  });
+
+  it('narrows the sourceDriver relation the same way on the loadNumber-sort branch, in a single scoped query', async () => {
+    const loadFindMany = jest.fn().mockResolvedValue([]);
+    const { service, tx } = buildService({ loadFindMany });
+
+    await service.search(
+      ORG_ID,
+      USER_ID,
+      ['ADMIN'],
+      { sort: 'loadNumber' },
+      { page: 1, pageSize: 50 },
+    );
+
+    expect(tx.load.findMany).toHaveBeenCalledTimes(1);
+    const call = (tx.load.findMany as jest.Mock).mock.calls[0][0];
+    expect(call.include).toEqual({
+      stops: true,
+      dispatchRecord: {
+        include: { sourceDriver: { select: { firstName: true, lastName: true } } },
+      },
+    });
+  });
+
+  it("narrows the sourceDriver relation on the pickupDate/deliveryDate branch's page fetch, and issues no extra unscoped Driver query (no N+1)", async () => {
+    const loadFindMany = jest
+      .fn()
+      .mockResolvedValueOnce([{ id: 'load-a' }])
+      .mockResolvedValueOnce([
+        load({ id: 'load-a', dispatchRecord: { driverName: 'Manual', sourceDriver: null } }),
+      ]);
+    const stopFindMany = jest.fn().mockResolvedValue([]);
+    const { service, tx } = buildService({ loadFindMany, stopFindMany });
+
+    const result = await service.search(
+      ORG_ID,
+      USER_ID,
+      ['ADMIN'],
+      { sort: 'pickupDate' },
+      { page: 1, pageSize: 50 },
+    );
+
+    // Exactly two Load queries total (bare-id select + one page fetch) —
+    // never one query per row, regardless of how many loads match.
+    expect(tx.load.findMany).toHaveBeenCalledTimes(2);
+    const pageCall = (tx.load.findMany as jest.Mock).mock.calls[1][0];
+    expect(pageCall.include).toEqual({
+      stops: true,
+      dispatchRecord: {
+        include: { sourceDriver: { select: { firstName: true, lastName: true } } },
+      },
+    });
+    expect(result.items[0]).toEqual(expect.objectContaining({ assignedDriverName: 'Manual' }));
+  });
+
+  it('includes assignedDriverName on every returned row when multiple loads are returned', async () => {
+    const loadFindMany = jest.fn().mockResolvedValue([
+      load({ id: 'load-a', dispatchRecord: null }),
+      load({
+        id: 'load-b',
+        dispatchRecord: { driverName: 'Snap', sourceDriver: { firstName: 'A', lastName: 'B' } },
+      }),
+      load({ id: 'load-c', dispatchRecord: { driverName: 'Manual Only', sourceDriver: null } }),
+    ]);
+    const { service } = buildService({ loadFindMany });
+
+    const result = await service.search(ORG_ID, USER_ID, ['ADMIN'], {}, { page: 1, pageSize: 50 });
+
+    expect(result.items.every((item) => 'assignedDriverName' in (item as object))).toBe(true);
+    expect(
+      (result.items as { assignedDriverName: string | null }[]).map((i) => i.assignedDriverName),
+    ).toEqual([null, 'A B', 'Manual Only']);
+  });
+});
+
 describe('LoadSearchService.exportCsv', () => {
   it('fetches every matching row with no pagination, includes a CSV header, and redacts per role', async () => {
     const loadFindMany = jest.fn().mockResolvedValue([
