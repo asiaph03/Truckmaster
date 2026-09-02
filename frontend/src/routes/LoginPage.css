@@ -18,18 +18,29 @@
   gap: var(--space-4);
 }
 
+.login-logo {
+  display: block;
+  width: 100%;
+  max-width: 160px;
+  height: auto;
+  margin: 0 auto;
+  object-fit: contain;
+}
+
 .login-title {
   font-size: var(--text-h1-size);
   line-height: var(--text-h1-line);
   font-weight: var(--text-h1-weight);
   color: var(--brand-600);
   margin: 0;
+  text-align: center;
 }
 
 .login-subtitle {
   margin: 0;
   color: var(--neutral-500);
   font-size: var(--text-small-size);
+  text-align: center;
 }
 
 .login-field {

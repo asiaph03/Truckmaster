@@ -56,6 +56,7 @@ export function LoginPage() {
   return (
     <div className="login-page">
       <form className="login-card" onSubmit={handleSubmit(onSubmit)} noValidate>
+        <img className="login-logo" src="/tms-logo.jpeg" alt="Truck Master Dispatching Services" />
         <h1 className="login-title">Truck Master TMS</h1>
         <p className="login-subtitle">Sign in to your account</p>
 
