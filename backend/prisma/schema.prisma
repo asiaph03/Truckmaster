@@ -422,6 +422,15 @@ enum DocumentEntityType {
   TRAILER
   INVOICE
   CARRIER_PAYMENT
+  /// Rate Confirmation → New Load auto-populate feature — the uploaded
+  /// PDF exists before any Load does (the whole point of the feature is
+  /// to extract data BEFORE Load creation), so unlike every other value
+  /// above there is no real parent row to point at. `entityId` for this
+  /// type is a self-generated correlation id (the extraction job's own
+  /// id), not a foreign row's id — DocumentService.entityExists has a
+  /// dedicated no-parent-row branch for it, scoped only by organizationId
+  /// via the surrounding withTenantTransaction/RLS.
+  RATE_CONFIRMATION_INTAKE
 }
 
 enum DocumentScanStatus {

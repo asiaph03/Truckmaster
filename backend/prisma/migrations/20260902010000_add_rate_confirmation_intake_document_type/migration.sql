@@ -1,0 +1,2 @@
+-- AlterEnum
+ALTER TYPE "DocumentEntityType" ADD VALUE 'RATE_CONFIRMATION_INTAKE';

@@ -19,6 +19,10 @@ import { CarrierEligibilityService } from '../../carrier/services/carrier-eligib
 import { LoadPodStatusService } from '../../quote-load/services/load-pod-status.service';
 import { MALWARE_SCAN_JOB_OPTIONS, MALWARE_SCAN_QUEUE } from './malware-scan.constants';
 import { FINANCIAL_VIEW_ROLES } from '../../../common/authorization/financial-view-roles';
+import {
+  RATE_CONFIRMATION_EXTRACTION_JOB_OPTIONS,
+  RATE_CONFIRMATION_EXTRACTION_QUEUE,
+} from '../../rate-confirmation-extraction/rate-confirmation-extraction.constants';
 
 /**
  * Document-upload permission is entity-type-aware (TECHNICAL_ARCHITECTURE.md
@@ -80,6 +84,22 @@ const SUPPORTED_ENTITY_TYPES: DocumentEntityType[] = [
   'TRAILER',
   'STOP',
   'LOAD',
+  'RATE_CONFIRMATION_INTAKE',
+];
+
+/**
+ * Rate Confirmation → New Load auto-populate feature — same role set as
+ * `QUOTE_LOAD_CREATE_ROLES` (load.controller.ts), duplicated here rather
+ * than imported since that constant is controller-local and this is a
+ * different module; uploading a rate confirmation to extract is a
+ * booking-adjacent action performed by the same actors who create Loads,
+ * not a dispatch-tracking or carrier-compliance action.
+ */
+const RATE_CONFIRMATION_INTAKE_UPLOAD_ROLES: MembershipRoleName[] = [
+  'ADMIN',
+  'OPERATIONS_MANAGER',
+  'DISPATCHER',
+  'SALES_BOOKING',
 ];
 
 @Injectable()
@@ -91,6 +111,7 @@ export class DocumentService {
     private readonly carrierEligibility: CarrierEligibilityService,
     private readonly loadPodStatus: LoadPodStatusService,
     @Inject(MALWARE_SCAN_QUEUE) private readonly scanQueue: Queue,
+    @Inject(RATE_CONFIRMATION_EXTRACTION_QUEUE) private readonly extractionQueue: Queue,
   ) {}
 
   private async assertEntityExists(
@@ -131,6 +152,13 @@ export class DocumentService {
         return !!(await tx.stop.findFirst({ where: { id: entityId, organizationId } }));
       case 'LOAD':
         return !!(await tx.load.findFirst({ where: { id: entityId, organizationId } }));
+      case 'RATE_CONFIRMATION_INTAKE':
+        // No parent row exists to check by design — see the
+        // DocumentEntityType enum's own doc comment. `entityId` is a
+        // self-generated correlation id, not a foreign row's id;
+        // organization-scoping via the surrounding withTenantTransaction/
+        // RLS is the only guard this entity type needs or can have.
+        return true;
       default:
         return false;
     }
@@ -158,6 +186,14 @@ export class DocumentService {
       if (!POD_UPLOAD_ROLES.some((r) => roles.includes(r))) {
         throw new PermissionError(
           'Uploading a Load document requires Admin, Operations Manager, Dispatcher, or Accounting.',
+        );
+      }
+    }
+    if (entityType === 'RATE_CONFIRMATION_INTAKE') {
+      const { roles = [] } = RequestContextStore.current();
+      if (!RATE_CONFIRMATION_INTAKE_UPLOAD_ROLES.some((r) => roles.includes(r))) {
+        throw new PermissionError(
+          'Uploading a Rate Confirmation for extraction requires Admin, Operations Manager, Dispatcher, or Sales/Booking.',
         );
       }
     }
@@ -655,6 +691,24 @@ export class DocumentService {
         if (stop) {
           await this.loadPodStatus.recalculatePodStatus(tx, organizationId, stop.loadId);
         }
+      }
+
+      // Rate Confirmation → New Load auto-populate feature — mirrors the
+      // STOP branch above exactly: extraction only ever starts from here,
+      // after the scan outcome is known, and only on CLEAN. INFECTED/
+      // SCAN_FAILED documents are already quarantined above and never
+      // reach extraction — malware scanning can never be bypassed.
+      if (document.entityType === 'RATE_CONFIRMATION_INTAKE' && result.status === 'CLEAN') {
+        await this.extractionQueue.add(
+          'extract',
+          {
+            extractionId: document.entityId,
+            documentId: document.id,
+            organizationId,
+            storageKey: fileStorageKey,
+          },
+          RATE_CONFIRMATION_EXTRACTION_JOB_OPTIONS,
+        );
       }
     });
   }

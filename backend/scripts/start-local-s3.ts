@@ -15,6 +15,16 @@
  * `.env.example` — StorageService's S3Client sends path-style requests
  * (`http://host:port/bucket/key`), so the server must expect the same.
  *
+ * CORS: the presigned-upload flows (documents, Rate Confirmation intake)
+ * have the browser PUT the file bytes directly to this server — a
+ * cross-origin request from the Vite dev server's own origin
+ * (`http://localhost:5173`), which never goes through the `/api` proxy.
+ * Without a CORS rule the preflight is rejected outright (mirrors the
+ * exact same requirement `.env.example` documents for the real
+ * production bucket, just never previously set up for this local
+ * fixture). Scoped to exactly the one local dev origin — no wildcard —
+ * and only the three methods these upload flows actually use.
+ *
  * Usage: npm run s3:local
  * Leave running in its own terminal alongside `npm run start:dev`.
  */
@@ -26,13 +36,26 @@ const PORT = 9000;
 const BUCKET = 'tms-documents';
 const DATA_DIR = join(__dirname, '..', '.local-s3-data');
 
+const LOCAL_FRONTEND_ORIGIN = 'http://localhost:5173';
+
+const CORS_CONFIG = `<CORSConfiguration>
+    <CORSRule>
+        <AllowedOrigin>${LOCAL_FRONTEND_ORIGIN}</AllowedOrigin>
+        <AllowedMethod>PUT</AllowedMethod>
+        <AllowedMethod>GET</AllowedMethod>
+        <AllowedMethod>HEAD</AllowedMethod>
+        <AllowedHeader>Content-Type</AllowedHeader>
+        <MaxAgeSeconds>3000</MaxAgeSeconds>
+    </CORSRule>
+</CORSConfiguration>`;
+
 const server = new S3rver({
   address: HOST,
   port: PORT,
   directory: DATA_DIR,
   silent: false,
   vhostBuckets: false,
-  configureBuckets: [{ name: BUCKET, configs: [] }],
+  configureBuckets: [{ name: BUCKET, configs: [CORS_CONFIG] }],
 });
 
 server.run().then(

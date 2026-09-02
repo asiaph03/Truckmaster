@@ -71,6 +71,19 @@ const SYSTEM_DOCUMENT_TYPES = [
   // already anticipated in DocumentEntityType since Phase 2). Not seeded
   // until now since no Invoice model existed to attach one to.
   { code: 'INVOICE', label: 'Invoice', category: 'LOAD', requiresReview: false },
+  // Rate Confirmation → New Load auto-populate feature — deliberately a
+  // separate type from 'RATE_CONFIRMATION' above, which is reserved for
+  // the system-*generated* carrier-facing PDF (sets `generationStatus`,
+  // per that field's own doc comment: "left null for every user-uploaded
+  // document"). This type is for the customer/broker-issued PDF a user
+  // uploads to be *read*, not one the system produces — conflating the
+  // two would mix a generated-document lifecycle with an uploaded one.
+  {
+    code: 'RATE_CONFIRMATION_INTAKE',
+    label: 'Rate Confirmation (Uploaded for Extraction)',
+    category: 'LOAD',
+    requiresReview: false,
+  },
 ] as const;
 
 /**

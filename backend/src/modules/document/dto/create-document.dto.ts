@@ -24,6 +24,7 @@ export class CreateDocumentDto {
     'TRAILER',
     'INVOICE',
     'CARRIER_PAYMENT',
+    'RATE_CONFIRMATION_INTAKE',
   ])
   entityType!: DocumentEntityType;
 

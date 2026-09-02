@@ -54,6 +54,7 @@ describe('DocumentService.review — Workflow 3 §3.4 self-review prevention', (
     };
     const loadPodStatus = { recalculatePodStatus: jest.fn().mockResolvedValue('NOT_RECEIVED') };
     const scanQueue = { add: jest.fn() };
+    const extractionQueue = { add: jest.fn() };
 
     const service = new DocumentService(
       prisma as never,
@@ -62,6 +63,7 @@ describe('DocumentService.review — Workflow 3 §3.4 self-review prevention', (
       carrierEligibility as never,
       loadPodStatus as never,
       scanQueue as never,
+      extractionQueue as never,
     );
 
     return { service, tx, audit, carrierEligibility, document };
@@ -163,6 +165,7 @@ describe('DocumentService.listPendingReview — Frontend Phase 5 gap-fix (Compli
     const carrierEligibility = {};
     const loadPodStatus = {};
     const scanQueue = {};
+    const extractionQueue = {};
 
     const service = new DocumentService(
       prisma as never,
@@ -171,6 +174,7 @@ describe('DocumentService.listPendingReview — Frontend Phase 5 gap-fix (Compli
       carrierEligibility as never,
       loadPodStatus as never,
       scanQueue as never,
+      extractionQueue as never,
     );
 
     return { service, tx };
@@ -288,6 +292,7 @@ describe('DocumentService.applyScanResult — malware scan / quarantine (Decisio
     const carrierEligibility = { recalculate: jest.fn() };
     const loadPodStatus = { recalculatePodStatus: jest.fn().mockResolvedValue('NOT_RECEIVED') };
     const scanQueue = { add: jest.fn() };
+    const extractionQueue = { add: jest.fn() };
 
     const service = new DocumentService(
       prisma as never,
@@ -296,6 +301,7 @@ describe('DocumentService.applyScanResult — malware scan / quarantine (Decisio
       carrierEligibility as never,
       loadPodStatus as never,
       scanQueue as never,
+      extractionQueue as never,
     );
 
     return { service, tx, audit, storage, document, loadPodStatus };
@@ -374,6 +380,7 @@ describe('DocumentService.getDownloadUrl — §8.4 gates on scan_status', () => 
     const carrierEligibility = {};
     const loadPodStatus = {};
     const scanQueue = {};
+    const extractionQueue = {};
     const audit = {};
 
     return new DocumentService(
@@ -383,6 +390,7 @@ describe('DocumentService.getDownloadUrl — §8.4 gates on scan_status', () => 
       carrierEligibility as never,
       loadPodStatus as never,
       scanQueue as never,
+      extractionQueue as never,
     );
   }
 
@@ -463,6 +471,7 @@ describe('DocumentService — entity-type-aware view authorization (Invoice/Carr
       prisma as never,
       {} as never,
       storage as never,
+      {} as never,
       {} as never,
       {} as never,
       {} as never,
@@ -605,6 +614,7 @@ describe('DocumentService upload permission — entity-aware (§2.5)', () => {
     const carrierEligibility = {};
     const loadPodStatus = {};
     const scanQueue = { add: jest.fn() };
+    const extractionQueue = { add: jest.fn() };
 
     return new DocumentService(
       prisma as never,
@@ -613,6 +623,7 @@ describe('DocumentService upload permission — entity-aware (§2.5)', () => {
       carrierEligibility as never,
       loadPodStatus as never,
       scanQueue as never,
+      extractionQueue as never,
     );
   }
 
@@ -672,6 +683,7 @@ describe('DocumentService — Load-level document uploads (Load Detail Documents
     const carrierEligibility = {};
     const loadPodStatus = {};
     const scanQueue = { add: jest.fn() };
+    const extractionQueue = { add: jest.fn() };
 
     const service = new DocumentService(
       prisma as never,
@@ -680,6 +692,7 @@ describe('DocumentService — Load-level document uploads (Load Detail Documents
       carrierEligibility as never,
       loadPodStatus as never,
       scanQueue as never,
+      extractionQueue as never,
     );
 
     return { service, tx };
@@ -788,6 +801,7 @@ describe('DocumentService — Phase 5 POD/Stop uploads (Workflow 7 §7.1)', () =
     const carrierEligibility = {};
     const loadPodStatus = { recalculatePodStatus: jest.fn().mockResolvedValue('PARTIAL') };
     const scanQueue = { add: jest.fn() };
+    const extractionQueue = { add: jest.fn() };
 
     const service = new DocumentService(
       prisma as never,
@@ -796,6 +810,7 @@ describe('DocumentService — Phase 5 POD/Stop uploads (Workflow 7 §7.1)', () =
       carrierEligibility as never,
       loadPodStatus as never,
       scanQueue as never,
+      extractionQueue as never,
     );
 
     return { service, tx, audit, loadPodStatus };
@@ -920,6 +935,7 @@ describe('DocumentService — POP/Stop uploads (symmetric pickup-side counterpar
     const carrierEligibility = {};
     const loadPodStatus = { recalculatePodStatus: jest.fn().mockResolvedValue('PARTIAL') };
     const scanQueue = { add: jest.fn() };
+    const extractionQueue = { add: jest.fn() };
 
     const service = new DocumentService(
       prisma as never,
@@ -928,6 +944,7 @@ describe('DocumentService — POP/Stop uploads (symmetric pickup-side counterpar
       carrierEligibility as never,
       loadPodStatus as never,
       scanQueue as never,
+      extractionQueue as never,
     );
 
     return { service, tx, audit, loadPodStatus };
@@ -1049,6 +1066,7 @@ describe('DocumentService.applyScanResult — Phase 5 POD milestone recalculatio
     const carrierEligibility = { recalculate: jest.fn() };
     const loadPodStatus = { recalculatePodStatus: jest.fn().mockResolvedValue('PARTIAL') };
     const scanQueue = { add: jest.fn() };
+    const extractionQueue = { add: jest.fn() };
 
     const service = new DocumentService(
       prisma as never,
@@ -1057,6 +1075,7 @@ describe('DocumentService.applyScanResult — Phase 5 POD milestone recalculatio
       carrierEligibility as never,
       loadPodStatus as never,
       scanQueue as never,
+      extractionQueue as never,
     );
 
     return { service, tx, loadPodStatus };

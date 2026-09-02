@@ -51,6 +51,17 @@ export interface AppConfig {
     fromAddress: string;
   };
   /**
+   * Rate Confirmation → New Load auto-populate feature — structured-
+   * extraction LLM provider (behind IRateConfirmationExtractor). Empty
+   * string until provisioned locally; never committed, never read from
+   * backend/.env by anything other than this factory. LOCAL-ONLY as of
+   * this change — not yet part of any production deployment.
+   */
+  anthropic: {
+    apiKey: string;
+    model: string;
+  };
+  /**
    * Vercel + Render deployment — the frontend's production origin, used
    * for both CORS (§ configure-app.ts) and the CSRF cookie's Domain
    * attribute (§ csrf-bootstrap.middleware.ts). Empty string in local dev
@@ -104,6 +115,10 @@ export default (): AppConfig => ({
   postmark: {
     apiKey: process.env.POSTMARK_API_KEY || '',
     fromAddress: process.env.POSTMARK_FROM_ADDRESS || '',
+  },
+  anthropic: {
+    apiKey: process.env.ANTHROPIC_API_KEY || '',
+    model: process.env.ANTHROPIC_MODEL || 'claude-sonnet-5',
   },
   corsOrigin: process.env.CORS_ORIGIN || '',
   cookieDomain: process.env.COOKIE_DOMAIN || '',
