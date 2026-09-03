@@ -83,3 +83,33 @@
   background: var(--brand-50);
   font-weight: 500;
 }
+
+.notification-bell-item-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+
+.notification-bell-icon {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.notification-bell-icon-danger {
+  color: var(--danger-600);
+}
+
+.notification-bell-icon-warning {
+  color: var(--warning-600);
+}
+
+.notification-bell-item-text {
+  min-width: 0;
+}
+
+.notification-bell-item-text > div:not(:first-child) {
+  color: var(--neutral-500);
+  font-weight: 400;
+  font-size: var(--text-caption-size);
+  margin-top: 2px;
+}

@@ -96,6 +96,19 @@ export class NotificationService {
     );
   }
 
+  /**
+   * Operational Alerts feature — the notification-bell badge previously
+   * derived its count from `.filter(n => !n.isRead)` over the same
+   * page-size-10 list rendered in the dropdown, silently undercounting
+   * once more than 10 notifications existed. This gives the frontend an
+   * authoritative count without changing the list endpoint's pagination.
+   */
+  async countUnread(organizationId: string, recipientUserId: string): Promise<number> {
+    return this.prisma.withTenantTransaction(organizationId, (tx) =>
+      tx.notification.count({ where: { organizationId, recipientUserId, read: false } }),
+    );
+  }
+
   /** Self-scoped — a recipient may only mark their own notifications read, never another user's. */
   async markRead(organizationId: string, recipientUserId: string, id: string) {
     return this.prisma.withTenantTransaction(organizationId, async (tx) => {

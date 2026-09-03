@@ -9,12 +9,14 @@ function buildService(
     memberships?: { userId: string }[];
     existing?: Record<string, unknown> | null;
     notifications?: Record<string, unknown>[];
+    unreadCount?: number;
   } = {},
 ) {
   const tx = {
     notification: {
       create: jest.fn().mockImplementation(({ data }) => ({ id: 'notif-1', ...data })),
       findMany: jest.fn().mockResolvedValue(opts.notifications ?? []),
+      count: jest.fn().mockResolvedValue(opts.unreadCount ?? 0),
       findFirst: jest
         .fn()
         .mockResolvedValue(
@@ -125,6 +127,19 @@ describe('NotificationService.list', () => {
         take: 100,
       }),
     );
+  });
+});
+
+describe('NotificationService.countUnread — authoritative badge count, not derived from a paginated page', () => {
+  it('returns the tenant/recipient-scoped unread count', async () => {
+    const { service, tx } = buildService({ unreadCount: 42 });
+
+    const result = await service.countUnread(ORG_ID, USER_ID);
+
+    expect(result).toBe(42);
+    expect(tx.notification.count).toHaveBeenCalledWith({
+      where: { organizationId: ORG_ID, recipientUserId: USER_ID, read: false },
+    });
   });
 });
 

@@ -1,24 +1,26 @@
 import { Inject, Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { Queue, Worker } from 'bullmq';
 import Redis from 'ioredis';
 import { REDIS_CLIENT } from '../../../common/redis/redis.module';
-import { AppConfig } from '../../../config/configuration';
 import { InvitationExpirationSweepService } from './invitation-expiration-sweep.service';
 import { QuoteExpirationSweepService } from './quote-expiration-sweep.service';
 import { CarrierComplianceExpirationSweepService } from './carrier-compliance-expiration-sweep.service';
 import { ComplianceExpirationNotificationService } from './compliance-expiration-notification.service';
 import { CheckCallReminderSweepService } from './check-call-reminder-sweep.service';
+import { LoadLatenessSweepService } from './load-lateness-sweep.service';
 import {
   DAILY_SWEEP_CRON,
   JOB_NAMES,
+  OPERATIONAL_SWEEP_INTERVAL_MS,
   SCHEDULED_JOBS_QUEUE,
   SCHEDULED_JOBS_QUEUE_NAME,
 } from './background-jobs.constants';
 
 /**
  * Owns the single shared `scheduled-jobs` queue/worker pair and registers
- * the five Phase 7 repeatable jobs on it (Decision 7 — BullMQ's own
+ * the Phase 7 repeatable jobs plus the Operational Alerts feature's two
+ * (check-call reminder/due-soon, load-lateness) sweeps on it
+ * (Decision 7 — BullMQ's own
  * `repeat` option, no new scheduler dependency). Structurally mirrors
  * every other worker in this codebase (own duplicated Redis connection,
  * `.quit()`'d in onModuleDestroy) — the only new element is calling
@@ -35,12 +37,12 @@ export class ScheduledJobsWorker implements OnModuleInit, OnModuleDestroy {
   constructor(
     @Inject(REDIS_CLIENT) private readonly redis: Redis,
     @Inject(SCHEDULED_JOBS_QUEUE) private readonly queue: Queue,
-    private readonly config: ConfigService<AppConfig>,
     private readonly invitationExpirationSweep: InvitationExpirationSweepService,
     private readonly quoteExpirationSweep: QuoteExpirationSweepService,
     private readonly carrierComplianceExpirationSweep: CarrierComplianceExpirationSweepService,
     private readonly complianceExpirationNotification: ComplianceExpirationNotificationService,
     private readonly checkCallReminderSweep: CheckCallReminderSweepService,
+    private readonly loadLatenessSweep: LoadLatenessSweepService,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -60,8 +62,6 @@ export class ScheduledJobsWorker implements OnModuleInit, OnModuleDestroy {
   }
 
   private async registerRepeatableJobs(): Promise<void> {
-    const reminderHours = this.config.get('checkCallReminderHours', { infer: true })!;
-
     await this.queue.add(
       JOB_NAMES.INVITATION_EXPIRATION_SWEEP,
       {},
@@ -92,8 +92,16 @@ export class ScheduledJobsWorker implements OnModuleInit, OnModuleDestroy {
       JOB_NAMES.CHECK_CALL_REMINDER_SWEEP,
       {},
       {
-        repeat: { every: reminderHours * 60 * 60 * 1000 },
+        repeat: { every: OPERATIONAL_SWEEP_INTERVAL_MS },
         jobId: JOB_NAMES.CHECK_CALL_REMINDER_SWEEP,
+      },
+    );
+    await this.queue.add(
+      JOB_NAMES.LOAD_LATENESS_SWEEP,
+      {},
+      {
+        repeat: { every: OPERATIONAL_SWEEP_INTERVAL_MS },
+        jobId: JOB_NAMES.LOAD_LATENESS_SWEEP,
       },
     );
   }
@@ -110,6 +118,8 @@ export class ScheduledJobsWorker implements OnModuleInit, OnModuleDestroy {
         return this.complianceExpirationNotification.run();
       case JOB_NAMES.CHECK_CALL_REMINDER_SWEEP:
         return this.checkCallReminderSweep.run();
+      case JOB_NAMES.LOAD_LATENESS_SWEEP:
+        return this.loadLatenessSweep.run();
       default:
         this.logger.warn(`Unknown scheduled job name: ${jobName}`);
     }

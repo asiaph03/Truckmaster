@@ -9,6 +9,7 @@ import { QuoteExpirationSweepService } from './services/quote-expiration-sweep.s
 import { CarrierComplianceExpirationSweepService } from './services/carrier-compliance-expiration-sweep.service';
 import { ComplianceExpirationNotificationService } from './services/compliance-expiration-notification.service';
 import { CheckCallReminderSweepService } from './services/check-call-reminder-sweep.service';
+import { LoadLatenessSweepService } from './services/load-lateness-sweep.service';
 import { ScheduledJobsWorker } from './services/scheduled-jobs.worker';
 import {
   SCHEDULED_JOBS_QUEUE,
@@ -31,6 +32,7 @@ const SCHEDULED_JOBS_QUEUE_CONNECTION = 'SCHEDULED_JOBS_QUEUE_CONNECTION';
     CarrierComplianceExpirationSweepService,
     ComplianceExpirationNotificationService,
     CheckCallReminderSweepService,
+    LoadLatenessSweepService,
     ScheduledJobsWorker,
     {
       provide: SCHEDULED_JOBS_QUEUE_CONNECTION,

@@ -27,6 +27,15 @@ export class NotificationController {
     });
   }
 
+  @Get('unread-count')
+  unreadCount() {
+    const organizationId = RequestContextStore.requireOrganizationId();
+    const actingUserId = RequestContextStore.requireUserId();
+    return this.notificationService
+      .countUnread(organizationId, actingUserId)
+      .then((count) => ({ count }));
+  }
+
   @Post(':id/read')
   @HttpCode(200)
   markRead(@Param('id', ParseUUIDPipe) id: string) {

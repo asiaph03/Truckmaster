@@ -1951,6 +1951,18 @@ enum NotificationType {
   COMPLIANCE_EXPIRING_15_DAY
   COMPLIANCE_EXPIRING_7_DAY
   CHECK_CALL_OVERDUE
+  /// Operational Alerts feature — fires when a Load's most recent
+  /// check-call activity is within 15 minutes of crossing
+  /// CHECK_CALL_REMINDER_HOURS. Superseded (marked read) once the Load
+  /// actually becomes CHECK_CALL_OVERDUE — never shown alongside it.
+  CHECK_CALL_DUE_SOON
+  /// Operational Alerts feature — fires when a Load has a non-COMPLETED
+  /// Stop whose appointmentDatetime has already passed. Deliberately NOT
+  /// derived from Load.riskStatus (manual, dispatcher-judgment field) or
+  /// Load.currentEta (sparse, manually-entered, not predictive) — see
+  /// LoadLatenessSweepService / findLateStop for the single owned
+  /// definition of "late."
+  LOAD_LATE
 }
 
 /// DATABASE_DESIGN.md §25. `relatedEntityId` has no native FK (mirrors
