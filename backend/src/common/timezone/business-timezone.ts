@@ -16,7 +16,7 @@
  */
 export const BUSINESS_TIMEZONE = 'America/New_York';
 
-interface WallClockParts {
+export interface WallClockParts {
   year: number;
   month: number; // 1-12
   day: number;
@@ -51,7 +51,7 @@ function parseNaiveComponents(input: string): WallClockParts {
 }
 
 /** Formats a UTC instant as its wall-clock digits in `timeZone`, via `Intl` (no fixed-offset math). */
-function wallClockPartsInZone(instant: Date, timeZone: string): WallClockParts {
+export function wallClockPartsInZone(instant: Date, timeZone: string): WallClockParts {
   const formatter = new Intl.DateTimeFormat('en-US', {
     timeZone,
     hourCycle: 'h23',

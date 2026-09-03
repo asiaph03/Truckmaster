@@ -34,7 +34,10 @@ function baseInput(
         city: 'West Grove',
         state: 'PA',
         zip: '19390',
-        appointmentDatetime: '2026-09-02T08:00',
+        // Real production shape: an absolute UTC instant
+        // (Stop.appointmentDatetime.toISOString()), not a naive local
+        // string — 2026-09-02 08:00 America/New_York (EDT) = 12:00 UTC.
+        appointmentDatetime: '2026-09-02T12:00:00.000Z',
         contactName: 'Eric Frasse',
         contactPhone: '(610) 212-1201',
       },
@@ -45,7 +48,8 @@ function baseInput(
         city: 'South Plainfield',
         state: 'NJ',
         zip: '07080',
-        appointmentDatetime: '2026-09-02T14:00',
+        // 2026-09-02 14:00 America/New_York (EDT) = 18:00 UTC.
+        appointmentDatetime: '2026-09-02T18:00:00.000Z',
         contactName: null,
         contactPhone: '(908) 756-6242',
       },
@@ -55,21 +59,79 @@ function baseInput(
   };
 }
 
-describe('formatAppointment — "MM/DD/YY at H:MM AM/PM"', () => {
-  it('formats a morning time', () => {
-    expect(formatAppointment('2026-09-02T08:00')).toBe('09/02/26 at 8:00 AM');
+describe('formatAppointment — "MM/DD/YY at H:MM AM/PM", rendered in the business timezone (America/New_York)', () => {
+  // The real caller (CarrierSourcingService.resolveDriverDispatchContext)
+  // always passes `Stop.appointmentDatetime.toISOString()` — an absolute
+  // UTC instant with an explicit `Z` suffix, never a naive local string.
+  // Every case below uses that same real shape (never a bare naive
+  // string), so these tests fail loudly if formatAppointment ever
+  // regresses to server-local Date getters instead of the business
+  // timezone.
+
+  it('formats a UTC instant representing 8:00 AM America/New_York during EDT (summer, UTC-4)', () => {
+    // 2026-07-15 08:00 EDT = 12:00 UTC.
+    expect(formatAppointment('2026-07-15T12:00:00.000Z')).toBe('07/15/26 at 8:00 AM');
   });
+
+  it('formats a UTC instant representing 8:00 AM America/New_York during EST (winter, UTC-5)', () => {
+    // 2026-01-15 08:00 EST = 13:00 UTC.
+    expect(formatAppointment('2026-01-15T13:00:00.000Z')).toBe('01/15/26 at 8:00 AM');
+  });
+
+  it('reproduces the exact reported bug scenario: 3:00 AM America/New_York (EDT) on 2026-09-05', () => {
+    // 2026-09-05 03:00 EDT = 07:00 UTC.
+    expect(formatAppointment('2026-09-05T07:00:00.000Z')).toBe('09/05/26 at 3:00 AM');
+  });
+
   it('formats an afternoon time (24h -> 12h conversion)', () => {
-    expect(formatAppointment('2026-09-02T14:00')).toBe('09/02/26 at 2:00 PM');
+    // 2026-09-02 14:00 EDT = 18:00 UTC.
+    expect(formatAppointment('2026-09-02T18:00:00.000Z')).toBe('09/02/26 at 2:00 PM');
   });
+
   it('formats midnight as 12 AM and noon as 12 PM', () => {
-    expect(formatAppointment('2026-01-01T00:00')).toBe('01/01/26 at 12:00 AM');
-    expect(formatAppointment('2026-01-01T12:00')).toBe('01/01/26 at 12:00 PM');
+    // 2026-01-01 00:00 EST = 05:00 UTC; 2026-01-01 12:00 EST = 17:00 UTC.
+    expect(formatAppointment('2026-01-01T05:00:00.000Z')).toBe('01/01/26 at 12:00 AM');
+    expect(formatAppointment('2026-01-01T17:00:00.000Z')).toBe('01/01/26 at 12:00 PM');
   });
+
+  it('renders the correct minute digits, zero-padded', () => {
+    // 2026-07-15 08:07 EDT = 12:07 UTC.
+    expect(formatAppointment('2026-07-15T12:07:00.000Z')).toBe('07/15/26 at 8:07 AM');
+  });
+
+  it('the New York calendar date can differ from the UTC calendar date — a late-evening Eastern appointment that has already rolled into the next UTC day must still show the New York date', () => {
+    // 2026-07-15 11:00 PM EDT = 2026-07-16 03:00 UTC. The UTC date has
+    // already crossed into the 16th, but the intended New York
+    // appointment is still the 15th. Naive local/UTC-getter formatting
+    // (the original bug) would show 07/16/26; the correct output is
+    // 07/15/26.
+    expect(formatAppointment('2026-07-16T03:00:00.000Z')).toBe('07/15/26 at 11:00 PM');
+  });
+
   it('returns null for missing or unparseable input', () => {
     expect(formatAppointment(null)).toBeNull();
     expect(formatAppointment(undefined)).toBeNull();
     expect(formatAppointment('not a date')).toBeNull();
+  });
+
+  it('is independent of the Node.js process timezone — the same UTC instant always renders the same New York wall-clock time (requirement: never rely on server-local time)', () => {
+    const original = process.env.TZ;
+    try {
+      process.env.TZ = 'Asia/Singapore';
+      const resultSingapore = formatAppointment('2026-09-05T07:00:00.000Z');
+
+      process.env.TZ = 'UTC';
+      const resultUtc = formatAppointment('2026-09-05T07:00:00.000Z');
+
+      process.env.TZ = 'America/Los_Angeles';
+      const resultPacific = formatAppointment('2026-09-05T07:00:00.000Z');
+
+      expect(resultSingapore).toBe('09/05/26 at 3:00 AM');
+      expect(resultUtc).toBe('09/05/26 at 3:00 AM');
+      expect(resultPacific).toBe('09/05/26 at 3:00 AM');
+    } finally {
+      process.env.TZ = original;
+    }
   });
 });
 

@@ -13,6 +13,11 @@
  * "null"/"undefined" string, never a dangling empty line.
  */
 
+import {
+  BUSINESS_TIMEZONE,
+  wallClockPartsInZone,
+} from '../../../common/timezone/business-timezone';
+
 export interface DriverDispatchStopInput {
   stopType: 'PICKUP' | 'DELIVERY' | 'OTHER';
   companyName: string | null;
@@ -92,22 +97,32 @@ export function parseApprovedNotesFields(
   return result;
 }
 
-/** "MM/DD/YY at H:MM AM/PM" — exact format requested. Returns null (never guesses/throws) for an unparseable or missing value. */
+/**
+ * "MM/DD/YY at H:MM AM/PM" — exact format requested. Returns null (never
+ * guesses/throws) for an unparseable or missing value.
+ *
+ * The caller (CarrierSourcingService.resolveDriverDispatchContext) passes
+ * an absolute UTC instant (`Stop.appointmentDatetime.toISOString()`), so
+ * this must render it in the business timezone explicitly — via the same
+ * `wallClockPartsInZone` ICU-backed helper `business-timezone.ts` already
+ * uses for every other operational timestamp — never `Date`'s local
+ * getters, which would silently depend on the server process's own OS
+ * timezone instead of `BUSINESS_TIMEZONE` (America/New_York).
+ */
 export function formatAppointment(datetime: string | null | undefined): string | null {
   if (!datetime) return null;
   const d = new Date(datetime);
   if (Number.isNaN(d.getTime())) return null;
 
-  const month = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  const year = String(d.getFullYear()).slice(-2);
-  let hour = d.getHours();
-  const minute = d.getMinutes();
-  const meridiem = hour >= 12 ? 'PM' : 'AM';
-  hour = hour % 12;
+  const { month, day, year, hour: hour24, minute } = wallClockPartsInZone(d, BUSINESS_TIMEZONE);
+  const monthStr = String(month).padStart(2, '0');
+  const dayStr = String(day).padStart(2, '0');
+  const yearStr = String(year).slice(-2);
+  const meridiem = hour24 >= 12 ? 'PM' : 'AM';
+  let hour = hour24 % 12;
   if (hour === 0) hour = 12;
 
-  return `${month}/${day}/${year} at ${hour}:${String(minute).padStart(2, '0')} ${meridiem}`;
+  return `${monthStr}/${dayStr}/${yearStr} at ${hour}:${String(minute).padStart(2, '0')} ${meridiem}`;
 }
 
 function contactLine(name: string | null, phone: string | null): string | null {
