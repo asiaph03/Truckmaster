@@ -5,6 +5,7 @@ import { Search } from 'lucide-react';
 import {
   documentTypesApi,
   documentsApi,
+  isDocumentConsumable,
   type DocumentEntityType,
   type DocumentSearchFilters,
   type DocumentSearchResultRow,
@@ -92,18 +93,31 @@ function ScanStatusCell({
       />
     );
   }
-  if (row.scanStatus === 'CLEAN') {
+  // CLEAN and SCAN_FAILED are both consumable (approved operational
+  // policy — a failed scan attempt doesn't block usage, only an actual
+  // INFECTED detection does). A SCAN_FAILED document still shows its own
+  // badge alongside Download so the scan outcome stays visible, never
+  // silently presented as if it were CLEAN.
+  if (isDocumentConsumable(row.scanStatus)) {
     return (
-      <Button variant="tertiary" size="sm" onClick={() => onDownload(row.id)}>
-        Download
-      </Button>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+        <Button variant="tertiary" size="sm" onClick={() => onDownload(row.id)}>
+          Download
+        </Button>
+        {row.scanStatus === 'SCAN_FAILED' ? (
+          <Badge
+            label="Scan Failed"
+            color={getStatusBadgeColor('Document.scanStatus', 'SCAN_FAILED') ?? 'danger'}
+          />
+        ) : null}
+      </div>
     );
   }
   if (row.scanStatus === 'PENDING') return <Badge label="Scanning…" color="neutral" />;
   return (
     <Badge
-      label={row.scanStatus === 'INFECTED' ? 'Blocked (Infected)' : 'Scan Failed'}
-      color={getStatusBadgeColor('Document.scanStatus', row.scanStatus) ?? 'danger'}
+      label="Blocked (Infected)"
+      color={getStatusBadgeColor('Document.scanStatus', 'INFECTED') ?? 'danger'}
     />
   );
 }

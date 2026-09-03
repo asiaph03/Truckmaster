@@ -99,6 +99,55 @@ describe('RateConfirmationDropzone — Rate Confirmation extraction feature', ()
     expect(received).toEqual(extraction);
   });
 
+  it('a SCAN_FAILED scan result proceeds to extraction rather than becoming a terminal error (approved policy: only INFECTED blocks)', async () => {
+    const extraction: ExtractedRateConfirmationData = {
+      customer: null,
+      equipmentType: null,
+      customerRate: null,
+      customerPoNumber: null,
+      bolNumber: null,
+      pickupNumber: null,
+      customerReferenceNumber: null,
+      stops: [],
+      warnings: [],
+      unmappedFields: [],
+    };
+
+    server.use(
+      http.post('/api/v1/rate-confirmation-extractions', () =>
+        HttpResponse.json(
+          { extractionId: 'ex-sf', uploadUrl: 'https://fake-upload.test/put-sf' },
+          { status: 201 },
+        ),
+      ),
+      http.put('https://fake-upload.test/put-sf', () => new HttpResponse(null, { status: 200 })),
+      http.post('/api/v1/rate-confirmation-extractions/ex-sf/confirm', () =>
+        HttpResponse.json({ extractionId: 'ex-sf', scanStatus: 'PENDING' }),
+      ),
+      http.get('/api/v1/rate-confirmation-extractions/ex-sf', () =>
+        HttpResponse.json({
+          extractionId: 'ex-sf',
+          scanStatus: 'SCAN_FAILED',
+          extractionStatus: 'COMPLETE',
+          extractionError: null,
+          data: extraction,
+        }),
+      ),
+    );
+
+    let received: ExtractedRateConfirmationData | undefined;
+    render(<RateConfirmationDropzone onExtracted={(d) => (received = d)} />);
+    fireEvent.change(fileInput(), { target: { files: [pdfFile()] } });
+
+    await waitFor(() => expect(screen.getByText('Extracted — review below')).toBeInTheDocument(), {
+      timeout: 5000,
+    });
+    expect(received).toEqual(extraction);
+    expect(
+      screen.queryByText('This file was flagged by malware scanning and cannot be used.'),
+    ).not.toBeInTheDocument();
+  });
+
   it('surfaces an INFECTED scan result as an error, never reaches extraction', async () => {
     server.use(
       http.post('/api/v1/rate-confirmation-extractions', () =>

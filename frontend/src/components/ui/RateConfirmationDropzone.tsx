@@ -62,14 +62,14 @@ export function RateConfirmationDropzone({
         setErrorMessage('This file was flagged by malware scanning and cannot be used.');
         return;
       }
-      if (result.scanStatus === 'SCAN_FAILED') {
-        setStatus('error');
-        setErrorMessage('Malware scanning failed for this file. Please try again.');
-        return;
-      }
-      if (result.scanStatus !== 'CLEAN') {
+      if (result.scanStatus === 'PENDING') {
         continue; // still scanning
       }
+      // CLEAN or SCAN_FAILED — both consumable per approved policy. A
+      // SCAN_FAILED file was never actually verified clean by
+      // Cloudmersive, but a failed scan *attempt* doesn't block usage
+      // here — only an actual INFECTED detection does — so extraction
+      // proceeds exactly as it would for CLEAN.
 
       setStatus('extracting');
 

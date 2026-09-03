@@ -677,6 +677,27 @@ describe('CarrierSourcingService — Driver Dispatch Email feature', () => {
       });
     });
 
+    it('MALWARE_SCAN_ENABLED=false — resolves a document scanned via the malware-scan bypass exactly like a genuinely Cloudmersive-scanned one, since the gate only checks scanStatus === CLEAN, never scanProvider', async () => {
+      const { service } = buildService({
+        load: dispatchedLoad(),
+        driver: {
+          id: DRIVER_ID,
+          email: 'julia@carrier.test',
+          organizationId: ORG_ID,
+          carrierId: CARRIER_ID,
+        },
+        rateConfDoc: cleanUploadedRateConfDoc({
+          scanStatus: 'CLEAN',
+          scanProvider: 'bypass: malware scanning disabled by configuration',
+        }),
+      });
+
+      const preview = await service.previewDriverDispatchEmail(ORG_ID, LOAD_ID);
+
+      expect(preview.attachmentAvailable).toBe(true);
+      expect(preview.attachmentFileName).toBe('Nurana RC 2434269.pdf');
+    });
+
     it('is unavailable when the current-version RATE_CONFIRMATION is the system-generated one (generationStatus non-null) — never falls back to it', async () => {
       // The query itself filters generationStatus: null, so a generated-
       // only document is correctly modeled as "not found" by the mock —
@@ -699,7 +720,7 @@ describe('CarrierSourcingService — Driver Dispatch Email feature', () => {
       expect(preview.attachmentFileName).toBeNull();
     });
 
-    it('is unavailable when the uploaded document has not passed malware scanning (non-CLEAN)', async () => {
+    it('is unavailable while the uploaded document is still PENDING scan (not yet consumable)', async () => {
       const { service } = buildService({
         load: dispatchedLoad(),
         driver: {
@@ -709,6 +730,23 @@ describe('CarrierSourcingService — Driver Dispatch Email feature', () => {
           carrierId: CARRIER_ID,
         },
         rateConfDoc: cleanUploadedRateConfDoc({ scanStatus: 'PENDING' }),
+      });
+
+      const preview = await service.previewDriverDispatchEmail(ORG_ID, LOAD_ID);
+
+      expect(preview.attachmentAvailable).toBe(false);
+    });
+
+    it('is unavailable when the uploaded document is INFECTED (remains blocked)', async () => {
+      const { service } = buildService({
+        load: dispatchedLoad(),
+        driver: {
+          id: DRIVER_ID,
+          email: 'julia@carrier.test',
+          organizationId: ORG_ID,
+          carrierId: CARRIER_ID,
+        },
+        rateConfDoc: cleanUploadedRateConfDoc({ scanStatus: 'INFECTED' }),
       });
 
       const preview = await service.previewDriverDispatchEmail(ORG_ID, LOAD_ID);
@@ -828,6 +866,32 @@ describe('CarrierSourcingService — Driver Dispatch Email feature', () => {
         );
       });
 
+      it('MALWARE_SCAN_ENABLED=true, Cloudmersive scan actually failed — attaches a SCAN_FAILED uploaded Rate Confirmation anyway (approved policy: a failed scan attempt does not block the attachment, only INFECTED does; the document stays SCAN_FAILED, never rewritten to CLEAN)', async () => {
+        const { service, emailQueue, audit } = buildDispatchService({
+          rateConfDoc: cleanUploadedRateConfDoc({ scanStatus: 'SCAN_FAILED' }),
+        });
+
+        const result = await service.sendDriverDispatchEmail(
+          ORG_ID,
+          LOAD_ID,
+          { attachRateConfirmation: true },
+          USER_ID,
+        );
+
+        expect(result.recipientEmail).toBe('julia@carrier.test');
+        expect(emailQueue.add).toHaveBeenCalledWith(
+          'send',
+          expect.objectContaining({ attachmentDocumentId: 'uploaded-rate-conf-doc-1' }),
+          expect.anything(),
+        );
+        expect(audit.record).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.objectContaining({
+            newValue: expect.objectContaining({ documentId: 'uploaded-rate-conf-doc-1' }),
+          }),
+        );
+      });
+
       it('fails clearly, without sending, when no eligible uploaded Rate Confirmation exists (only a generated one, or none at all) — never falls back to it', async () => {
         const { service, emailQueue } = buildDispatchService({ rateConfDoc: null });
 
@@ -853,7 +917,7 @@ describe('CarrierSourcingService — Driver Dispatch Email feature', () => {
         expect(emailQueue.add).not.toHaveBeenCalled();
       });
 
-      it('rejects when the only current-version document is non-CLEAN', async () => {
+      it('rejects when the only current-version document is INFECTED (remains blocked — the one scan outcome that still is)', async () => {
         const { service, emailQueue } = buildDispatchService({
           rateConfDoc: cleanUploadedRateConfDoc({ scanStatus: 'INFECTED' }),
         });

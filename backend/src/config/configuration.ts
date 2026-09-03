@@ -45,6 +45,22 @@ export interface AppConfig {
   cloudmersive: {
     apiKey: string;
   };
+  /**
+   * Reversible kill-switch for the malware-scan step (MalwareScanWorker),
+   * added when the Cloudmersive free-tier API allowance was being
+   * exhausted in production. Defaults to `true` (existing behavior
+   * unchanged) — set `MALWARE_SCAN_ENABLED=false` to skip calling the
+   * scanner entirely without touching CLOUDMERSIVE_API_KEY or the
+   * CloudmersiveMalwareScanner implementation. A document uploaded while
+   * disabled is transitioned straight to `scanStatus: CLEAN` (via
+   * DocumentService.applyScanResult, with a distinct
+   * MALWARE_SCAN_BYPASS_PROVIDER marker instead of `'cloudmersive'` in
+   * `scanProvider`) so it stays immediately usable — downloadable,
+   * attachable to the Driver Dispatch Email, and eligible for the Rate
+   * Confirmation extraction/POD-status side effects that are already
+   * gated on CLEAN — never left permanently PENDING/blocked.
+   */
+  malwareScanEnabled: boolean;
   /** Frontend Phase 16 — hosted transactional email provider (behind IEmailSender). */
   postmark: {
     apiKey: string;
@@ -112,6 +128,7 @@ export default (): AppConfig => ({
   cloudmersive: {
     apiKey: process.env.CLOUDMERSIVE_API_KEY || '',
   },
+  malwareScanEnabled: (process.env.MALWARE_SCAN_ENABLED ?? 'true') === 'true',
   postmark: {
     apiKey: process.env.POSTMARK_API_KEY || '',
     fromAddress: process.env.POSTMARK_FROM_ADDRESS || '',

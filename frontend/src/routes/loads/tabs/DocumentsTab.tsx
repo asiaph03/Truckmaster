@@ -1,6 +1,12 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { documentTypesApi, documentsApi, type AppDocument, type Load } from '../../../api';
+import {
+  documentTypesApi,
+  documentsApi,
+  isDocumentConsumable,
+  type AppDocument,
+  type Load,
+} from '../../../api';
 import { getStatusBadgeColor } from '../../../components/ui/statusBadgeMap';
 import { Badge, Button, DataTable, FileUploadField, Select } from '../../../components/ui';
 import { useToast } from '../../../components/ui/toastStore';
@@ -30,18 +36,31 @@ function ScanStatusCell({ doc, toast }: { doc: AppDocument; toast: ReturnType<ty
       />
     );
   }
-  if (doc.scanStatus === 'CLEAN') {
+  // CLEAN and SCAN_FAILED are both consumable (approved operational
+  // policy — a failed scan attempt doesn't block usage, only an actual
+  // INFECTED detection does). A SCAN_FAILED document still shows its own
+  // badge alongside Download so the scan outcome stays visible, never
+  // silently presented as if it were CLEAN.
+  if (isDocumentConsumable(doc.scanStatus)) {
     return (
-      <Button variant="tertiary" size="sm" onClick={() => download(doc.id, toast)}>
-        Download
-      </Button>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+        <Button variant="tertiary" size="sm" onClick={() => download(doc.id, toast)}>
+          Download
+        </Button>
+        {doc.scanStatus === 'SCAN_FAILED' ? (
+          <Badge
+            label="Scan Failed"
+            color={getStatusBadgeColor('Document.scanStatus', 'SCAN_FAILED') ?? 'danger'}
+          />
+        ) : null}
+      </div>
     );
   }
   if (doc.scanStatus === 'PENDING') return <Badge label="Scanning…" color="neutral" />;
   return (
     <Badge
-      label={doc.scanStatus === 'INFECTED' ? 'Blocked (Infected)' : 'Scan Failed'}
-      color={getStatusBadgeColor('Document.scanStatus', doc.scanStatus) ?? 'danger'}
+      label="Blocked (Infected)"
+      color={getStatusBadgeColor('Document.scanStatus', 'INFECTED') ?? 'danger'}
     />
   );
 }

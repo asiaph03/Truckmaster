@@ -1,10 +1,10 @@
-import { describe, expect, it } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { describe, expect, it, vi } from 'vitest';
+import { render, screen, within, fireEvent, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { http, HttpResponse } from 'msw';
 import { server } from '../../../test/mswServer';
 import { DocumentsTab } from './DocumentsTab';
-import type { Load, Stop } from '../../../api';
+import type { AppDocument, Load, Stop } from '../../../api';
 
 const DOC_TYPES = [
   {
@@ -86,17 +86,37 @@ function makeLoad(stops: Stop[]): Load {
   };
 }
 
-function renderTab(load: Load) {
+function renderTab(load: Load, loadDocuments: AppDocument[] = []) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   server.use(
     http.get('/api/v1/document-types', () => HttpResponse.json(DOC_TYPES)),
-    http.get('/api/v1/documents', () => HttpResponse.json([])),
+    http.get('/api/v1/documents', () => HttpResponse.json(loadDocuments)),
   );
   return render(
     <QueryClientProvider client={queryClient}>
       <DocumentsTab load={load} />
     </QueryClientProvider>,
   );
+}
+
+function makeAppDocument(overrides: Partial<AppDocument>): AppDocument {
+  return {
+    id: 'doc-1',
+    entityType: 'LOAD',
+    entityId: 'load-1',
+    documentTypeId: 'dt-bol',
+    fileName: 'bol.pdf',
+    mimeType: 'application/pdf',
+    fileSizeBytes: '1024',
+    fileStorageKey: 'org_1/documents/doc-1',
+    versionNumber: 1,
+    isCurrentVersion: true,
+    scanStatus: 'CLEAN',
+    reviewStatus: 'NOT_APPLICABLE',
+    uploadedByUserId: 'user-1',
+    uploadedAt: '2026-01-01T00:00:00.000Z',
+    ...overrides,
+  };
 }
 
 describe('DocumentsTab — Proof of Pickup (POP) / Proof of Delivery (POD) by Stop', () => {
@@ -220,5 +240,50 @@ describe('DocumentsTab — Proof of Pickup (POP) / Proof of Delivery (POD) by St
     expect(optionLabels).toContain('Rate Confirmation');
     expect(optionLabels).not.toContain('Proof of Delivery');
     expect(optionLabels).not.toContain('Proof of Pickup');
+  });
+});
+
+describe('DocumentsTab — scan-status consumption gate (isDocumentConsumable)', () => {
+  it('shows a Download button AND a "Scan Failed" badge for a SCAN_FAILED Load-level document, and download opens the resolved URL', async () => {
+    const load = makeLoad([]);
+    const doc = makeAppDocument({ id: 'doc-1', scanStatus: 'SCAN_FAILED' });
+    server.use(
+      http.get('/api/v1/documents/doc-1/download-url', () =>
+        HttpResponse.json({ url: 'https://storage.test/doc-1' }),
+      ),
+    );
+    const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null);
+
+    renderTab(load, [doc]);
+
+    await waitFor(() => expect(screen.getByText('bol.pdf')).toBeInTheDocument());
+    expect(screen.getByText('Scan Failed')).toBeInTheDocument();
+    fireEvent.click(screen.getByText('Download'));
+    await waitFor(() =>
+      expect(openSpy).toHaveBeenCalledWith('https://storage.test/doc-1', '_blank', 'noopener'),
+    );
+    openSpy.mockRestore();
+  });
+
+  it('shows "Blocked (Infected)" with no Download button for an INFECTED Load-level document (remains blocked)', async () => {
+    const load = makeLoad([]);
+    const doc = makeAppDocument({ id: 'doc-1', scanStatus: 'INFECTED' });
+
+    renderTab(load, [doc]);
+
+    await waitFor(() => expect(screen.getByText('bol.pdf')).toBeInTheDocument());
+    expect(screen.getByText('Blocked (Infected)')).toBeInTheDocument();
+    expect(screen.queryByText('Download')).not.toBeInTheDocument();
+  });
+
+  it('shows a Scanning badge (no Download) for a PENDING Load-level document (remains blocked)', async () => {
+    const load = makeLoad([]);
+    const doc = makeAppDocument({ id: 'doc-1', scanStatus: 'PENDING' });
+
+    renderTab(load, [doc]);
+
+    await waitFor(() => expect(screen.getByText('bol.pdf')).toBeInTheDocument());
+    expect(screen.getByText('Scanning…')).toBeInTheDocument();
+    expect(screen.queryByText('Download')).not.toBeInTheDocument();
   });
 });

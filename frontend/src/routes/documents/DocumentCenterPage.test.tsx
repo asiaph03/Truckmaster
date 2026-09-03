@@ -137,6 +137,53 @@ describe('DocumentCenterPage — Frontend Phase 20', () => {
     expect(screen.queryByText('Download')).not.toBeInTheDocument();
   });
 
+  it('shows a Download button AND a "Scan Failed" badge for a SCAN_FAILED document (approved policy: consumable, but the scan outcome stays visible) and opens the resolved download URL', async () => {
+    mockBaseHandlers(() =>
+      HttpResponse.json({
+        items: [{ ...DOC_ROW, scanStatus: 'SCAN_FAILED' }],
+        total: 1,
+        page: 1,
+        pageSize: 50,
+      }),
+    );
+    server.use(
+      http.get('/api/v1/documents/doc-1/download-url', () =>
+        HttpResponse.json({ url: 'https://storage.test/doc-1' }),
+      ),
+    );
+    const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null);
+
+    renderPage();
+    await waitFor(() => expect(screen.getByText('w9.pdf')).toBeInTheDocument());
+
+    // Scoped to the results table — "Scan Failed" is also a filter-dropdown option label.
+    const table = screen.getByRole('table');
+    expect(within(table).getByText('Scan Failed')).toBeInTheDocument();
+    fireEvent.click(within(table).getByText('Download'));
+    await waitFor(() =>
+      expect(openSpy).toHaveBeenCalledWith('https://storage.test/doc-1', '_blank', 'noopener'),
+    );
+    openSpy.mockRestore();
+  });
+
+  it('shows "Blocked (Infected)" with no Download button for an INFECTED document (remains blocked)', async () => {
+    mockBaseHandlers(() =>
+      HttpResponse.json({
+        items: [{ ...DOC_ROW, scanStatus: 'INFECTED' }],
+        total: 1,
+        page: 1,
+        pageSize: 50,
+      }),
+    );
+
+    renderPage();
+
+    await waitFor(() => expect(screen.getByText('w9.pdf')).toBeInTheDocument());
+    const table = screen.getByRole('table');
+    expect(within(table).getByText('Blocked (Infected)')).toBeInTheDocument();
+    expect(within(table).queryByText('Download')).not.toBeInTheDocument();
+  });
+
   it('shows Approve/Reject only for a CARRIER document pending review, gated on reviewComplianceDocuments', async () => {
     const carrierDoc = {
       ...DOC_ROW,

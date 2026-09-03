@@ -4,6 +4,7 @@ import { Queue } from 'bullmq';
 import { PrismaService } from '../../../common/prisma/prisma.service';
 import { NotFoundError, BusinessRuleError } from '../../../common/errors/app-error';
 import { DocumentService } from '../../document/services/document.service';
+import { isDocumentConsumable } from '../../document/services/document-consumption';
 import { InitiateRateConfirmationExtractionDto } from '../dto/initiate-rate-confirmation-extraction.dto';
 import {
   RateConfirmationExtractionJobStore,
@@ -125,7 +126,7 @@ export class RateConfirmationExtractionService {
       tx.document.findFirst({ where: { id: job.documentId, organizationId } }),
     );
     if (!document) throw new NotFoundError('Extraction not found.');
-    if (document.scanStatus !== 'CLEAN') {
+    if (!isDocumentConsumable(document.scanStatus)) {
       throw new BusinessRuleError(
         'Extraction can only be retried once the document has passed malware scanning.',
       );

@@ -14,6 +14,22 @@ export type DocumentEntityType =
   | 'CARRIER_PAYMENT';
 
 export type DocumentScanStatus = 'PENDING' | 'CLEAN' | 'INFECTED' | 'SCAN_FAILED';
+
+/**
+ * The one shared frontend definition of "is this document allowed for
+ * consumption" — mirrors the backend's identically-named
+ * `isDocumentConsumable` in document-consumption.ts exactly. Replaces what
+ * were two independently-duplicated `scanStatus === 'CLEAN'` checks in
+ * DocumentsTab.tsx and DocumentCenterPage.tsx (each explicitly commented
+ * as "mirrors" the other). CLEAN and SCAN_FAILED are both consumable
+ * (approved operational policy); INFECTED and PENDING are never
+ * consumable. Never used for POD/closing-checklist logic, which stays
+ * CLEAN-only server-side and isn't computed on the frontend at all.
+ */
+export function isDocumentConsumable(scanStatus: DocumentScanStatus): boolean {
+  return scanStatus === 'CLEAN' || scanStatus === 'SCAN_FAILED';
+}
+
 export type DocumentReviewStatus =
   'NOT_APPLICABLE' | 'PENDING_REVIEW' | 'APPROVED' | 'REJECTED' | 'EXPIRED';
 /** Nullable — only Rate Confirmation/Invoice/Settlement documents are system-generated (Phase 16). */

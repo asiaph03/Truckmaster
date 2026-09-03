@@ -30,6 +30,7 @@ import {
   buildDriverDispatchMessage,
   DriverDispatchMessage,
 } from '../utils/driver-dispatch-message';
+import { isDocumentConsumable } from '../../document/services/document-consumption';
 
 const RATE_CONFIRMATION_DOCUMENT_TYPE_CODE = 'RATE_CONFIRMATION';
 
@@ -652,7 +653,7 @@ export class CarrierSourcingService {
         orderBy: { uploadedAt: 'desc' },
       });
       if (!doc) return null;
-      if (doc.scanStatus !== 'CLEAN' || doc.mimeType !== 'application/pdf') return null;
+      if (!isDocumentConsumable(doc.scanStatus) || doc.mimeType !== 'application/pdf') return null;
 
       return {
         id: doc.id,

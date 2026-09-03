@@ -357,6 +357,88 @@ describe('DocumentService.applyScanResult — malware scan / quarantine (Decisio
   });
 });
 
+describe('DocumentService.applyScanResult — RATE_CONFIRMATION_INTAKE extraction enqueue (isDocumentConsumable gate)', () => {
+  const ORG_ID = 'org-1';
+  const DOC_ID = 'doc-1';
+  const EXTRACTION_ID = 'extraction-1';
+
+  function buildService() {
+    const document = {
+      id: DOC_ID,
+      organizationId: ORG_ID,
+      entityType: 'RATE_CONFIRMATION_INTAKE',
+      entityId: EXTRACTION_ID,
+      fileStorageKey: `org_${ORG_ID}/documents/${DOC_ID}`,
+      scanStatus: 'PENDING',
+    };
+
+    const tx = {
+      document: {
+        findFirst: jest.fn().mockResolvedValue(document),
+        update: jest.fn().mockResolvedValue(document),
+      },
+    };
+    const prisma = {
+      withTenantTransaction: jest
+        .fn()
+        .mockImplementation((_orgId: string, fn: (tx: unknown) => unknown) => fn(tx)),
+    };
+    const audit = { record: jest.fn().mockResolvedValue(undefined) };
+    const storage = {
+      buildQuarantineKey: jest.fn().mockReturnValue(`org_${ORG_ID}/quarantine/${DOC_ID}`),
+      moveToQuarantine: jest.fn().mockResolvedValue(undefined),
+    };
+    const carrierEligibility = { recalculate: jest.fn() };
+    const loadPodStatus = { recalculatePodStatus: jest.fn().mockResolvedValue('NOT_RECEIVED') };
+    const scanQueue = { add: jest.fn() };
+    const extractionQueue = { add: jest.fn() };
+
+    const service = new DocumentService(
+      prisma as never,
+      audit as never,
+      storage as never,
+      carrierEligibility as never,
+      loadPodStatus as never,
+      scanQueue as never,
+      extractionQueue as never,
+    );
+
+    return { service, extractionQueue };
+  }
+
+  it('enqueues extraction on CLEAN (existing behavior, unchanged)', async () => {
+    const { service, extractionQueue } = buildService();
+
+    await service.applyScanResult(ORG_ID, DOC_ID, { status: 'CLEAN', provider: 'stub' });
+
+    expect(extractionQueue.add).toHaveBeenCalledWith(
+      'extract',
+      expect.objectContaining({ extractionId: EXTRACTION_ID, documentId: DOC_ID }),
+      expect.anything(),
+    );
+  });
+
+  it('enqueues extraction on SCAN_FAILED (approved policy: a failed scan attempt does not block extraction)', async () => {
+    const { service, extractionQueue } = buildService();
+
+    await service.applyScanResult(ORG_ID, DOC_ID, { status: 'SCAN_FAILED', provider: 'stub' });
+
+    expect(extractionQueue.add).toHaveBeenCalledWith(
+      'extract',
+      expect.objectContaining({ extractionId: EXTRACTION_ID, documentId: DOC_ID }),
+      expect.anything(),
+    );
+  });
+
+  it('never enqueues extraction on INFECTED (remains blocked)', async () => {
+    const { service, extractionQueue } = buildService();
+
+    await service.applyScanResult(ORG_ID, DOC_ID, { status: 'INFECTED', provider: 'stub' });
+
+    expect(extractionQueue.add).not.toHaveBeenCalled();
+  });
+});
+
 describe('DocumentService.getDownloadUrl — §8.4 gates on scan_status', () => {
   const ORG_ID = 'org-1';
   const DOC_ID = 'doc-1';
@@ -396,6 +478,12 @@ describe('DocumentService.getDownloadUrl — §8.4 gates on scan_status', () => 
 
   it('issues a signed URL when scan_status is CLEAN', async () => {
     const service = buildService('CLEAN');
+    const result = await service.getDownloadUrl(ORG_ID, DOC_ID, 'user-1', ['DISPATCHER']);
+    expect(result.url).toBe('https://signed-url.example');
+  });
+
+  it('issues a signed URL when scan_status is SCAN_FAILED (approved policy: a failed scan attempt does not block download, only INFECTED does; the persisted scanStatus itself stays SCAN_FAILED, never rewritten to CLEAN)', async () => {
+    const service = buildService('SCAN_FAILED');
     const result = await service.getDownloadUrl(ORG_ID, DOC_ID, 'user-1', ['DISPATCHER']);
     expect(result.url).toBe('https://signed-url.example');
   });

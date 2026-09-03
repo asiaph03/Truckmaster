@@ -18,6 +18,7 @@ import {
 import { CarrierEligibilityService } from '../../carrier/services/carrier-eligibility.service';
 import { LoadPodStatusService } from '../../quote-load/services/load-pod-status.service';
 import { MALWARE_SCAN_JOB_OPTIONS, MALWARE_SCAN_QUEUE } from './malware-scan.constants';
+import { isDocumentConsumable } from './document-consumption';
 import { FINANCIAL_VIEW_ROLES } from '../../../common/authorization/financial-view-roles';
 import {
   RATE_CONFIRMATION_EXTRACTION_JOB_OPTIONS,
@@ -543,7 +544,7 @@ export class DocumentService {
     });
   }
 
-  /** §8.4 — permission to view the parent entity (enforced by `assertViewPermission` below) + scan_status === CLEAN. */
+  /** §8.4 — permission to view the parent entity (enforced by `assertViewPermission` below) + isDocumentConsumable(scan_status) (CLEAN or SCAN_FAILED; INFECTED/PENDING blocked). */
   async getDownloadUrl(
     organizationId: string,
     documentId: string,
@@ -565,7 +566,7 @@ export class DocumentService {
       );
       return doc;
     });
-    if (document.scanStatus !== 'CLEAN') {
+    if (!isDocumentConsumable(document.scanStatus)) {
       throw new BusinessRuleError(
         `This document is not available for download (scan status: ${document.scanStatus}).`,
       );
@@ -695,10 +696,15 @@ export class DocumentService {
 
       // Rate Confirmation → New Load auto-populate feature — mirrors the
       // STOP branch above exactly: extraction only ever starts from here,
-      // after the scan outcome is known, and only on CLEAN. INFECTED/
-      // SCAN_FAILED documents are already quarantined above and never
-      // reach extraction — malware scanning can never be bypassed.
-      if (document.entityType === 'RATE_CONFIRMATION_INTAKE' && result.status === 'CLEAN') {
+      // after the scan outcome is known, and only when the result is
+      // consumable (CLEAN or SCAN_FAILED, per isDocumentConsumable —
+      // approved operational policy). INFECTED documents never reach
+      // extraction — malware scanning can never be bypassed for an
+      // actual positive detection.
+      if (
+        document.entityType === 'RATE_CONFIRMATION_INTAKE' &&
+        isDocumentConsumable(result.status)
+      ) {
         await this.extractionQueue.add(
           'extract',
           {
