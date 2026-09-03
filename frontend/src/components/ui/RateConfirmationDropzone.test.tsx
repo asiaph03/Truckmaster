@@ -89,7 +89,15 @@ describe('RateConfirmationDropzone — Rate Confirmation extraction feature', ()
     );
 
     let received: ExtractedRateConfirmationData | undefined;
-    render(<RateConfirmationDropzone onExtracted={(d) => (received = d)} />);
+    let receivedExtractionId: string | undefined;
+    render(
+      <RateConfirmationDropzone
+        onExtracted={(d, id) => {
+          received = d;
+          receivedExtractionId = id;
+        }}
+      />,
+    );
 
     fireEvent.change(fileInput(), { target: { files: [pdfFile()] } });
 
@@ -97,6 +105,10 @@ describe('RateConfirmationDropzone — Rate Confirmation extraction feature', ()
       timeout: 5000,
     });
     expect(received).toEqual(extraction);
+    // The extractionId (needed by LoadCreatePage to persist a Load Draft
+    // referencing the same source Document, without a second extraction
+    // call) must be the exact id this extraction ran under.
+    expect(receivedExtractionId).toBe('ex-1');
   });
 
   it('a SCAN_FAILED scan result proceeds to extraction rather than becoming a terminal error (approved policy: only INFECTED blocks)', async () => {

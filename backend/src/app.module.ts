@@ -18,6 +18,7 @@ import { CarrierModule } from './modules/carrier/carrier.module';
 import { DocumentModule } from './modules/document/document.module';
 import { QuoteLoadModule } from './modules/quote-load/quote-load.module';
 import { RateConfirmationExtractionModule } from './modules/rate-confirmation-extraction/rate-confirmation-extraction.module';
+import { LoadDraftModule } from './modules/load-draft/load-draft.module';
 import { BillingModule } from './modules/billing/billing.module';
 import { CarrierPayModule } from './modules/carrier-pay/carrier-pay.module';
 import { NotificationModule } from './modules/notification/notification.module';
@@ -112,6 +113,7 @@ import { ImportModule } from './modules/import/import.module';
     DocumentModule,
     QuoteLoadModule,
     RateConfirmationExtractionModule,
+    LoadDraftModule,
     BillingModule,
     CarrierPayModule,
     NotificationModule,

@@ -144,6 +144,9 @@ model User {
   // Bulk Import reverse relation
   importBatchesCreated ImportBatch[] @relation("ImportBatchCreatedBy")
 
+  // Rate Confirmation → New Load auto-populate feature reverse relation
+  loadDraftsCreated LoadDraft[] @relation("LoadDraftCreatedBy")
+
   @@map("user")
 }
 
@@ -194,6 +197,9 @@ model Organization {
   // Phase 7 — Notification is a direct child of Organization, same tier as
   // Customer/Carrier/Quote/Load/Invoice.
   notifications Notification[]
+
+  // Rate Confirmation → New Load auto-populate feature — same tier.
+  loadDrafts LoadDraft[]
 
   @@map("organization")
 }
@@ -510,6 +516,9 @@ model Customer {
 
   // Phase 6 reverse relation
   invoices Invoice[]
+
+  // Rate Confirmation → New Load auto-populate feature reverse relation
+  loadDrafts LoadDraft[]
 
   @@index([organizationId, status])
   @@index([organizationId, legalName])
@@ -938,6 +947,10 @@ model Document {
 
   carrierInsuranceCoiFor CarrierInsurance[]     @relation("CarrierInsuranceCoiDocument")
   carrierFactoringNoaFor CarrierFactoringInfo[] @relation("CarrierFactoringNoaDocument")
+
+  // Rate Confirmation → New Load auto-populate feature reverse relation —
+  // at most one, enforced by LoadDraft.rateConfirmationDocumentId @unique.
+  loadDraft LoadDraft?
 
   @@index([organizationId, entityType, entityId, isCurrentVersion])
   @@index([organizationId, scanStatus])
@@ -1991,4 +2004,56 @@ model Notification {
 
   @@index([organizationId, recipientUserId, read])
   @@map("notification")
+}
+
+// ---------------------------------------------------------------------
+// Rate Confirmation → New Load auto-populate feature — Load Draft.
+//
+// Primary purpose (NON-NEGOTIABLE): a Rate Confirmation PDF is sent to
+// the LLM extractor at most once. The extraction result is snapshotted
+// here in Postgres the moment the resolved Customer turns out not to be
+// ACTIVE (new or existing — either way, booking is blocked until
+// someone changes that Customer's status, exactly as it already works
+// today via CustomerService.changeStatus — no new approval workflow).
+// Resuming a draft NEVER re-invokes the extractor and NEVER re-reads the
+// short-lived (1-hour TTL) Redis extraction job record — this table is
+// durable and outlives that TTL by design. Booking itself is completely
+// unchanged: LoadService.createDirect still re-validates the Customer's
+// status server-side (assertCustomerAllowsBooking) regardless of what
+// this row says, so nothing here weakens or duplicates that check.
+// ---------------------------------------------------------------------
+
+/// See the section comment above. No status field on this model on
+/// purpose — "waiting on approval" vs. "ready to book" is always derived
+/// live from `customer.status`, never stored here, so it can never drift
+/// out of sync with the one real source of truth.
+model LoadDraft {
+  id String @id @default(uuid()) @db.Uuid
+
+  organizationId String       @map("organization_id") @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  createdByUserId String @map("created_by_user_id") @db.Uuid
+  createdBy       User   @relation("LoadDraftCreatedBy", fields: [createdByUserId], references: [id])
+
+  customerId String   @map("customer_id") @db.Uuid
+  customer   Customer @relation(fields: [customerId], references: [id])
+
+  /// The SAME Document row created by the original upload — never a new
+  /// upload, never duplicated. @unique enforces at most one open draft
+  /// per source document.
+  rateConfirmationDocumentId String   @unique @map("rate_confirmation_document_id") @db.Uuid
+  rateConfirmationDocument   Document @relation(fields: [rateConfirmationDocumentId], references: [id])
+
+  /// A full, durable snapshot of ExtractedRateConfirmationData (backend
+  /// rate-confirmation-extractor.interface.ts), taken once when the draft
+  /// is created. Never refetched from the Anthropic extractor or the
+  /// Redis job store afterward.
+  extractedData Json @map("extracted_data")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([organizationId])
+  @@map("load_draft")
 }

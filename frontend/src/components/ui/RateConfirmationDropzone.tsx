@@ -16,8 +16,14 @@ const MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024; // 20 MB, matches the backend's In
 
 export interface RateConfirmationDropzoneProps {
   disabled?: boolean;
-  /** Called once with the full extraction result on COMPLETE. Never auto-submits anything — the caller (LoadCreatePage) decides what to do with it. */
-  onExtracted: (data: ExtractedRateConfirmationData) => void;
+  /**
+   * Called once with the full extraction result on COMPLETE, plus the
+   * extractionId it came from (needed by LoadCreatePage to persist a
+   * Load Draft referencing the same underlying Document — see
+   * loadDraftsApi.create). Never auto-submits anything — the caller
+   * decides what to do with it.
+   */
+  onExtracted: (data: ExtractedRateConfirmationData, extractionId: string) => void;
 }
 
 /**
@@ -80,7 +86,7 @@ export function RateConfirmationDropzone({
       }
       if (result.extractionStatus === 'COMPLETE' && result.data) {
         setStatus('complete');
-        onExtracted(result.data);
+        onExtracted(result.data, id);
         return;
       }
       // extractionStatus is PENDING or NOT_STARTED — keep polling.

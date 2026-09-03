@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within, act } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClient, QueryClientProvider, focusManager } from '@tanstack/react-query';
 import { http, HttpResponse } from 'msw';
 import { server } from '../../test/mswServer';
 import { LoadCreatePage } from './LoadCreatePage';
@@ -10,6 +10,7 @@ import type { ExtractedRateConfirmationData } from '../../api/rateConfirmationEx
 const CUSTOMERS = [
   { id: 'cust-1', legalName: 'Acme Freight LLC', status: 'ACTIVE' },
   { id: 'cust-2', legalName: 'Beta Logistics', status: 'ACTIVE' },
+  { id: 'cust-3', legalName: 'Pending Approval Carriers Inc', status: 'PROSPECT' },
 ];
 
 /**
@@ -36,12 +37,12 @@ async function waitForCustomersLoaded() {
   fireEvent.blur(customerComboboxInput());
 }
 
-function renderPage() {
+function renderPage(initialPath = '/loads/new') {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   server.use(http.get('/api/v1/customers', () => HttpResponse.json(CUSTOMERS)));
   return render(
     <QueryClientProvider client={queryClient}>
-      <MemoryRouter>
+      <MemoryRouter initialEntries={[initialPath]}>
         <LoadCreatePage />
       </MemoryRouter>
     </QueryClientProvider>,
@@ -299,6 +300,10 @@ describe('LoadCreatePage — Rate Confirmation extraction', () => {
           { status: 201 },
         );
       }),
+      // A freshly-created customer is always Prospect, so this now also
+      // triggers a Load Draft save (see the dedicated describe block
+      // below) — harmless handler, not asserted on here.
+      http.post('/api/v1/load-drafts', () => HttpResponse.json({ id: 'draft-1' }, { status: 201 })),
     );
     renderPage();
     await waitForCustomersLoaded();
@@ -385,6 +390,537 @@ describe('LoadCreatePage — Rate Confirmation extraction', () => {
 
     expect(loadCreateCalls).toBe(0);
     expect(screen.getByRole('button', { name: 'Book Load' })).toBeInTheDocument();
+  });
+});
+
+describe('LoadCreatePage — Load Draft feature (credit-saving: extraction happens at most once)', () => {
+  it('an exact-normalized match to a non-Active customer saves a Load Draft and shows the approval-required banner', async () => {
+    let createDraftBody: unknown;
+    const draftResponse = {
+      id: 'draft-1',
+      customerId: 'cust-3',
+      customerLegalName: 'Pending Approval Carriers Inc',
+      customerStatus: 'PROSPECT',
+      rateConfirmationDocumentId: 'doc-1',
+      rateConfirmationFileName: 'ratecon.pdf',
+      createdAt: '2026-09-04T00:00:00.000Z',
+      extractedData: baseExtraction(),
+    };
+    server.use(
+      http.post('/api/v1/load-drafts', async ({ request }) => {
+        createDraftBody = await request.json();
+        return HttpResponse.json(draftResponse, { status: 201 });
+      }),
+      // The page immediately follows up with GET /load-drafts/:id (the
+      // same request a real page reload would make) to render the banner.
+      http.get('/api/v1/load-drafts/draft-1', () => HttpResponse.json(draftResponse)),
+    );
+    renderPage();
+    await waitForCustomersLoaded();
+
+    await uploadAndExtract(
+      baseExtraction({ customer: extractedCustomer('Pending Approval Carriers Inc') }),
+    );
+
+    await waitFor(() =>
+      expect(screen.getByText('New Customer — Compliance Approval Required')).toBeInTheDocument(),
+    );
+    expect(screen.getByText('Pending Approval Carriers Inc')).toBeInTheDocument();
+    expect(createDraftBody).toMatchObject({
+      extractionId: 'ex-1',
+      customerId: 'cust-3',
+    });
+    // The dropzone/upload UI is replaced by the draft summary — no way
+    // to accidentally re-upload once a draft exists for this session.
+    expect(document.querySelector('.rate-confirmation-dropzone-input')).not.toBeInTheDocument();
+  });
+
+  it('an exact-normalized match to an Active customer does NOT save a Load Draft', async () => {
+    let draftCreateCalls = 0;
+    server.use(
+      http.post('/api/v1/load-drafts', () => {
+        draftCreateCalls += 1;
+        return HttpResponse.json({}, { status: 201 });
+      }),
+    );
+    renderPage();
+    await waitForCustomersLoaded();
+
+    await uploadAndExtract(baseExtraction({ customer: extractedCustomer('acme freight, llc.') }));
+
+    expect(draftCreateCalls).toBe(0);
+    expect(
+      screen.queryByText('New Customer — Compliance Approval Required'),
+    ).not.toBeInTheDocument();
+  });
+
+  it('creating a brand-new customer (always Prospect) saves a Load Draft', async () => {
+    let createDraftBody: unknown;
+    const newCustomerDraftResponse = {
+      id: 'draft-2',
+      customerId: 'new-cust-1',
+      customerLegalName: 'Brand New Shipper Co',
+      customerStatus: 'PROSPECT',
+      rateConfirmationDocumentId: 'doc-1',
+      rateConfirmationFileName: 'ratecon.pdf',
+      createdAt: '2026-09-04T00:00:00.000Z',
+      extractedData: baseExtraction(),
+    };
+    server.use(
+      http.post('/api/v1/customers', async ({ request }) => {
+        const body = (await request.json()) as { legalName: string };
+        return HttpResponse.json(
+          { id: 'new-cust-1', legalName: body.legalName, status: 'PROSPECT' },
+          { status: 201 },
+        );
+      }),
+      http.post('/api/v1/load-drafts', async ({ request }) => {
+        createDraftBody = await request.json();
+        return HttpResponse.json(newCustomerDraftResponse, { status: 201 });
+      }),
+      // Follow-up GET, same as any real page reload would make.
+      http.get('/api/v1/load-drafts/draft-2', () => HttpResponse.json(newCustomerDraftResponse)),
+    );
+    renderPage();
+    await waitForCustomersLoaded();
+
+    await uploadAndExtract(
+      baseExtraction({
+        customer: {
+          extractedName: 'Brand New Shipper Co',
+          billingAddressLine1: '99 New St',
+          billingCity: 'Austin',
+          billingState: 'TX',
+          billingZip: '78701',
+          primaryContactName: null,
+          primaryContactEmail: null,
+          primaryContactPhone: null,
+        },
+      }),
+    );
+    fireEvent.click(screen.getByText('Create Customer'));
+    await waitFor(() =>
+      expect(screen.getByText('Create Customer', { selector: 'h2' })).toBeInTheDocument(),
+    );
+    fireEvent.change(screen.getByLabelText(/^Contact Name/), { target: { value: 'Sam Rep' } });
+    fireEvent.change(screen.getByLabelText(/^Email/), { target: { value: 'sam@newshipper.test' } });
+    fireEvent.change(screen.getByLabelText(/^Phone/), { target: { value: '555-0199' } });
+    fireEvent.click(
+      within(screen.getByRole('dialog')).getByRole('button', { name: 'Create Customer' }),
+    );
+
+    await waitFor(() =>
+      expect(screen.getByText('New Customer — Compliance Approval Required')).toBeInTheDocument(),
+    );
+    expect(createDraftBody).toMatchObject({ extractionId: 'ex-1', customerId: 'new-cust-1' });
+  });
+
+  it('resuming a draft via ?draftId= restores every field, hides the upload dropzone, and makes ZERO extraction network calls', async () => {
+    let extractionInitiateCalls = 0;
+    server.use(
+      http.post('/api/v1/rate-confirmation-extractions', () => {
+        extractionInitiateCalls += 1;
+        return HttpResponse.json({}, { status: 201 });
+      }),
+      // The live-status query (customersApi.getById) is what actually
+      // drives the banner/Book Load enablement now — the fixture list
+      // still has cust-3 as PROSPECT, this is the current/live value.
+      http.get('/api/v1/customers/cust-3', () =>
+        HttpResponse.json({
+          id: 'cust-3',
+          legalName: 'Pending Approval Carriers Inc',
+          status: 'ACTIVE',
+        }),
+      ),
+      http.get('/api/v1/load-drafts/draft-1', () =>
+        HttpResponse.json({
+          id: 'draft-1',
+          customerId: 'cust-3',
+          customerLegalName: 'Pending Approval Carriers Inc',
+          customerStatus: 'ACTIVE',
+          rateConfirmationDocumentId: 'doc-1',
+          rateConfirmationFileName: 'ratecon.pdf',
+          createdAt: '2026-09-04T00:00:00.000Z',
+          extractedData: baseExtraction({
+            equipmentType: 'REEFER',
+            customerRate: '3100.00',
+            customerPoNumber: 'PO-999',
+            stops: [
+              {
+                stopType: 'PICKUP',
+                companyName: 'Resumed Shipper',
+                addressLine1: '1 Dock Rd',
+                city: 'Dallas',
+                state: 'TX',
+                zip: '75201',
+                contactName: null,
+                contactPhone: null,
+                appointmentDatetime: null,
+              },
+            ],
+          }),
+        }),
+      ),
+    );
+
+    renderPage('/loads/new?draftId=draft-1');
+    await waitForCustomersLoaded();
+
+    await waitFor(() =>
+      expect(screen.getByText('Customer Approved — Ready to Book')).toBeInTheDocument(),
+    );
+    expect(
+      screen.getByDisplayValue('Pending Approval Carriers Inc (PROSPECT)'),
+    ).toBeInTheDocument();
+    expect((screen.getByLabelText(/^Equipment Type/) as HTMLSelectElement).value).toBe('REEFER');
+    expect((screen.getByLabelText(/^Customer Rate/) as HTMLInputElement).value).toContain('3100');
+    expect((screen.getByLabelText(/^Company Name/) as HTMLInputElement).value).toBe(
+      'Resumed Shipper',
+    );
+    expect(document.querySelector('.rate-confirmation-dropzone-input')).not.toBeInTheDocument();
+    // The whole point — resuming must never re-invoke extraction.
+    expect(extractionInitiateCalls).toBe(0);
+    expect(screen.getByRole('button', { name: /View Rate Confirmation PDF/ })).toBeInTheDocument();
+  });
+
+  it('Book Load deletes the now-consumed draft after a successful booking', async () => {
+    let deleteCalls = 0;
+    server.use(
+      http.get('/api/v1/load-drafts/draft-1', () =>
+        HttpResponse.json({
+          id: 'draft-1',
+          customerId: 'cust-1',
+          customerLegalName: 'Acme Freight LLC',
+          customerStatus: 'ACTIVE',
+          rateConfirmationDocumentId: 'doc-1',
+          rateConfirmationFileName: 'ratecon.pdf',
+          createdAt: '2026-09-04T00:00:00.000Z',
+          extractedData: baseExtraction({
+            equipmentType: 'DRY_VAN',
+            customerRate: '1200.00',
+            stops: [
+              {
+                stopType: 'PICKUP',
+                companyName: 'A',
+                addressLine1: '1 St',
+                city: 'Dallas',
+                state: 'TX',
+                zip: '75201',
+                contactName: null,
+                contactPhone: null,
+                appointmentDatetime: null,
+              },
+              {
+                stopType: 'DELIVERY',
+                companyName: 'B',
+                addressLine1: '2 St',
+                city: 'Chicago',
+                state: 'IL',
+                zip: '60601',
+                contactName: null,
+                contactPhone: null,
+                appointmentDatetime: null,
+              },
+            ],
+          }),
+        }),
+      ),
+      http.post('/api/v1/loads', () => HttpResponse.json({ id: 'load-1' }, { status: 201 })),
+      http.delete('/api/v1/load-drafts/draft-1', () => {
+        deleteCalls += 1;
+        return new HttpResponse(null, { status: 204 });
+      }),
+    );
+
+    renderPage('/loads/new?draftId=draft-1');
+    await waitForCustomersLoaded();
+    await waitFor(() =>
+      expect(screen.getByText('Customer Approved — Ready to Book')).toBeInTheDocument(),
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Book Load' }));
+
+    await waitFor(() => expect(deleteCalls).toBe(1));
+  });
+
+  it('WORKFLOW A (stay on page): upload -> extraction -> PROSPECT draft -> focus revalidation to ACTIVE -> Book Load succeeds, with exactly ONE extraction total', async () => {
+    let customerStatus: 'PROSPECT' | 'ACTIVE' = 'PROSPECT';
+    const extractedWithStops = baseExtraction({
+      customerPoNumber: 'PO-777',
+      equipmentType: 'DRY_VAN',
+      customerRate: '1500.00',
+      stops: [
+        {
+          stopType: 'PICKUP',
+          companyName: 'A',
+          addressLine1: '1 St',
+          city: 'Dallas',
+          state: 'TX',
+          zip: '75201',
+          contactName: null,
+          contactPhone: null,
+          appointmentDatetime: null,
+        },
+        {
+          stopType: 'DELIVERY',
+          companyName: 'B',
+          addressLine1: '2 St',
+          city: 'Chicago',
+          state: 'IL',
+          zip: '60601',
+          contactName: null,
+          contactPhone: null,
+          appointmentDatetime: null,
+        },
+      ],
+    });
+    let loadCreateCalls = 0;
+    let deleteCalls = 0;
+    server.use(
+      // 1. A selected non-Active customer — the mock reflects whatever
+      // the "current" live status is, exactly like a real backend would.
+      http.get('/api/v1/customers/cust-3', () =>
+        HttpResponse.json({
+          id: 'cust-3',
+          legalName: 'Pending Approval Carriers Inc',
+          status: customerStatus,
+        }),
+      ),
+      http.post('/api/v1/load-drafts', () =>
+        HttpResponse.json(
+          {
+            id: 'draft-1',
+            customerId: 'cust-3',
+            customerLegalName: 'Pending Approval Carriers Inc',
+            customerStatus: 'PROSPECT',
+            rateConfirmationDocumentId: 'doc-1',
+            rateConfirmationFileName: 'ratecon.pdf',
+            createdAt: '2026-09-04T00:00:00.000Z',
+            extractedData: extractedWithStops,
+          },
+          { status: 201 },
+        ),
+      ),
+      http.get('/api/v1/load-drafts/draft-1', () =>
+        HttpResponse.json({
+          id: 'draft-1',
+          customerId: 'cust-3',
+          customerLegalName: 'Pending Approval Carriers Inc',
+          customerStatus: 'PROSPECT',
+          rateConfirmationDocumentId: 'doc-1',
+          rateConfirmationFileName: 'ratecon.pdf',
+          createdAt: '2026-09-04T00:00:00.000Z',
+          extractedData: extractedWithStops,
+        }),
+      ),
+      http.post('/api/v1/loads', () => {
+        loadCreateCalls += 1;
+        return HttpResponse.json({ id: 'load-1' }, { status: 201 });
+      }),
+      http.delete('/api/v1/load-drafts/draft-1', () => {
+        deleteCalls += 1;
+        return new HttpResponse(null, { status: 204 });
+      }),
+    );
+    renderPage();
+    await waitForCustomersLoaded();
+
+    await uploadAndExtract(
+      baseExtraction({
+        ...extractedWithStops,
+        customer: extractedCustomer('Pending Approval Carriers Inc'),
+      }),
+    );
+
+    // 1 & 2. Non-Active customer selected; Book Load disabled.
+    await waitFor(() =>
+      expect(screen.getByText('New Customer — Compliance Approval Required')).toBeInTheDocument(),
+    );
+    expect(screen.getByRole('button', { name: 'Book Load' })).toBeDisabled();
+
+    // Only NOW start tracking extraction-initiate calls — the initial
+    // upload has already fully completed above (exactly once). What
+    // matters from here is that NOTHING — not the focus-triggered
+    // revalidation, not the eventual booking — ever causes a second one.
+    let extractionInitiateCallsAfterUpload = 0;
+    server.use(
+      http.post('/api/v1/rate-confirmation-extractions', () => {
+        extractionInitiateCallsAfterUpload += 1;
+        return HttpResponse.json({}, { status: 201 });
+      }),
+    );
+
+    // 3. Customer status changes to ACTIVE — externally, in another
+    // session; nothing on this page causes it or knows about it yet.
+    customerStatus = 'ACTIVE';
+
+    // 4. Page regains focus — the only trigger; not a timer, not a poll.
+    await act(async () => {
+      focusManager.setFocused(true);
+    });
+
+    // 5 & 6. UI updates to the approved state; Book Load enables —
+    // entirely from the live customer query, no draft re-fetch needed,
+    // no user navigation, no re-upload.
+    await waitFor(() =>
+      expect(screen.getByText('Customer Approved — Ready to Book')).toBeInTheDocument(),
+    );
+    expect(screen.getByRole('button', { name: 'Book Load' })).not.toBeDisabled();
+
+    // The originally-extracted data is still exactly what's in the form
+    // — a customer-status revalidation never touches unrelated state.
+    expect((screen.getByLabelText(/^Customer PO Number/) as HTMLInputElement).value).toBe('PO-777');
+
+    // Finish the workflow — actually book it.
+    fireEvent.click(screen.getByRole('button', { name: 'Book Load' }));
+    await waitFor(() => expect(loadCreateCalls).toBe(1));
+    await waitFor(() => expect(deleteCalls).toBe(1));
+
+    // 7 & 8. No re-upload, no re-extraction, across the ENTIRE workflow
+    // including the final booking step — the only way an Anthropic call
+    // could ever be triggered from this page is a new call to this
+    // endpoint, and there wasn't one after the original upload.
+    expect(extractionInitiateCallsAfterUpload).toBe(0);
+    expect(document.querySelector('.rate-confirmation-dropzone-input')).not.toBeInTheDocument();
+  });
+
+  it('WORKFLOW B (leave and resume): upload -> extraction -> PROSPECT draft -> leave page -> customer becomes ACTIVE -> resume -> Book Load succeeds, with exactly ONE extraction total', async () => {
+    const extractedWithStops = baseExtraction({
+      customerPoNumber: 'PO-888',
+      equipmentType: 'FLATBED',
+      customerRate: '2200.00',
+      stops: [
+        {
+          stopType: 'PICKUP',
+          companyName: 'Resumed Shipper',
+          addressLine1: '1 Dock Rd',
+          city: 'Dallas',
+          state: 'TX',
+          zip: '75201',
+          contactName: null,
+          contactPhone: null,
+          appointmentDatetime: null,
+        },
+        {
+          stopType: 'DELIVERY',
+          companyName: 'Resumed Receiver',
+          addressLine1: '2 Dock Rd',
+          city: 'Chicago',
+          state: 'IL',
+          zip: '60601',
+          contactName: null,
+          contactPhone: null,
+          appointmentDatetime: null,
+        },
+      ],
+    });
+    let customerStatus: 'PROSPECT' | 'ACTIVE' = 'PROSPECT';
+    let extractionInitiateCalls = 0;
+    let loadCreateCalls = 0;
+    let deleteCalls = 0;
+    server.use(
+      http.get('/api/v1/customers/cust-3', () =>
+        HttpResponse.json({
+          id: 'cust-3',
+          legalName: 'Pending Approval Carriers Inc',
+          status: customerStatus,
+        }),
+      ),
+      http.post('/api/v1/load-drafts', () =>
+        HttpResponse.json(
+          {
+            id: 'draft-1',
+            customerId: 'cust-3',
+            customerLegalName: 'Pending Approval Carriers Inc',
+            customerStatus: 'PROSPECT',
+            rateConfirmationDocumentId: 'doc-1',
+            rateConfirmationFileName: 'ratecon.pdf',
+            createdAt: '2026-09-04T00:00:00.000Z',
+            extractedData: extractedWithStops,
+          },
+          { status: 201 },
+        ),
+      ),
+      http.get('/api/v1/load-drafts/draft-1', () =>
+        HttpResponse.json({
+          id: 'draft-1',
+          customerId: 'cust-3',
+          customerLegalName: 'Pending Approval Carriers Inc',
+          customerStatus: 'PROSPECT',
+          rateConfirmationDocumentId: 'doc-1',
+          rateConfirmationFileName: 'ratecon.pdf',
+          createdAt: '2026-09-04T00:00:00.000Z',
+          extractedData: extractedWithStops,
+        }),
+      ),
+      http.post('/api/v1/loads', () => {
+        loadCreateCalls += 1;
+        return HttpResponse.json({ id: 'load-1' }, { status: 201 });
+      }),
+      http.delete('/api/v1/load-drafts/draft-1', () => {
+        deleteCalls += 1;
+        return new HttpResponse(null, { status: 204 });
+      }),
+    );
+
+    // --- Session 1: upload, extract, draft gets saved (PROSPECT customer) ---
+    const session1 = renderPage();
+    await waitForCustomersLoaded();
+
+    await uploadAndExtract(
+      baseExtraction({
+        ...extractedWithStops,
+        customer: extractedCustomer('Pending Approval Carriers Inc'),
+      }),
+    );
+    await waitFor(() =>
+      expect(screen.getByText('New Customer — Compliance Approval Required')).toBeInTheDocument(),
+    );
+
+    // Only NOW start counting — the one real upload/extraction has
+    // already happened. Nothing from this point on (leaving, an
+    // external status change, resuming, or booking) may add to it.
+    server.use(
+      http.post('/api/v1/rate-confirmation-extractions', () => {
+        extractionInitiateCalls += 1;
+        return HttpResponse.json({}, { status: 201 });
+      }),
+    );
+
+    // --- Leave the page: a real unmount, not just a state reset ---
+    session1.unmount();
+
+    // Customer becomes ACTIVE externally, while nobody has this page open.
+    customerStatus = 'ACTIVE';
+
+    // --- Session 2: resume via the URL a "Load Drafts" list would link to ---
+    renderPage('/loads/new?draftId=draft-1');
+    await waitForCustomersLoaded();
+
+    // extractedData is restored entirely from the persisted LoadDraft —
+    // no dropzone, no extraction call, and the customer is already
+    // ACTIVE (ready), because the draft's live customer query reflects
+    // reality independent of what the draft snapshot itself once said.
+    await waitFor(() =>
+      expect(screen.getByText('Customer Approved — Ready to Book')).toBeInTheDocument(),
+    );
+    expect((screen.getByLabelText(/^Customer PO Number/) as HTMLInputElement).value).toBe('PO-888');
+    expect((screen.getByLabelText(/^Equipment Type/) as HTMLSelectElement).value).toBe('FLATBED');
+    expect((screen.getAllByLabelText(/^Company Name/)[0] as HTMLInputElement).value).toBe(
+      'Resumed Shipper',
+    );
+    expect(document.querySelector('.rate-confirmation-dropzone-input')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Book Load' })).not.toBeDisabled();
+
+    // Finish the workflow — actually book it, and confirm the draft is cleaned up.
+    fireEvent.click(screen.getByRole('button', { name: 'Book Load' }));
+    await waitFor(() => expect(loadCreateCalls).toBe(1));
+    await waitFor(() => expect(deleteCalls).toBe(1));
+
+    // The whole point of Workflow B — zero extraction calls after the
+    // one original upload, across leaving, the external status change,
+    // resuming, and the final booking.
+    expect(extractionInitiateCalls).toBe(0);
   });
 });
 

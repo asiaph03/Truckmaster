@@ -1,9 +1,16 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useForm, Controller } from 'react-hook-form';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { EQUIPMENT_TYPES, type EquipmentType } from '@tms/shared-constants';
-import { customersApi, loadsApi, type Customer, type CreateLoadRequest } from '../../api';
+import {
+  customersApi,
+  documentsApi,
+  loadDraftsApi,
+  loadsApi,
+  type Customer,
+  type CreateLoadRequest,
+} from '../../api';
 import type { ExtractedRateConfirmationData } from '../../api/rateConfirmationExtraction';
 import { ApiError } from '../../api/errors';
 import {
@@ -92,7 +99,7 @@ interface FormValues {
 export function LoadCreatePage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [stops, setStops] = useState<StopFormValue[]>([]);
   const [stopsError, setStopsError] = useState<string | null>(null);
   const [serverError, setServerError] = useState<string | null>(null);
@@ -110,9 +117,24 @@ export function LoadCreatePage() {
   const [customerCreatePrefill, setCustomerCreatePrefill] =
     useState<CreateCustomerModalInitialValues>({});
 
+  // Load Draft feature — the raw extraction result is kept in state
+  // purely so it's available to maybeSaveDraft() the moment a resolved
+  // customer turns out not to be Active (new OR existing) — see that
+  // function below. NEVER re-sent to the extractor; only ever persisted
+  // verbatim via loadDraftsApi.create, exactly once.
+  const [lastExtraction, setLastExtraction] = useState<ExtractedRateConfirmationData | null>(null);
+  const [lastExtractionId, setLastExtractionId] = useState<string | null>(null);
+  const [activeDraftId, setActiveDraftId] = useState<string | null>(searchParams.get('draftId'));
+
   const { data: customers = [] } = useQuery({
     queryKey: ['customers', {}],
     queryFn: () => customersApi.list(),
+  });
+
+  const { data: draft } = useQuery({
+    queryKey: ['load-drafts', activeDraftId],
+    queryFn: () => loadDraftsApi.get(activeDraftId!),
+    enabled: !!activeDraftId,
   });
 
   const {
@@ -126,32 +148,13 @@ export function LoadCreatePage() {
     defaultValues: { customerId: searchParams.get('customerId') ?? '' },
   });
 
-  function handleExtracted(extraction: ExtractedRateConfirmationData) {
-    setUnresolvedCustomerName(null);
-
-    // Customer — exact-normalized-match against the org's own already-
-    // loaded list only (see the `normalize()` doc comment above). Never
-    // resolves to a customerId server-side; never creates one.
-    if (extraction.customer?.extractedName) {
-      const target = normalize(extraction.customer.extractedName);
-      const match = customers.find((c) => normalize(c.legalName) === target);
-      if (match) {
-        setValue('customerId', match.id, { shouldValidate: true });
-      } else {
-        setUnresolvedCustomerName(extraction.customer.extractedName);
-        setCustomerCreatePrefill({
-          legalName: extraction.customer.extractedName,
-          billingAddressLine1: extraction.customer.billingAddressLine1 ?? undefined,
-          billingCity: extraction.customer.billingCity ?? undefined,
-          billingState: extraction.customer.billingState ?? undefined,
-          billingZip: extraction.customer.billingZip ?? undefined,
-          primaryContactName: extraction.customer.primaryContactName ?? undefined,
-          primaryContactEmail: extraction.customer.primaryContactEmail ?? undefined,
-          primaryContactPhone: extraction.customer.primaryContactPhone ?? undefined,
-        });
-      }
-    }
-
+  /**
+   * Applies every non-customer extracted field to the form. Shared by
+   * live extraction (handleExtracted) and by draft-resume (the effect
+   * below) — for a resumed draft the customer is already known exactly
+   * (draft.customerId), so no re-matching is needed there.
+   */
+  function applyExtractionToForm(extraction: ExtractedRateConfirmationData) {
     // Equipment — only ever one of the 3 real enum values or omitted;
     // the backend already constrains/validates this before it reaches
     // here, but never trust extracted data — confirm again client-side.
@@ -223,6 +226,85 @@ export function LoadCreatePage() {
     setUnmappedFields(extraction.unmappedFields);
   }
 
+  /**
+   * Load Draft feature — NON-NEGOTIABLE credit-saving requirement: a
+   * Rate Confirmation is sent to the extractor at most once. This is the
+   * ONLY place a LoadDraft is ever created, and it only ever snapshots
+   * data already sitting in component state from the extraction that
+   * already ran — never re-invokes rateConfirmationExtractionApi in any
+   * way. A customer already Active needs no draft at all (today's
+   * unchanged flow continues in the same session); `activeDraftId`
+   * guards against saving twice in one session (e.g. if the same
+   * extraction somehow resolves a customer more than once).
+   */
+  async function maybeSaveDraft(
+    customer: Customer,
+    // Accepted explicitly (not always read from state) because
+    // handleExtracted calls this synchronously with values it just
+    // received as its own parameters — setLastExtraction/
+    // setLastExtractionId haven't flushed into `lastExtraction`/
+    // `lastExtractionId` yet at that point in the same call stack. The
+    // state versions remain the right source for handleCustomerCreated,
+    // which always runs later, after that state has settled.
+    extraction: ExtractedRateConfirmationData | null = lastExtraction,
+    extractionId: string | null = lastExtractionId,
+  ) {
+    if (customer.status === 'ACTIVE') return;
+    if (activeDraftId || !extraction || !extractionId) return;
+
+    try {
+      const created = await loadDraftsApi.create({
+        extractionId,
+        customerId: customer.id,
+        extractedData: extraction,
+      });
+      setActiveDraftId(created.id);
+      const next = new URLSearchParams(searchParams);
+      next.set('draftId', created.id);
+      setSearchParams(next, { replace: true });
+    } catch {
+      // The user can still finish booking in this same session, but
+      // leaving the page now would lose everything — this must be
+      // visible, never silent (a silent failure here is exactly the
+      // "have to re-upload" bug this feature exists to prevent).
+      setServerError(
+        'Could not save this Load Draft. You can still book now in this session, but leaving the page will lose the extracted data — please finish booking or retry before navigating away.',
+      );
+    }
+  }
+
+  function handleExtracted(extraction: ExtractedRateConfirmationData, extractionId: string) {
+    setUnresolvedCustomerName(null);
+    setLastExtraction(extraction);
+    setLastExtractionId(extractionId);
+
+    // Customer — exact-normalized-match against the org's own already-
+    // loaded list only (see the `normalize()` doc comment above). Never
+    // resolves to a customerId server-side; never creates one.
+    if (extraction.customer?.extractedName) {
+      const target = normalize(extraction.customer.extractedName);
+      const match = customers.find((c) => normalize(c.legalName) === target);
+      if (match) {
+        setValue('customerId', match.id, { shouldValidate: true });
+        void maybeSaveDraft(match, extraction, extractionId);
+      } else {
+        setUnresolvedCustomerName(extraction.customer.extractedName);
+        setCustomerCreatePrefill({
+          legalName: extraction.customer.extractedName,
+          billingAddressLine1: extraction.customer.billingAddressLine1 ?? undefined,
+          billingCity: extraction.customer.billingCity ?? undefined,
+          billingState: extraction.customer.billingState ?? undefined,
+          billingZip: extraction.customer.billingZip ?? undefined,
+          primaryContactName: extraction.customer.primaryContactName ?? undefined,
+          primaryContactEmail: extraction.customer.primaryContactEmail ?? undefined,
+          primaryContactPhone: extraction.customer.primaryContactPhone ?? undefined,
+        });
+      }
+    }
+
+    applyExtractionToForm(extraction);
+  }
+
   function handleCustomerCreated(customer: Customer) {
     queryClient.setQueryData<Customer[]>(['customers', {}], (existing) =>
       existing ? [...existing, customer] : [customer],
@@ -230,12 +312,43 @@ export function LoadCreatePage() {
     setValue('customerId', customer.id, { shouldValidate: true });
     setUnresolvedCustomerName(null);
     setCreatingCustomer(false);
+    void maybeSaveDraft(customer);
   }
 
+  // Resume — restores every extracted field and the exact customer from
+  // a persisted draft. Never touches rateConfirmationExtractionApi; the
+  // draft's extractedData (Postgres, durable) is the only source used.
+  useEffect(() => {
+    if (!draft) return;
+    applyExtractionToForm(draft.extractedData);
+    setValue('customerId', draft.customerId, { shouldValidate: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draft]);
+
   const customerId = watch('customerId');
+
+  // Live customer status — a user can sit on this page (e.g. waiting on
+  // a Load Draft's customer approval) for a long time; neither the
+  // `customers` list query above nor the one-time GET /load-drafts/:id
+  // response revalidate on their own (the app's QueryClient default is
+  // `refetchOnWindowFocus: false`, deliberately, everywhere else). This
+  // one query is scoped to just the selected customer and opts back into
+  // focus-revalidation ONLY here — event-driven (on regaining focus),
+  // never interval polling. Falls back to the already-loaded list entry
+  // so there's no flash of "no customer" before this resolves; once it
+  // resolves, it's the authoritative source for every status-derived
+  // flag below and for the draft banner. Never touches extraction,
+  // stops, or any other form state — a status change here only ever
+  // changes what's derived from `selectedCustomer`.
+  const { data: liveCustomer } = useQuery({
+    queryKey: ['customers', customerId],
+    queryFn: () => customersApi.getById(customerId),
+    enabled: !!customerId,
+    refetchOnWindowFocus: true,
+  });
   const selectedCustomer = useMemo(
-    () => customers.find((c) => c.id === customerId),
-    [customers, customerId],
+    () => liveCustomer ?? customers.find((c) => c.id === customerId),
+    [liveCustomer, customers, customerId],
   );
   const customerBlocked = selectedCustomer?.status === 'BLOCKED';
   const customerProspect = selectedCustomer?.status === 'PROSPECT';
@@ -274,16 +387,48 @@ export function LoadCreatePage() {
 
     try {
       const load = await loadsApi.create(body);
+      if (activeDraftId) {
+        // Best-effort cleanup — the Load is already booked either way;
+        // a leftover draft row is harmless clutter, never a blocker.
+        loadDraftsApi.remove(activeDraftId).catch(() => {});
+      }
       navigate(`/loads/${load.id}`);
     } catch (error) {
       setServerError(error instanceof ApiError ? error.message : 'Something went wrong.');
     }
   }
 
+  async function viewRateConfirmationPdf() {
+    if (!draft) return;
+    try {
+      const { url } = await documentsApi.getDownloadUrl(draft.rateConfirmationDocumentId);
+      window.open(url, '_blank', 'noopener');
+    } catch {
+      setServerError('Could not get a download link for the Rate Confirmation.');
+    }
+  }
+
   return (
     <div>
       <Breadcrumb items={[{ label: 'Loads', to: '/loads/board' }, { label: 'New Load' }]} />
-      <h1 className="detail-page-title">New Load (Direct Booking)</h1>
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'baseline',
+          maxWidth: 720,
+        }}
+      >
+        <h1 className="detail-page-title">New Load (Direct Booking)</h1>
+        <Button
+          type="button"
+          variant="tertiary"
+          size="sm"
+          onClick={() => navigate('/loads/drafts')}
+        >
+          Load Drafts
+        </Button>
+      </div>
 
       {serverError ? (
         <div className="detail-card" style={{ borderColor: 'var(--danger-600)' }}>
@@ -291,9 +436,40 @@ export function LoadCreatePage() {
         </div>
       ) : null}
 
-      <div style={{ maxWidth: 720 }}>
-        <RateConfirmationDropzone onExtracted={handleExtracted} />
-      </div>
+      {activeDraftId && draft ? (
+        <div
+          className="detail-card"
+          style={{
+            maxWidth: 720,
+            borderColor:
+              selectedCustomer?.status === 'ACTIVE'
+                ? 'var(--success-600)'
+                : selectedCustomer?.status === 'BLOCKED'
+                  ? 'var(--danger-600)'
+                  : 'var(--warning-600)',
+          }}
+        >
+          <h2 className="detail-card-title">
+            {selectedCustomer?.status === 'ACTIVE'
+              ? 'Customer Approved — Ready to Book'
+              : selectedCustomer?.status === 'BLOCKED'
+                ? 'Customer Blocked — Cannot Book'
+                : 'New Customer — Compliance Approval Required'}
+          </h2>
+          <p style={{ margin: 0 }}>
+            Customer: <strong>{selectedCustomer?.legalName ?? draft.customerLegalName}</strong>
+            <br />
+            Status: {selectedCustomer?.status ?? draft.customerStatus}
+          </p>
+          <Button type="button" variant="tertiary" size="sm" onClick={viewRateConfirmationPdf}>
+            View Rate Confirmation PDF ({draft.rateConfirmationFileName})
+          </Button>
+        </div>
+      ) : (
+        <div style={{ maxWidth: 720 }}>
+          <RateConfirmationDropzone onExtracted={handleExtracted} />
+        </div>
+      )}
 
       {extractionWarnings.length > 0 || unmappedFields.length > 0 ? (
         <div className="detail-card" style={{ maxWidth: 720, borderColor: 'var(--warning-600)' }}>

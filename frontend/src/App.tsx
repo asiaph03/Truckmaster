@@ -18,6 +18,7 @@ import { ReportDetailPage } from './routes/reports/ReportDetailPage';
 import { DispatchBoardPage } from './routes/loads/DispatchBoardPage';
 import { LoadSearchPage } from './routes/loads/LoadSearchPage';
 import { LoadCreatePage } from './routes/loads/LoadCreatePage';
+import { LoadDraftsPage } from './routes/loads/LoadDraftsPage';
 import { LoadDetailPage } from './routes/loads/LoadDetailPage';
 import { LoadClosingPage } from './routes/loads/LoadClosingPage';
 import { QuoteListPage } from './routes/quotes/QuoteListPage';
@@ -119,6 +120,7 @@ function App() {
         <Route path="/loads/board" element={<DispatchBoardPage />} />
         <Route path="/loads/search" element={<LoadSearchPage />} />
         <Route path="/loads/new" element={<LoadCreatePage />} />
+        <Route path="/loads/drafts" element={<LoadDraftsPage />} />
         <Route path="/loads/:id" element={<LoadDetailPage />} />
         <Route path="/loads/:id/close" element={<LoadClosingPage />} />
         <Route path="/quotes" element={<QuoteListPage />} />
