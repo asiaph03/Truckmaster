@@ -25,7 +25,7 @@ describe('LoginPage — Truck Master logo branding', () => {
     const logo = screen.getByAltText('Truck Master Dispatching Services') as HTMLImageElement;
     expect(logo).toBeInTheDocument();
     expect(logo.tagName).toBe('IMG');
-    expect(logo.getAttribute('src')).toBe('/tms-logo.jpeg');
+    expect(logo.getAttribute('src')).toBe('/tms-logo.png');
   });
 
   it('places the logo above the login form fields', () => {
