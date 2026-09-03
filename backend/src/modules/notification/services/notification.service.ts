@@ -71,6 +71,36 @@ export class NotificationService {
     }
   }
 
+  /**
+   * Operational Alerts feature — notifies the given `primaryUserId` (the
+   * assigned dispatcher) plus every ACTIVE org member holding any of
+   * `roles` (Admin visibility), deduplicated by userId so a dispatcher who
+   * also holds one of `roles` receives exactly one row, not two. Same
+   * org-scoped, ACTIVE-only membership query as `createForRoles` — no
+   * cross-org fan-out is possible.
+   */
+  async createForUserAndRoles(
+    tx: Prisma.TransactionClient,
+    organizationId: string,
+    primaryUserId: string,
+    roles: MembershipRoleName[],
+    input: Omit<CreateNotificationInput, 'recipientUserId'>,
+  ): Promise<void> {
+    const memberships = await tx.organizationMembership.findMany({
+      where: {
+        organizationId,
+        status: 'ACTIVE',
+        roles: { some: { role: { in: roles } } },
+      },
+      select: { userId: true },
+    });
+
+    const recipientIds = new Set<string>([primaryUserId, ...memberships.map((m) => m.userId)]);
+    for (const recipientUserId of recipientIds) {
+      await this.create(tx, organizationId, { ...input, recipientUserId });
+    }
+  }
+
   async list(
     organizationId: string,
     recipientUserId: string,

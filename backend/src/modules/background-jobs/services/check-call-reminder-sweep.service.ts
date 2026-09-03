@@ -1,12 +1,15 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Prisma } from '@prisma/client';
+import { MembershipRoleName, Prisma } from '@prisma/client';
 import { PrismaService } from '../../../common/prisma/prisma.service';
 import { AuditService } from '../../../common/audit/audit.service';
 import { NotificationService } from '../../notification/services/notification.service';
 import { AppConfig } from '../../../config/configuration';
 
 const IN_TRANSIT_STATUSES = ['DISPATCHED', 'PICKUP', 'IN_TRANSIT'] as const;
+
+/** Org Admins also see operational alerts, alongside the assigned dispatcher (never a replacement for them). */
+const ADMIN_VISIBILITY_ROLES: MembershipRoleName[] = ['ADMIN'];
 
 /** Operational Alerts feature — fixed 15-minute lead time for CHECK_CALL_DUE_SOON, ahead of CHECK_CALL_OVERDUE. */
 const DUE_SOON_LEAD_MS = 15 * 60 * 1000;
@@ -146,13 +149,18 @@ export class CheckCallReminderSweepService {
     if (existing) return;
 
     const minutesOverdue = Math.floor((elapsedMs - thresholdMs) / 60000);
-    await this.notifications.create(tx, organizationId, {
-      recipientUserId: load.assignedDispatcherId!,
-      type: 'CHECK_CALL_OVERDUE',
-      relatedEntityType: 'Load',
-      relatedEntityId: load.id,
-      message: `Check call overdue — ${load.loadNumber}\n${buildDetailLine(driverName, `${minutesOverdue} min overdue`)}`,
-    });
+    await this.notifications.createForUserAndRoles(
+      tx,
+      organizationId,
+      load.assignedDispatcherId!,
+      ADMIN_VISIBILITY_ROLES,
+      {
+        type: 'CHECK_CALL_OVERDUE',
+        relatedEntityType: 'Load',
+        relatedEntityId: load.id,
+        message: `Check call overdue — ${load.loadNumber}\n${buildDetailLine(driverName, `${minutesOverdue} min overdue`)}`,
+      },
+    );
 
     await this.audit.record(tx, {
       organizationId,
@@ -184,13 +192,18 @@ export class CheckCallReminderSweepService {
     if (existing) return;
 
     const minutesUntilDue = Math.ceil((thresholdMs - elapsedMs) / 60000);
-    await this.notifications.create(tx, organizationId, {
-      recipientUserId: load.assignedDispatcherId!,
-      type: 'CHECK_CALL_DUE_SOON',
-      relatedEntityType: 'Load',
-      relatedEntityId: load.id,
-      message: `Check call due — ${load.loadNumber}\n${buildDetailLine(driverName, `Due in ${minutesUntilDue} min`)}`,
-    });
+    await this.notifications.createForUserAndRoles(
+      tx,
+      organizationId,
+      load.assignedDispatcherId!,
+      ADMIN_VISIBILITY_ROLES,
+      {
+        type: 'CHECK_CALL_DUE_SOON',
+        relatedEntityType: 'Load',
+        relatedEntityId: load.id,
+        message: `Check call due — ${load.loadNumber}\n${buildDetailLine(driverName, `Due in ${minutesUntilDue} min`)}`,
+      },
+    );
 
     await this.audit.record(tx, {
       organizationId,

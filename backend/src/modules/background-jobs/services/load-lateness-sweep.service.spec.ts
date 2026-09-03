@@ -49,7 +49,7 @@ function buildService(opts: {
       .mockImplementation((_orgId: string, fn: (tx: unknown) => unknown) => fn(tx)),
   };
   const audit = { record: jest.fn().mockResolvedValue(undefined) };
-  const notifications = { create: jest.fn().mockResolvedValue(undefined) };
+  const notifications = { createForUserAndRoles: jest.fn().mockResolvedValue(undefined) };
 
   const service = new LoadLatenessSweepService(
     prisma as never,
@@ -78,11 +78,12 @@ describe('LoadLatenessSweepService — the one backend-owned "Load Late" notific
 
     await service.run();
 
-    expect(notifications.create).toHaveBeenCalledWith(
+    expect(notifications.createForUserAndRoles).toHaveBeenCalledWith(
       expect.anything(),
       ORG_ID,
+      'dispatcher-1',
+      ['ADMIN'],
       expect.objectContaining({
-        recipientUserId: 'dispatcher-1',
         type: 'LOAD_LATE',
         relatedEntityType: 'Load',
         relatedEntityId: 'load-1',
@@ -102,9 +103,11 @@ describe('LoadLatenessSweepService — the one backend-owned "Load Late" notific
 
     await service.run();
 
-    expect(notifications.create).toHaveBeenCalledWith(
+    expect(notifications.createForUserAndRoles).toHaveBeenCalledWith(
       expect.anything(),
       ORG_ID,
+      'dispatcher-1',
+      ['ADMIN'],
       expect.objectContaining({
         message: expect.stringContaining('Delivery appointment: 3:00 PM'),
       }),
@@ -118,7 +121,7 @@ describe('LoadLatenessSweepService — the one backend-owned "Load Late" notific
 
     await service.run();
 
-    expect(notifications.create).not.toHaveBeenCalled();
+    expect(notifications.createForUserAndRoles).not.toHaveBeenCalled();
   });
 
   it('does not notify when the late-appointment stop is already COMPLETED', async () => {
@@ -128,7 +131,7 @@ describe('LoadLatenessSweepService — the one backend-owned "Load Late" notific
 
     await service.run();
 
-    expect(notifications.create).not.toHaveBeenCalled();
+    expect(notifications.createForUserAndRoles).not.toHaveBeenCalled();
   });
 
   it('does not notify a Load with no assigned dispatcher (no fallback broadcast)', async () => {
@@ -138,7 +141,7 @@ describe('LoadLatenessSweepService — the one backend-owned "Load Late" notific
 
     await service.run();
 
-    expect(notifications.create).not.toHaveBeenCalled();
+    expect(notifications.createForUserAndRoles).not.toHaveBeenCalled();
   });
 
   it('handles multiple stops correctly — a completed-and-past stop plus a pending-and-late stop still notifies once, for the late one', async () => {
@@ -155,10 +158,12 @@ describe('LoadLatenessSweepService — the one backend-owned "Load Late" notific
 
     await service.run();
 
-    expect(notifications.create).toHaveBeenCalledTimes(1);
-    expect(notifications.create).toHaveBeenCalledWith(
+    expect(notifications.createForUserAndRoles).toHaveBeenCalledTimes(1);
+    expect(notifications.createForUserAndRoles).toHaveBeenCalledWith(
       expect.anything(),
       ORG_ID,
+      'dispatcher-1',
+      ['ADMIN'],
       expect.objectContaining({ message: expect.stringContaining('Delivery appointment') }),
     );
   });
@@ -171,7 +176,7 @@ describe('LoadLatenessSweepService — the one backend-owned "Load Late" notific
 
     await service.run();
 
-    expect(notifications.create).not.toHaveBeenCalled();
+    expect(notifications.createForUserAndRoles).not.toHaveBeenCalled();
   });
 
   it('is tenant-scoped — never queries or notifies across organizations', async () => {
@@ -188,6 +193,52 @@ describe('LoadLatenessSweepService — the one backend-owned "Load Late" notific
       expect.objectContaining({ where: expect.objectContaining({ organizationId: ORG_ID }) }),
     );
   });
+
+  it("the Admin-visibility fan-out (createForUserAndRoles) is called once per organization with that organization's own id — never a cross-org call", async () => {
+    const { service, notifications, prisma } = buildService({
+      orgs: [{ id: ORG_ID }, { id: OTHER_ORG_ID }],
+      loads: [load()],
+    });
+
+    await service.run();
+
+    expect(prisma.withTenantTransaction).toHaveBeenCalledTimes(2);
+    expect(notifications.createForUserAndRoles).toHaveBeenCalledTimes(2);
+    expect(notifications.createForUserAndRoles).toHaveBeenCalledWith(
+      expect.anything(),
+      ORG_ID,
+      'dispatcher-1',
+      ['ADMIN'],
+      expect.anything(),
+    );
+    expect(notifications.createForUserAndRoles).toHaveBeenCalledWith(
+      expect.anything(),
+      OTHER_ORG_ID,
+      'dispatcher-1',
+      ['ADMIN'],
+      expect.anything(),
+    );
+  });
+});
+
+describe('LoadLatenessSweepService — Operational Alerts feature: Admin visibility wiring', () => {
+  it('requests ADMIN-role fan-out (via NotificationService.createForUserAndRoles) for LOAD_LATE, with the dispatcher as primary recipient', async () => {
+    const { service, notifications } = buildService({ loads: [load()] });
+
+    await service.run();
+
+    // Dedup (dispatcher-who-is-also-Admin gets exactly one row) is the
+    // responsibility of NotificationService.createForUserAndRoles itself
+    // — proven directly against that method in notification.service.spec.ts.
+    // This test only proves the sweep asks for the right primary user + roles.
+    expect(notifications.createForUserAndRoles).toHaveBeenCalledWith(
+      expect.anything(),
+      ORG_ID,
+      'dispatcher-1',
+      ['ADMIN'],
+      expect.objectContaining({ type: 'LOAD_LATE' }),
+    );
+  });
 });
 
 describe('LoadLatenessSweepService — Return Product feature: RETURN stops never trigger LOAD_LATE', () => {
@@ -198,7 +249,7 @@ describe('LoadLatenessSweepService — Return Product feature: RETURN stops neve
 
     await service.run();
 
-    expect(notifications.create).not.toHaveBeenCalled();
+    expect(notifications.createForUserAndRoles).not.toHaveBeenCalled();
   });
 
   it('a Load with a late RETURN stop and a late STANDARD stop still notifies, keyed to the STANDARD one', async () => {
@@ -215,10 +266,12 @@ describe('LoadLatenessSweepService — Return Product feature: RETURN stops neve
 
     await service.run();
 
-    expect(notifications.create).toHaveBeenCalledTimes(1);
-    expect(notifications.create).toHaveBeenCalledWith(
+    expect(notifications.createForUserAndRoles).toHaveBeenCalledTimes(1);
+    expect(notifications.createForUserAndRoles).toHaveBeenCalledWith(
       expect.anything(),
       ORG_ID,
+      'dispatcher-1',
+      ['ADMIN'],
       expect.objectContaining({ message: expect.stringContaining('Delivery appointment') }),
     );
   });

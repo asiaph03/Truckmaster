@@ -100,6 +100,89 @@ describe('NotificationService.createForRoles — Workflow 3 §3.10 role fan-out'
   });
 });
 
+describe('NotificationService.createForUserAndRoles — Operational Alerts feature: dispatcher + Admin visibility', () => {
+  it('notifies the primary user (dispatcher) plus every ACTIVE member holding the given roles', async () => {
+    const { service, tx } = buildService({
+      memberships: [{ userId: 'admin-1' }, { userId: 'admin-2' }],
+    });
+
+    await service.createForUserAndRoles(tx as never, ORG_ID, 'dispatcher-1', ['ADMIN'], {
+      type: 'CHECK_CALL_OVERDUE',
+      relatedEntityType: 'Load',
+      relatedEntityId: 'load-1',
+      message: 'Load LOAD-000001 has gone quiet.',
+    });
+
+    expect(tx.organizationMembership.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          organizationId: ORG_ID,
+          status: 'ACTIVE',
+          roles: { some: { role: { in: ['ADMIN'] } } },
+        }),
+      }),
+    );
+    expect(tx.notification.create).toHaveBeenCalledTimes(3);
+    const recipients = tx.notification.create.mock.calls.map((c) => c[0].data.recipientUserId);
+    expect(recipients.sort()).toEqual(['admin-1', 'admin-2', 'dispatcher-1']);
+  });
+
+  it('sends exactly one notification when the dispatcher is also an Admin member (dedup by userId)', async () => {
+    const { service, tx } = buildService({
+      memberships: [{ userId: 'dispatcher-1' }, { userId: 'admin-2' }],
+    });
+
+    await service.createForUserAndRoles(tx as never, ORG_ID, 'dispatcher-1', ['ADMIN'], {
+      type: 'LOAD_LATE',
+      relatedEntityType: 'Load',
+      relatedEntityId: 'load-1',
+      message: 'Load late.',
+    });
+
+    expect(tx.notification.create).toHaveBeenCalledTimes(2);
+    const recipients = tx.notification.create.mock.calls.map((c) => c[0].data.recipientUserId);
+    expect(recipients.sort()).toEqual(['admin-2', 'dispatcher-1']);
+    expect(recipients.filter((r) => r === 'dispatcher-1')).toHaveLength(1);
+  });
+
+  it('still notifies the primary user alone when no member holds the target roles', async () => {
+    const { service, tx } = buildService({ memberships: [] });
+
+    await service.createForUserAndRoles(tx as never, ORG_ID, 'dispatcher-1', ['ADMIN'], {
+      type: 'CHECK_CALL_DUE_SOON',
+      relatedEntityType: 'Load',
+      relatedEntityId: 'load-1',
+      message: 'Due soon.',
+    });
+
+    expect(tx.notification.create).toHaveBeenCalledTimes(1);
+    expect(tx.notification.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ recipientUserId: 'dispatcher-1' }),
+      }),
+    );
+  });
+
+  it('only queries ACTIVE memberships within the given organization — never a cross-org fan-out', async () => {
+    const { service, tx } = buildService({ memberships: [{ userId: 'admin-1' }] });
+
+    await service.createForUserAndRoles(tx as never, ORG_ID, 'dispatcher-1', ['ADMIN'], {
+      type: 'LOAD_LATE',
+      relatedEntityType: 'Load',
+      relatedEntityId: 'load-1',
+      message: 'Load late.',
+    });
+
+    expect(tx.organizationMembership.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ organizationId: ORG_ID, status: 'ACTIVE' }),
+      }),
+    );
+    const orgIdsWritten = tx.notification.create.mock.calls.map((c) => c[0].data.organizationId);
+    expect(orgIdsWritten.every((id) => id === ORG_ID)).toBe(true);
+  });
+});
+
 describe('NotificationService.list', () => {
   it('defaults to page 1 / pageSize 20, filtered to the caller as recipient', async () => {
     const { service, tx } = buildService();

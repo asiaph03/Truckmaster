@@ -42,7 +42,7 @@ function buildService(opts: {
       .mockImplementation((_orgId: string, fn: (tx: unknown) => unknown) => fn(tx)),
   };
   const audit = { record: jest.fn().mockResolvedValue(undefined) };
-  const notifications = { create: jest.fn().mockResolvedValue(undefined) };
+  const notifications = { createForUserAndRoles: jest.fn().mockResolvedValue(undefined) };
   const config = { get: jest.fn().mockReturnValue(4) };
 
   const service = new CheckCallReminderSweepService(
@@ -74,11 +74,12 @@ describe('CheckCallReminderSweepService — CHECK_CALL_OVERDUE (existing rule, u
 
     await service.run();
 
-    expect(notifications.create).toHaveBeenCalledWith(
+    expect(notifications.createForUserAndRoles).toHaveBeenCalledWith(
       expect.anything(),
       ORG_ID,
+      'dispatcher-1',
+      ['ADMIN'],
       expect.objectContaining({
-        recipientUserId: 'dispatcher-1',
         type: 'CHECK_CALL_OVERDUE',
         relatedEntityId: 'load-1',
       }),
@@ -108,7 +109,7 @@ describe('CheckCallReminderSweepService — CHECK_CALL_OVERDUE (existing rule, u
 
     await service.run();
 
-    expect(notifications.create).not.toHaveBeenCalled();
+    expect(notifications.createForUserAndRoles).not.toHaveBeenCalled();
   });
 
   it('skips a Load with no assigned dispatcher (Decision 5 — no fallback broadcast)', async () => {
@@ -130,7 +131,7 @@ describe('CheckCallReminderSweepService — CHECK_CALL_OVERDUE (existing rule, u
 
     await service.run();
 
-    expect(notifications.create).not.toHaveBeenCalled();
+    expect(notifications.createForUserAndRoles).not.toHaveBeenCalled();
   });
 
   it('does not notify when the load is still well within the interval', async () => {
@@ -152,7 +153,7 @@ describe('CheckCallReminderSweepService — CHECK_CALL_OVERDUE (existing rule, u
 
     await service.run();
 
-    expect(notifications.create).not.toHaveBeenCalled();
+    expect(notifications.createForUserAndRoles).not.toHaveBeenCalled();
   });
 
   it('resolves the driver name via live sourceDriver over the DispatchRecord snapshot, matching the LoadSummary precedence rule', async () => {
@@ -174,9 +175,11 @@ describe('CheckCallReminderSweepService — CHECK_CALL_OVERDUE (existing rule, u
 
     await service.run();
 
-    expect(notifications.create).toHaveBeenCalledWith(
+    expect(notifications.createForUserAndRoles).toHaveBeenCalledWith(
       expect.anything(),
       ORG_ID,
+      'dispatcher-1',
+      ['ADMIN'],
       expect.objectContaining({ message: expect.stringContaining('Driver: Jane Smith') }),
     );
   });
@@ -196,7 +199,7 @@ describe('CheckCallReminderSweepService — CHECK_CALL_OVERDUE (existing rule, u
 
     await service.run();
 
-    const call = notifications.create.mock.calls[0][2];
+    const call = notifications.createForUserAndRoles.mock.calls[0][4];
     expect(call.message).not.toMatch(/undefined/i);
     expect(call.message).not.toMatch(/\bnull\b/i);
     expect(call.message).not.toContain('Driver:');
@@ -222,7 +225,7 @@ describe('CheckCallReminderSweepService — CHECK_CALL_OVERDUE (existing rule, u
 
     await service.run();
 
-    expect(notifications.create).not.toHaveBeenCalled();
+    expect(notifications.createForUserAndRoles).not.toHaveBeenCalled();
   });
 
   it('supersedes (marks read) any outstanding unread CHECK_CALL_DUE_SOON notification the moment the Load becomes overdue', async () => {
@@ -277,7 +280,7 @@ describe('CheckCallReminderSweepService — CHECK_CALL_DUE_SOON (new: 15-minute 
 
     await service.run();
 
-    expect(notifications.create).not.toHaveBeenCalled();
+    expect(notifications.createForUserAndRoles).not.toHaveBeenCalled();
   });
 
   it('notifies CHECK_CALL_DUE_SOON exactly at threshold minus 15 minutes', async () => {
@@ -299,9 +302,11 @@ describe('CheckCallReminderSweepService — CHECK_CALL_DUE_SOON (new: 15-minute 
 
     await service.run();
 
-    expect(notifications.create).toHaveBeenCalledWith(
+    expect(notifications.createForUserAndRoles).toHaveBeenCalledWith(
       expect.anything(),
       ORG_ID,
+      'dispatcher-1',
+      ['ADMIN'],
       expect.objectContaining({ type: 'CHECK_CALL_DUE_SOON', relatedEntityId: 'load-1' }),
     );
   });
@@ -325,9 +330,11 @@ describe('CheckCallReminderSweepService — CHECK_CALL_DUE_SOON (new: 15-minute 
 
     await service.run();
 
-    expect(notifications.create).toHaveBeenCalledWith(
+    expect(notifications.createForUserAndRoles).toHaveBeenCalledWith(
       expect.anything(),
       ORG_ID,
+      'dispatcher-1',
+      ['ADMIN'],
       expect.objectContaining({
         type: 'CHECK_CALL_DUE_SOON',
         message: expect.stringMatching(/Driver: Charles Jaynes · Due in \d+ min/),
@@ -354,10 +361,12 @@ describe('CheckCallReminderSweepService — CHECK_CALL_DUE_SOON (new: 15-minute 
 
     await service.run();
 
-    expect(notifications.create).toHaveBeenCalledTimes(1);
-    expect(notifications.create).toHaveBeenCalledWith(
+    expect(notifications.createForUserAndRoles).toHaveBeenCalledTimes(1);
+    expect(notifications.createForUserAndRoles).toHaveBeenCalledWith(
       expect.anything(),
       ORG_ID,
+      'dispatcher-1',
+      ['ADMIN'],
       expect.objectContaining({ type: 'CHECK_CALL_OVERDUE' }),
     );
   });
@@ -382,7 +391,69 @@ describe('CheckCallReminderSweepService — CHECK_CALL_DUE_SOON (new: 15-minute 
 
     await service.run();
 
-    expect(notifications.create).not.toHaveBeenCalled();
+    expect(notifications.createForUserAndRoles).not.toHaveBeenCalled();
+  });
+});
+
+describe('CheckCallReminderSweepService — Operational Alerts feature: Admin visibility wiring', () => {
+  it('requests ADMIN-role fan-out (via NotificationService.createForUserAndRoles) for CHECK_CALL_OVERDUE, with the dispatcher as primary recipient', async () => {
+    const { service, notifications } = buildService({
+      loads: [
+        {
+          id: 'load-1',
+          loadNumber: 'LOAD-000001',
+          assignedDispatcherId: 'dispatcher-1',
+          dispatchRecord: {
+            dispatchedAt: FIVE_HOURS_AGO,
+            driverName: 'Manual Driver',
+            sourceDriver: null,
+          },
+          checkCalls: [],
+        },
+      ],
+    });
+
+    await service.run();
+
+    // Dedup (dispatcher-who-is-also-Admin gets exactly one row) is the
+    // responsibility of NotificationService.createForUserAndRoles itself
+    // — proven directly against that method in notification.service.spec.ts.
+    // This test only proves the sweep asks for the right primary user + roles.
+    expect(notifications.createForUserAndRoles).toHaveBeenCalledWith(
+      expect.anything(),
+      ORG_ID,
+      'dispatcher-1',
+      ['ADMIN'],
+      expect.objectContaining({ type: 'CHECK_CALL_OVERDUE' }),
+    );
+  });
+
+  it('requests ADMIN-role fan-out for CHECK_CALL_DUE_SOON, with the dispatcher as primary recipient', async () => {
+    const { service, notifications } = buildService({
+      loads: [
+        {
+          id: 'load-1',
+          loadNumber: 'LOAD-000001',
+          assignedDispatcherId: 'dispatcher-1',
+          dispatchRecord: {
+            dispatchedAt: THREE_H_FIFTY_M_AGO,
+            driverName: 'Manual Driver',
+            sourceDriver: null,
+          },
+          checkCalls: [],
+        },
+      ],
+    });
+
+    await service.run();
+
+    expect(notifications.createForUserAndRoles).toHaveBeenCalledWith(
+      expect.anything(),
+      ORG_ID,
+      'dispatcher-1',
+      ['ADMIN'],
+      expect.objectContaining({ type: 'CHECK_CALL_DUE_SOON' }),
+    );
   });
 });
 
@@ -414,6 +485,44 @@ describe('CheckCallReminderSweepService — tenant isolation', () => {
     );
     expect(tx.load.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: expect.objectContaining({ organizationId: OTHER_ORG_ID }) }),
+    );
+  });
+
+  it("the Admin-visibility fan-out (createForUserAndRoles) is called once per organization with that organization's own id — never a cross-org call", async () => {
+    const { service, notifications, prisma } = buildService({
+      orgs: [{ id: ORG_ID }, { id: OTHER_ORG_ID }],
+      loads: [
+        {
+          id: 'load-1',
+          loadNumber: 'LOAD-000001',
+          assignedDispatcherId: 'dispatcher-1',
+          dispatchRecord: {
+            dispatchedAt: FIVE_HOURS_AGO,
+            driverName: 'Manual Driver',
+            sourceDriver: null,
+          },
+          checkCalls: [],
+        },
+      ],
+    });
+
+    await service.run();
+
+    expect(prisma.withTenantTransaction).toHaveBeenCalledTimes(2);
+    expect(notifications.createForUserAndRoles).toHaveBeenCalledTimes(2);
+    expect(notifications.createForUserAndRoles).toHaveBeenCalledWith(
+      expect.anything(),
+      ORG_ID,
+      'dispatcher-1',
+      ['ADMIN'],
+      expect.anything(),
+    );
+    expect(notifications.createForUserAndRoles).toHaveBeenCalledWith(
+      expect.anything(),
+      OTHER_ORG_ID,
+      'dispatcher-1',
+      ['ADMIN'],
+      expect.anything(),
     );
   });
 });

@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { MembershipRoleName } from '@prisma/client';
 import { PrismaService } from '../../../common/prisma/prisma.service';
 import { AuditService } from '../../../common/audit/audit.service';
 import { NotificationService } from '../../notification/services/notification.service';
@@ -9,6 +10,9 @@ import {
 } from '../../../common/timezone/business-timezone';
 
 const OPERATIONAL_STATUSES = ['DISPATCHED', 'PICKUP', 'IN_TRANSIT'] as const;
+
+/** Org Admins also see operational alerts, alongside the assigned dispatcher (never a replacement for them). */
+const ADMIN_VISIBILITY_ROLES: MembershipRoleName[] = ['ADMIN'];
 
 /** "3:00 PM" — time only, no date, always rendered in the business timezone (never server-local). */
 function formatTimeOnly(instant: Date): string {
@@ -79,13 +83,18 @@ export class LoadLatenessSweepService {
           });
           if (existing) continue;
 
-          await this.notifications.create(tx, org.id, {
-            recipientUserId: load.assignedDispatcherId,
-            type: 'LOAD_LATE',
-            relatedEntityType: 'Load',
-            relatedEntityId: load.id,
-            message: `Load late — ${load.loadNumber}\n${stopTypeLabel(lateStop.stopType)} appointment: ${formatTimeOnly(lateStop.appointmentDatetime)}`,
-          });
+          await this.notifications.createForUserAndRoles(
+            tx,
+            org.id,
+            load.assignedDispatcherId,
+            ADMIN_VISIBILITY_ROLES,
+            {
+              type: 'LOAD_LATE',
+              relatedEntityType: 'Load',
+              relatedEntityId: load.id,
+              message: `Load late — ${load.loadNumber}\n${stopTypeLabel(lateStop.stopType)} appointment: ${formatTimeOnly(lateStop.appointmentDatetime)}`,
+            },
+          );
 
           await this.audit.record(tx, {
             organizationId: org.id,
