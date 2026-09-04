@@ -108,6 +108,18 @@ const SYSTEM_CHARGE_TYPES = [
   // second delivery attempt) rather than reusing it, so charge-type
   // reporting doesn't conflate the two different root causes.
   { code: 'RETURN_FREIGHT', label: 'Return Freight' },
+  // Accessorial Charges on in-transit Loads — 7 additional system charge
+  // types requested for the Accessorial Charges card (Load Detail). One
+  // catch-all REEFER type rather than enumerating reefer sub-cases
+  // (temperature delay, fuel, etc.) — disambiguated via the charge's own
+  // description/notes, consistent with how OTHER already works below.
+  { code: 'DRIVER_ASSIST', label: 'Driver Assist' },
+  { code: 'STORAGE', label: 'Storage' },
+  { code: 'TOLLS', label: 'Tolls' },
+  { code: 'LOADING_UNLOADING', label: 'Loading/Unloading' },
+  { code: 'SCALE_FEE', label: 'Scale Fee' },
+  { code: 'WASHOUT', label: 'Washout' },
+  { code: 'REEFER', label: 'Reefer' },
   { code: 'OTHER', label: 'Other Accessorial' },
 ] as const;
 

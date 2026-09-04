@@ -60,6 +60,7 @@ function buildService(opts: {
     },
     chargeLineItem: {
       create: jest.fn().mockImplementation(({ data }) => ({ id: 'charge-1', ...data })),
+      findMany: jest.fn().mockResolvedValue([]),
     },
     invoiceLoad: {
       findFirst: jest.fn().mockResolvedValue(null),
@@ -677,6 +678,86 @@ describe('LoadService.closeLoad — Workflow 10', () => {
     const carrierPayItem = checklistSnapshot.find((c) => c.item === 'Carrier Pay');
     expect(carrierPayItem?.status).toBe('CLEAN');
     expect(carrierPayItem?.remainingCarrierBalance).toBe('1000.00');
+  });
+
+  it('Accessorial Charges regression — a Load with zero carrier accessorials produces the exact same remainingCarrierBalance as before this feature existed', async () => {
+    const { service, tx } = buildService({});
+    tx.load.findFirst.mockResolvedValue({
+      id: 'load-1',
+      status: 'DELIVERED',
+      podStatus: 'COMPLETE',
+      carrierRate: new Prisma.Decimal('1500.00'),
+    });
+    tx.carrierPayment.findMany.mockResolvedValue([
+      { status: 'PAID', amount: new Prisma.Decimal('500.00') },
+    ]);
+    tx.chargeLineItem.findMany.mockResolvedValue([]);
+
+    const { checklistSnapshot } = await service.closeLoad(ORG_ID, 'load-1', USER_ID);
+
+    const carrierPayItem = checklistSnapshot.find((c) => c.item === 'Carrier Pay');
+    expect(carrierPayItem?.remainingCarrierBalance).toBe('1000.00');
+  });
+
+  it('folds carrier-side ADJUSTMENT (accessorial) charges into remainingCarrierBalance, on top of carrierRate', async () => {
+    const { service, tx } = buildService({});
+    tx.load.findFirst.mockResolvedValue({
+      id: 'load-1',
+      status: 'DELIVERED',
+      podStatus: 'COMPLETE',
+      carrierRate: new Prisma.Decimal('1500.00'),
+    });
+    tx.carrierPayment.findMany.mockResolvedValue([
+      { status: 'PAID', amount: new Prisma.Decimal('500.00') },
+    ]);
+    tx.chargeLineItem.findMany.mockResolvedValue([
+      { side: 'CARRIER', source: 'ADJUSTMENT', amount: new Prisma.Decimal('200.00') },
+    ]);
+
+    const { checklistSnapshot } = await service.closeLoad(ORG_ID, 'load-1', USER_ID);
+
+    const carrierPayItem = checklistSnapshot.find((c) => c.item === 'Carrier Pay');
+    expect(carrierPayItem?.remainingCarrierBalance).toBe('1200.00');
+    expect(tx.chargeLineItem.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          organizationId: ORG_ID,
+          loadId: 'load-1',
+          side: 'CARRIER',
+          source: 'ADJUSTMENT',
+        }),
+      }),
+    );
+  });
+
+  it('never counts a CUSTOMER-side charge toward remainingCarrierBalance', async () => {
+    const { service, tx } = buildService({});
+    tx.load.findFirst.mockResolvedValue({
+      id: 'load-1',
+      status: 'DELIVERED',
+      podStatus: 'COMPLETE',
+      carrierRate: new Prisma.Decimal('1500.00'),
+    });
+    // A non-empty (but non-PAID, so $0 toward totalPaid) CarrierPayment
+    // array — remainingCarrierBalance is only surfaced on the checklist
+    // once at least one CarrierPayment record exists (pre-existing gate,
+    // unrelated to this feature); an empty array would make this
+    // assertion vacuously fail regardless of the accessorial-summing
+    // logic actually under test here.
+    tx.carrierPayment.findMany.mockResolvedValue([
+      { status: 'DRAFT', amount: new Prisma.Decimal('100.00') },
+    ]);
+    // The mock's own `where` filter isn't enforced by jest — assert the
+    // service only sums what the query (correctly scoped to
+    // side='CARRIER') would ever return, not a mixed-side result.
+    tx.chargeLineItem.findMany.mockResolvedValue([
+      { side: 'CARRIER', source: 'ADJUSTMENT', amount: new Prisma.Decimal('200.00') },
+    ]);
+
+    const { checklistSnapshot } = await service.closeLoad(ORG_ID, 'load-1', USER_ID);
+
+    const carrierPayItem = checklistSnapshot.find((c) => c.item === 'Carrier Pay');
+    expect(carrierPayItem?.remainingCarrierBalance).toBe('1700.00');
   });
 
   it('rejects closing an already-Closed Load — the only precondition (Workflow 10 §10.9)', async () => {

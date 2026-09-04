@@ -54,9 +54,29 @@ export interface MarkPaidRequest {
   paymentDate?: string;
 }
 
+/**
+ * Accessorial Charges on in-transit Loads — read-only pre-creation
+ * balance preview (carrierRate + carrier-side accessorial charges minus
+ * already-Paid), so CreateCarrierPaymentModal can show Accounting the
+ * correct figure before they type an Amount. `carrierRate`/
+ * `remainingCarrierBalance` are null when the Load has no carrierRate set
+ * yet.
+ */
+export interface CarrierPaymentRemainingBalance {
+  carrierRate: string | null;
+  carrierAccessorialsTotal: string;
+  totalPaid: string;
+  remainingCarrierBalance: string | null;
+}
+
 export const carrierPayApi = {
   create: (loadId: string, body: CreateCarrierPaymentRequest) =>
     apiRequest<CarrierPayment>(`/loads/${loadId}/carrier-payments`, { method: 'POST', body }),
+
+  getRemainingBalance: (loadId: string) =>
+    apiRequest<CarrierPaymentRemainingBalance>(
+      `/loads/${loadId}/carrier-payments/remaining-balance`,
+    ),
 
   list: (filters?: CarrierPaymentListFilters) =>
     apiRequest<CarrierPayment[]>('/carrier-payments', { query: filters }),

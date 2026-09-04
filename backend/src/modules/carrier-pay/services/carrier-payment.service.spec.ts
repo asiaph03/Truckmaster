@@ -53,6 +53,9 @@ function buildService(
       update: jest.fn().mockImplementation(({ data }) => ({ ...paymentRecord, ...data })),
       findMany: jest.fn().mockResolvedValue([paymentRecord]),
     },
+    chargeLineItem: {
+      findMany: jest.fn().mockResolvedValue([]),
+    },
     documentTypeDefinition: {
       findFirst: jest.fn().mockResolvedValue({ id: 'doctype-settlement', code: 'SETTLEMENT' }),
     },
@@ -108,6 +111,240 @@ describe('CarrierPaymentService.create — Workflow 9 §9.1-9.2', () => {
     await expect(
       service.create(ORG_ID, LOAD_ID, { paymentType: 'DEPOSIT', amount: '500.00' }, PREPARER_ID),
     ).rejects.toThrow(BusinessRuleError);
+  });
+
+  it("Accessorial Charges regression — never persists a computed value into `amount`; the preparer's typed amount is stored verbatim", async () => {
+    const { service, tx } = buildService({
+      load: {
+        id: LOAD_ID,
+        status: 'DELIVERED',
+        assignedCarrierId: 'carrier-1',
+        carrierRate: '1500.00',
+      },
+    });
+    tx.chargeLineItem.findMany.mockResolvedValue([
+      { side: 'CARRIER', source: 'ADJUSTMENT', amount: '200.00' },
+    ]);
+
+    await service.create(
+      ORG_ID,
+      LOAD_ID,
+      { paymentType: 'DEPOSIT', amount: '500.00' },
+      PREPARER_ID,
+    );
+
+    expect(tx.carrierPayment.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ amount: '500.00' }) }),
+    );
+  });
+
+  it('surfaces remainingCarrierBalance (carrierRate + carrier-side accessorials - already-Paid) on the created payment, without altering amount', async () => {
+    const { service, tx } = buildService({
+      load: {
+        id: LOAD_ID,
+        status: 'DELIVERED',
+        assignedCarrierId: 'carrier-1',
+        carrierRate: '1500.00',
+      },
+    });
+    tx.carrierPayment.findMany.mockResolvedValue([]);
+    tx.chargeLineItem.findMany.mockResolvedValue([
+      { side: 'CARRIER', source: 'ADJUSTMENT', amount: '200.00' },
+    ]);
+
+    const payment = await service.create(
+      ORG_ID,
+      LOAD_ID,
+      { paymentType: 'DEPOSIT', amount: '500.00' },
+      PREPARER_ID,
+    );
+
+    expect(payment.remainingCarrierBalance).toBe('1700.00');
+    expect(payment.amount).toBe('500.00');
+  });
+
+  it('Accessorial Charges regression — a Load with zero carrier accessorials produces the exact same remainingCarrierBalance as before this feature existed', async () => {
+    const { service } = buildService({
+      load: {
+        id: LOAD_ID,
+        status: 'DELIVERED',
+        assignedCarrierId: 'carrier-1',
+        carrierRate: '1500.00',
+      },
+    });
+    // chargeLineItem.findMany defaults to [] via buildService — no override.
+
+    const payment = await service.create(
+      ORG_ID,
+      LOAD_ID,
+      { paymentType: 'DEPOSIT', amount: '500.00' },
+      PREPARER_ID,
+    );
+
+    expect(payment.remainingCarrierBalance).toBe('1500.00');
+  });
+});
+
+describe('CarrierPaymentService.getRemainingBalance — Accessorial Charges pre-creation balance preview', () => {
+  it('$700 carrierRate + $150 carrier Detention accessorial = $850 remaining', async () => {
+    const { service, tx } = buildService({
+      load: {
+        id: LOAD_ID,
+        status: 'DELIVERED',
+        assignedCarrierId: 'carrier-1',
+        carrierRate: '700.00',
+      },
+    });
+    tx.carrierPayment.findMany.mockResolvedValue([]);
+    tx.chargeLineItem.findMany.mockResolvedValue([
+      { side: 'CARRIER', source: 'ADJUSTMENT', amount: '150.00' },
+    ]);
+
+    const balance = await service.getRemainingBalance(ORG_ID, LOAD_ID, ['ACCOUNTING']);
+
+    expect(balance).toEqual({
+      carrierRate: '700.00',
+      carrierAccessorialsTotal: '150.00',
+      totalPaid: '0.00',
+      remainingCarrierBalance: '850.00',
+    });
+    expect(tx.chargeLineItem.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          organizationId: ORG_ID,
+          loadId: LOAD_ID,
+          side: 'CARRIER',
+          source: 'ADJUSTMENT',
+        }),
+      }),
+    );
+  });
+
+  it('$700 carrierRate + $150 carrier Detention − $300 already Paid = $550 remaining', async () => {
+    const { service, tx } = buildService({
+      load: {
+        id: LOAD_ID,
+        status: 'DELIVERED',
+        assignedCarrierId: 'carrier-1',
+        carrierRate: '700.00',
+      },
+    });
+    tx.carrierPayment.findMany.mockResolvedValue([
+      { status: 'PAID', amount: '300.00' },
+      { status: 'DRAFT', amount: '9999.00' }, // non-PAID rows must never count
+    ]);
+    tx.chargeLineItem.findMany.mockResolvedValue([
+      { side: 'CARRIER', source: 'ADJUSTMENT', amount: '150.00' },
+    ]);
+
+    const balance = await service.getRemainingBalance(ORG_ID, LOAD_ID, ['ACCOUNTING']);
+
+    expect(balance.totalPaid).toBe('300.00');
+    expect(balance.remainingCarrierBalance).toBe('550.00');
+  });
+
+  it('a CUSTOMER-side $150 charge does not affect the carrier balance', async () => {
+    const { service, tx } = buildService({
+      load: {
+        id: LOAD_ID,
+        status: 'DELIVERED',
+        assignedCarrierId: 'carrier-1',
+        carrierRate: '700.00',
+      },
+    });
+    tx.carrierPayment.findMany.mockResolvedValue([]);
+    // The query itself is scoped to side='CARRIER' (asserted above) — this
+    // simulates what a correctly-scoped query would return: nothing, since
+    // a $150 CUSTOMER-side charge would never match that filter.
+    tx.chargeLineItem.findMany.mockResolvedValue([]);
+
+    const balance = await service.getRemainingBalance(ORG_ID, LOAD_ID, ['ACCOUNTING']);
+
+    expect(balance.carrierAccessorialsTotal).toBe('0.00');
+    expect(balance.remainingCarrierBalance).toBe('700.00');
+  });
+
+  it('Accessorial Charges regression — no carrier accessorials produces the same balance as the pre-existing carrierRate-only figure', async () => {
+    const { service } = buildService({
+      load: {
+        id: LOAD_ID,
+        status: 'DELIVERED',
+        assignedCarrierId: 'carrier-1',
+        carrierRate: '700.00',
+      },
+    });
+    // chargeLineItem.findMany and carrierPayment.findMany default to []/[paymentRecord] via buildService.
+
+    const balance = await service.getRemainingBalance(ORG_ID, LOAD_ID, ['ACCOUNTING']);
+
+    expect(balance.remainingCarrierBalance).toBe('700.00');
+  });
+
+  it("is tenant-scoped — every query is filtered by the caller's organizationId", async () => {
+    const { service, tx } = buildService({
+      load: {
+        id: LOAD_ID,
+        status: 'DELIVERED',
+        assignedCarrierId: 'carrier-1',
+        carrierRate: '700.00',
+      },
+    });
+
+    await service.getRemainingBalance(ORG_ID, LOAD_ID, ['ACCOUNTING']);
+
+    expect(tx.load.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: LOAD_ID, organizationId: ORG_ID } }),
+    );
+    expect(tx.carrierPayment.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { organizationId: ORG_ID, loadId: LOAD_ID } }),
+    );
+    expect(tx.chargeLineItem.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ organizationId: ORG_ID, loadId: LOAD_ID }),
+      }),
+    );
+  });
+
+  it('rejects a role without financial view permission (e.g. Dispatcher)', async () => {
+    const { service } = buildService();
+
+    await expect(service.getRemainingBalance(ORG_ID, LOAD_ID, ['DISPATCHER'])).rejects.toThrow(
+      PermissionError,
+    );
+  });
+
+  it('allows Operations Manager to view, matching their existing view-only parity on Carrier Payments', async () => {
+    const { service } = buildService({
+      load: {
+        id: LOAD_ID,
+        status: 'DELIVERED',
+        assignedCarrierId: 'carrier-1',
+        carrierRate: '700.00',
+      },
+    });
+
+    await expect(
+      service.getRemainingBalance(ORG_ID, LOAD_ID, ['OPERATIONS_MANAGER']),
+    ).resolves.toBeDefined();
+  });
+
+  it('returns a null remainingCarrierBalance when the Load has no carrierRate', async () => {
+    const { service } = buildService({
+      load: { id: LOAD_ID, status: 'DELIVERED', assignedCarrierId: 'carrier-1', carrierRate: null },
+    });
+
+    const balance = await service.getRemainingBalance(ORG_ID, LOAD_ID, ['ACCOUNTING']);
+
+    expect(balance.carrierRate).toBeNull();
+    expect(balance.remainingCarrierBalance).toBeNull();
+  });
+
+  it('throws NotFoundError for a nonexistent Load', async () => {
+    const { service } = buildService({ load: null });
+
+    await expect(
+      service.getRemainingBalance(ORG_ID, 'nonexistent', ['ACCOUNTING']),
+    ).rejects.toThrow(NotFoundError);
   });
 });
 

@@ -42,6 +42,23 @@ export class CarrierPaymentController {
     return this.carrierPaymentService.create(organizationId, loadId, dto, actingUserId);
   }
 
+  /**
+   * Accessorial Charges on in-transit Loads — read-only balance preview
+   * (carrierRate + carrier-side accessorial ChargeLineItems - already
+   * Paid) so CreateCarrierPaymentModal can show Accounting the correct
+   * figure BEFORE they type an Amount, not just echo it back after
+   * create() already ran. Same FINANCIAL_VIEW_ROLES as list/findById
+   * (view is broader than PREPARE_ROLES — Ops Manager can see this too,
+   * matching their existing view-only parity on Carrier Payments).
+   */
+  @Get('loads/:id/carrier-payments/remaining-balance')
+  @Roles(...FINANCIAL_VIEW_ROLES)
+  getRemainingBalance(@Param('id', ParseUUIDPipe) loadId: string) {
+    const organizationId = RequestContextStore.requireOrganizationId();
+    const actingRoles = (RequestContextStore.current().roles ?? []) as MembershipRoleName[];
+    return this.carrierPaymentService.getRemainingBalance(organizationId, loadId, actingRoles);
+  }
+
   @Get('carrier-payments')
   @Roles(...FINANCIAL_VIEW_ROLES)
   list(@Query('loadId') loadId?: string, @Query('status') status?: string) {

@@ -688,8 +688,25 @@ export class LoadService {
     const totalPaid = carrierPayments
       .filter((p) => p.status === 'PAID')
       .reduce((sum, p) => sum + Number(p.amount), 0);
+
+    // Accessorial Charges on in-transit Loads — carrier-side accessorials
+    // added post-dispatch (Decision Log D9 addCharge, side=CARRIER,
+    // source=ADJUSTMENT) sit on top of the original carrierRate linehaul,
+    // which the ORIGINAL-source row already mirrors. Summing only
+    // ADJUSTMENT rows here (never ORIGINAL, which would double-count
+    // carrierRate) means a Load with zero carrier accessorials adds
+    // exactly $0 — this calculation stays byte-identical to its
+    // pre-existing behavior for every load that doesn't use this feature.
+    const carrierAccessorials = await tx.chargeLineItem.findMany({
+      where: { organizationId, loadId: load.id, side: 'CARRIER', source: 'ADJUSTMENT' },
+    });
+    const carrierAccessorialsTotal = carrierAccessorials.reduce(
+      (sum, c) => sum + Number(c.amount),
+      0,
+    );
+
     const remainingCarrierBalance = load.carrierRate
-      ? (Number(load.carrierRate) - totalPaid).toFixed(2)
+      ? (Number(load.carrierRate) + carrierAccessorialsTotal - totalPaid).toFixed(2)
       : undefined;
 
     return [

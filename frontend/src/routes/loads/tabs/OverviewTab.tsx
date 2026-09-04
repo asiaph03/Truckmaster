@@ -8,6 +8,7 @@ import { getStatusBadgeColor } from '../../../components/ui/statusBadgeMap';
 import { usePermissions } from '../../../hooks/usePermissions';
 import { formatBusinessDateTime } from '../businessTimezone';
 import { originDestination } from '../loadDerived';
+import { AccessorialChargesCard } from '../AccessorialChargesCard';
 import { EditStopsModal } from '../modals/EditStopsModal';
 import { LinkReturnLoadModal } from '../modals/LinkReturnLoadModal';
 import '../../shared/DetailPage.css';
@@ -175,6 +176,8 @@ export function OverviewTab({ load, onChanged }: { load: Load; onChanged: () => 
             <p style={{ margin: 0 }}>{load.riskReason || 'No reason provided.'}</p>
           </div>
         ) : null}
+
+        <AccessorialChargesCard load={load} onChanged={onChanged} />
       </div>
 
       <div>

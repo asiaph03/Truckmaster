@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { CarrierPaymentStatus, MembershipRoleName } from '@prisma/client';
+import { CarrierPaymentStatus, Load, MembershipRoleName, Prisma } from '@prisma/client';
 import { Queue } from 'bullmq';
 import { PrismaService } from '../../../common/prisma/prisma.service';
 import { AuditService } from '../../../common/audit/audit.service';
@@ -83,8 +83,101 @@ export class CarrierPaymentService {
         actorUserId: actingUserId,
       });
 
-      return created;
+      // Accessorial Charges on in-transit Loads — surfaces the up-to-date
+      // carrier balance (linehaul + any carrier-side accessorial
+      // ADJUSTMENT ChargeLineItems, e.g. Detention added while the Load
+      // was In Transit) the moment a settlement is created, so Accounting
+      // never misses an accessorial when preparing a payment. `amount`
+      // itself is never touched — it stays exactly what the preparer
+      // typed (Decision Log D10: no line-item allocation).
+      const { remainingCarrierBalance } = await this.computeCarrierBalance(
+        tx,
+        organizationId,
+        load,
+      );
+
+      return { ...created, remainingCarrierBalance };
     });
+  }
+
+  /**
+   * Accessorial Charges on in-transit Loads — read-only balance PREVIEW,
+   * so Accounting sees carrierRate + carrier-side accessorial
+   * ChargeLineItems - already-Paid BEFORE typing an amount into
+   * CreateCarrierPaymentModal, not just after submitting it (create()'s
+   * own returned remainingCarrierBalance is too late to inform what the
+   * preparer types). Creates nothing; reuses the exact same
+   * `computeCarrierBalance` formula create() uses — never a second,
+   * divergent calculation.
+   */
+  async getRemainingBalance(
+    organizationId: string,
+    loadId: string,
+    actingRoles: MembershipRoleName[],
+  ) {
+    if (!actingRoles.some((r) => FINANCIAL_VIEW_ROLES.includes(r))) {
+      throw new PermissionError('You do not have permission to view Carrier Payment balances.');
+    }
+    return this.prisma.withTenantTransaction(organizationId, async (tx) => {
+      const load = await tx.load.findFirst({ where: { id: loadId, organizationId } });
+      if (!load) throw new NotFoundError('Load not found.');
+
+      const { carrierAccessorialsTotal, totalPaid, remainingCarrierBalance } =
+        await this.computeCarrierBalance(tx, organizationId, load);
+
+      return {
+        carrierRate: load.carrierRate ? load.carrierRate.toString() : null,
+        carrierAccessorialsTotal,
+        totalPaid,
+        remainingCarrierBalance: remainingCarrierBalance ?? null,
+      };
+    });
+  }
+
+  /**
+   * Single source of truth for carrierRate + carrier-side ADJUSTMENT
+   * ChargeLineItems - already-Paid, shared by create() (post-creation
+   * echo) and getRemainingBalance() (pre-creation preview) — Decision
+   * Log D10 still holds (no line-item allocation persisted onto
+   * CarrierPayment.amount itself; this is read-only). Summing only
+   * ADJUSTMENT rows (never ORIGINAL, which carrierRate already mirrors)
+   * means a Load with zero carrier accessorials adds exactly $0, leaving
+   * every pre-existing figure byte-identical to before this feature.
+   * Customer-side ChargeLineItems are never queried here at all.
+   */
+  private async computeCarrierBalance(
+    tx: Prisma.TransactionClient,
+    organizationId: string,
+    load: Pick<Load, 'id' | 'carrierRate'>,
+  ): Promise<{
+    carrierAccessorialsTotal: string;
+    totalPaid: string;
+    remainingCarrierBalance: string | undefined;
+  }> {
+    const carrierAccessorials = await tx.chargeLineItem.findMany({
+      where: { organizationId, loadId: load.id, side: 'CARRIER', source: 'ADJUSTMENT' },
+    });
+    const carrierAccessorialsTotal = carrierAccessorials.reduce(
+      (sum, c) => sum + Number(c.amount),
+      0,
+    );
+
+    const existingPayments = await tx.carrierPayment.findMany({
+      where: { organizationId, loadId: load.id },
+    });
+    const totalPaid = existingPayments
+      .filter((p) => p.status === 'PAID')
+      .reduce((sum, p) => sum + Number(p.amount), 0);
+
+    const remainingCarrierBalance = load.carrierRate
+      ? (Number(load.carrierRate) + carrierAccessorialsTotal - totalPaid).toFixed(2)
+      : undefined;
+
+    return {
+      carrierAccessorialsTotal: carrierAccessorialsTotal.toFixed(2),
+      totalPaid: totalPaid.toFixed(2),
+      remainingCarrierBalance,
+    };
   }
 
   /** Workflow 9 §9.3 — amount locked in at submission; method/reference must already be present. */
