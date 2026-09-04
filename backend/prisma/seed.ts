@@ -66,6 +66,13 @@ const SYSTEM_DOCUMENT_TYPES = [
     category: 'LOAD',
     requiresReview: false,
   },
+  { code: 'SEAL_PHOTO', label: 'Seal Photo', category: 'LOAD', requiresReview: false },
+  {
+    code: 'REEFER_TEMP_PHOTO',
+    label: 'Reefer Temp Photo',
+    category: 'LOAD',
+    requiresReview: false,
+  },
   { code: 'SETTLEMENT', label: 'Settlement', category: 'LOAD', requiresReview: false },
   // Phase 6 — Invoice PDF documents (Workflow 8, Document entityType=INVOICE,
   // already anticipated in DocumentEntityType since Phase 2). Not seeded
