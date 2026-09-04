@@ -28,6 +28,7 @@ export function SelectOrganizationPage() {
         roles: me.roles,
         name: me.name,
         email: me.email,
+        isPlatformSuperAdmin: me.isPlatformSuperAdmin,
       });
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Something went wrong.');

@@ -42,9 +42,35 @@ export interface UpdateOrganizationRequest {
   defaultPaymentTerms?: PaymentTerms;
 }
 
+/**
+ * Platform-console org creation (`POST /platform/organizations`,
+ * PlatformSuperAdminGuard). Deliberately NOT the same shape as
+ * `UpdateOrganizationRequest` — `CreateOrganizationDto` has no
+ * `defaultPaymentTerms` field at all (it defaults to NET_30 server-side,
+ * editable afterward only via `update()` above), and every field except
+ * `country` is required at creation time.
+ */
+export interface CreateOrganizationRequest {
+  legalName: string;
+  addressLine1: string;
+  city: string;
+  state: string;
+  zip: string;
+  country?: string;
+  primaryContactName: string;
+  primaryContactEmail: string;
+  primaryContactPhone: string;
+}
+
 export const organizationsApi = {
   getCurrent: () => apiRequest<Organization>('/organizations/current'),
 
   update: (body: UpdateOrganizationRequest) =>
     apiRequest<Organization>('/organizations/current', { method: 'PATCH', body }),
+
+  create: (body: CreateOrganizationRequest) =>
+    apiRequest<{ organization: Organization }>('/platform/organizations', {
+      method: 'POST',
+      body,
+    }),
 };

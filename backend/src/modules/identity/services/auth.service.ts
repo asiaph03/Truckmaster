@@ -114,10 +114,18 @@ export class AuthService {
     return { userId, organizationId, membershipId: membership.id, roles };
   }
 
-  async getProfile(userId: string): Promise<Pick<User, 'id' | 'name' | 'email' | 'status'>> {
+  async getProfile(
+    userId: string,
+  ): Promise<Pick<User, 'id' | 'name' | 'email' | 'status' | 'isPlatformSuperAdmin'>> {
     const user = await this.userService.findById(userId);
     if (!user) throw new AuthenticationError('User not found.');
-    return { id: user.id, name: user.name, email: user.email, status: user.status };
+    return {
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      status: user.status,
+      isPlatformSuperAdmin: user.isPlatformSuperAdmin,
+    };
   }
 
   /**

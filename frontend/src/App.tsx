@@ -33,6 +33,7 @@ import { ArAgingPage } from './routes/billing/ArAgingPage';
 import { ApAgingPage } from './routes/billing/ApAgingPage';
 import { UsersRolesPage } from './routes/settings/UsersRolesPage';
 import { OrganizationSettingsPage } from './routes/settings/OrganizationSettingsPage';
+import { PlatformOrganizationsPage } from './routes/platform/PlatformOrganizationsPage';
 import { ImportWizardPage } from './routes/import/ImportWizardPage';
 import { AppShell } from './shell/AppShell';
 import { ToastViewport } from './components/ui';
@@ -147,6 +148,7 @@ function App() {
         <Route path="/import" element={<ImportWizardPage />} />
         <Route path="/settings" element={<UsersRolesPage />} />
         <Route path="/settings/organization" element={<OrganizationSettingsPage />} />
+        <Route path="/platform/organizations" element={<PlatformOrganizationsPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>

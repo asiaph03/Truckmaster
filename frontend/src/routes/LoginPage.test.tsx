@@ -14,6 +14,7 @@ describe('LoginPage — Truck Master logo branding', () => {
       roles: [],
       name: undefined,
       email: undefined,
+      isPlatformSuperAdmin: undefined,
       pendingOrganizations: [],
       availableOrganizations: [],
     });
@@ -87,5 +88,73 @@ describe('LoginPage — Truck Master logo branding', () => {
     });
     expect(useSessionStore.getState().userId).toBe('user-1');
     expect(useSessionStore.getState().organizationId).toBe('org-1');
+  });
+});
+
+describe('LoginPage — Platform Super Admin session propagation', () => {
+  beforeEach(() => {
+    useSessionStore.setState({
+      status: 'unauthenticated',
+      userId: undefined,
+      organizationId: undefined,
+      roles: [],
+      name: undefined,
+      email: undefined,
+      isPlatformSuperAdmin: undefined,
+      pendingOrganizations: [],
+      availableOrganizations: [],
+    });
+  });
+
+  it('a Platform Super Admin login immediately results in session.isPlatformSuperAdmin === true, with no page refresh', async () => {
+    server.use(
+      http.post('/api/v1/auth/login', () =>
+        HttpResponse.json({ requiresOrganizationSelection: false, organizations: [] }),
+      ),
+      http.get('/api/v1/auth/me', () =>
+        HttpResponse.json({
+          id: 'user-1',
+          organizationId: 'org-1',
+          roles: ['ADMIN'],
+          name: 'Jane Admin',
+          email: 'jane@example.com',
+          isPlatformSuperAdmin: true,
+        }),
+      ),
+    );
+    render(<LoginPage />);
+
+    fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'jane@example.com' } });
+    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'secret123' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+
+    await waitFor(() => expect(useSessionStore.getState().status).toBe('authenticated'));
+    expect(useSessionStore.getState().isPlatformSuperAdmin).toBe(true);
+  });
+
+  it('a non-platform-super-admin login results in isPlatformSuperAdmin false/undefined, never true', async () => {
+    server.use(
+      http.post('/api/v1/auth/login', () =>
+        HttpResponse.json({ requiresOrganizationSelection: false, organizations: [] }),
+      ),
+      http.get('/api/v1/auth/me', () =>
+        HttpResponse.json({
+          id: 'user-2',
+          organizationId: 'org-1',
+          roles: ['DISPATCHER'],
+          name: 'Sam Dispatcher',
+          email: 'sam@example.com',
+          isPlatformSuperAdmin: false,
+        }),
+      ),
+    );
+    render(<LoginPage />);
+
+    fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'sam@example.com' } });
+    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'secret123' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+
+    await waitFor(() => expect(useSessionStore.getState().status).toBe('authenticated'));
+    expect(useSessionStore.getState().isPlatformSuperAdmin).toBeFalsy();
   });
 });

@@ -43,6 +43,7 @@ export function LoginPage() {
         roles: me.roles,
         name: me.name,
         email: me.email,
+        isPlatformSuperAdmin: me.isPlatformSuperAdmin,
       });
     } catch (error) {
       if (error instanceof ApiError) {

@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useForm } from 'react-hook-form';
+import { useNavigate } from 'react-router-dom';
 import { authApi } from '../api';
 import { useSessionStore } from '../auth/session-store';
 import { Modal, ModalFooter, TextField } from '../components/ui';
@@ -22,11 +23,13 @@ export function UserMenu() {
   const roles = useSessionStore((s) => s.roles);
   const name = useSessionStore((s) => s.name);
   const email = useSessionStore((s) => s.email);
+  const isPlatformSuperAdmin = useSessionStore((s) => s.isPlatformSuperAdmin);
   const clear = useSessionStore((s) => s.clear);
   const applySession = useSessionStore((s) => s.applySession);
   const userId = useSessionStore((s) => s.userId);
   const organizationId = useSessionStore((s) => s.organizationId);
   const toast = useToast();
+  const navigate = useNavigate();
 
   const initialsSource = name || email || '?';
   const initials = initialsSource
@@ -91,6 +94,18 @@ export function UserMenu() {
           >
             Edit Profile
           </button>
+          {isPlatformSuperAdmin ? (
+            <button
+              type="button"
+              className="user-menu-item"
+              onClick={() => {
+                setOpen(false);
+                navigate('/platform/organizations');
+              }}
+            >
+              Platform Organizations
+            </button>
+          ) : null}
           <button type="button" className="user-menu-item" onClick={handleLogout}>
             Log out
           </button>

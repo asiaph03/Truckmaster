@@ -13,6 +13,7 @@ export interface AppliedSession {
   roles?: MembershipRoleName[];
   name?: string;
   email?: string;
+  isPlatformSuperAdmin?: boolean;
 }
 
 interface SessionState {
@@ -22,6 +23,7 @@ interface SessionState {
   roles: MembershipRoleName[];
   name?: string;
   email?: string;
+  isPlatformSuperAdmin?: boolean;
   /** Populated only while status === 'organization-selection-required'. */
   pendingOrganizations: OrganizationSummary[];
   /**
@@ -66,6 +68,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       roles: session.roles ?? [],
       name: session.name ?? get().name,
       email: session.email ?? get().email,
+      isPlatformSuperAdmin: session.isPlatformSuperAdmin ?? get().isPlatformSuperAdmin,
       pendingOrganizations: [],
       availableOrganizations:
         carriedForward.length > 0 ? carriedForward : get().availableOrganizations,
@@ -84,6 +87,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       roles: [],
       name: undefined,
       email: undefined,
+      isPlatformSuperAdmin: undefined,
       pendingOrganizations: [],
       availableOrganizations: [],
     });
@@ -107,6 +111,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         roles: me.roles ?? [],
         name: me.name,
         email: me.email,
+        isPlatformSuperAdmin: me.isPlatformSuperAdmin,
       });
     } catch (error) {
       if (isAuthenticationError(error)) {

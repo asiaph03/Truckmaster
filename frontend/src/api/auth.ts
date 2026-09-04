@@ -45,6 +45,7 @@ export interface CurrentUserResponse {
   email?: string;
   organizationId?: string;
   roles?: MembershipRoleName[];
+  isPlatformSuperAdmin?: boolean;
 }
 
 export interface UpdateProfileRequest {
