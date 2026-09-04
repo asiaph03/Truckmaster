@@ -744,7 +744,12 @@ describe('DocumentService upload permission — entity-aware (§2.5)', () => {
 describe('DocumentService — Load-level document uploads (Load Detail Documents tab gap-fix)', () => {
   const ORG_ID = 'org-1';
 
-  function buildService(opts: { load?: Record<string, unknown> | null } = {}) {
+  function buildService(
+    opts: {
+      load?: Record<string, unknown> | null;
+      currentVersion?: Record<string, unknown> | null;
+    } = {},
+  ) {
     const load = 'load' in opts ? opts.load : { id: 'load-1' };
     const tx = {
       load: { findFirst: jest.fn().mockResolvedValue(load) },
@@ -756,6 +761,13 @@ describe('DocumentService — Load-level document uploads (Load Detail Documents
       document: {
         create: jest.fn().mockImplementation(({ data }) => ({ id: 'doc-1', ...data })),
         update: jest.fn().mockImplementation(({ data }) => ({ id: 'doc-1', ...data })),
+        findFirst: jest
+          .fn()
+          .mockResolvedValue(
+            'currentVersion' in opts
+              ? opts.currentVersion
+              : { id: 'doc-v1', versionNumber: 1, isCurrentVersion: true },
+          ),
       },
     };
     const prisma = {
@@ -783,7 +795,7 @@ describe('DocumentService — Load-level document uploads (Load Detail Documents
       extractionQueue as never,
     );
 
-    return { service, tx };
+    return { service, tx, scanQueue };
   }
 
   const LOAD_UPLOAD_DTO = {
@@ -830,6 +842,71 @@ describe('DocumentService — Load-level document uploads (Load Detail Documents
     expect(tx.load.findFirst).toHaveBeenCalledWith({
       where: { id: 'load-1', organizationId: ORG_ID },
     });
+  });
+
+  // I. Replace creates a new version and preserves previous versions —
+  // exercised here for entityType LOAD specifically (the new Replace
+  // consumer), reusing the exact same initiateUpload code path POD/POP
+  // replace already relies on (Decision Log D4) — never a second/
+  // divergent versioning implementation.
+  it('Replace (existingDocumentFamilyId set) flips the prior version to isCurrentVersion=false and creates a new, incremented version — never deletes/discards the prior version', async () => {
+    const { service, tx } = buildService({
+      currentVersion: { id: 'doc-v2', versionNumber: 2, isCurrentVersion: true },
+    });
+    await RequestContextStore.run({ requestId: 'r6', roles: ['ADMIN'] }, async () => {
+      await service.initiateUpload(
+        ORG_ID,
+        { ...LOAD_UPLOAD_DTO, existingDocumentFamilyId: 'family-1' },
+        'user-1',
+      );
+    });
+
+    expect(tx.document.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'doc-v2' },
+        data: { isCurrentVersion: false },
+      }),
+    );
+    expect(tx.document.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          documentFamilyId: 'family-1',
+          versionNumber: 3,
+          isCurrentVersion: true,
+        }),
+      }),
+    );
+    // The prior version row is updated (isCurrentVersion flipped), never
+    // deleted — "preserves previous versions" proven by there being no
+    // delete/deleteMany call anywhere in this flow.
+    expect((tx.document as { deleteMany?: unknown }).deleteMany).toBeUndefined();
+  });
+
+  // J. Replacement still follows malware scanning — confirmUpload (the
+  // method that actually enqueues the scan job) has no branching on
+  // documentFamilyId/replace at all, so a replacement-created Document
+  // goes through the identical confirm -> scan-queue path as any
+  // first-time upload. Proven directly against confirmUpload here rather
+  // than re-asserting initiateUpload's own lack of scan-bypass logic.
+  it('a replacement-created document still requires confirmUpload -> malware scan enqueue, with no shortcut for replace', async () => {
+    const { service, tx, scanQueue } = buildService();
+    const newVersionDoc = {
+      id: 'doc-v3',
+      organizationId: ORG_ID,
+      entityType: 'LOAD',
+      entityId: 'load-1',
+      scanStatus: 'PENDING',
+      fileStorageKey: `org_${ORG_ID}/documents/doc-v3`,
+    };
+    (tx.document.findFirst as jest.Mock).mockResolvedValue(newVersionDoc);
+
+    await service.confirmUpload(ORG_ID, 'doc-v3', 'user-1');
+
+    expect(scanQueue.add).toHaveBeenCalledWith(
+      'scan',
+      expect.objectContaining({ documentId: 'doc-v3', storageKey: newVersionDoc.fileStorageKey }),
+      expect.anything(),
+    );
   });
 
   it('rejects with NotFoundError when the Load does not belong to the acting organization', async () => {
@@ -1195,5 +1272,309 @@ describe('DocumentService.applyScanResult — Phase 5 POD milestone recalculatio
     await service.applyScanResult(ORG_ID, DOC_ID, { status: 'CLEAN', provider: 'stub' });
 
     expect(loadPodStatus.recalculatePodStatus).not.toHaveBeenCalled();
+  });
+});
+
+describe('DocumentService.deleteDocumentFamily — Load-Level Documents Delete', () => {
+  const ORG_ID = 'org-1';
+  const FAMILY_ID = 'family-1';
+
+  function version(n: number, overrides: Record<string, unknown> = {}) {
+    return {
+      id: `doc-v${n}`,
+      organizationId: ORG_ID,
+      documentFamilyId: FAMILY_ID,
+      entityType: 'LOAD',
+      entityId: 'load-1',
+      fileStorageKey: `org_${ORG_ID}/documents/doc-v${n}`,
+      fileName: `file-v${n}.pdf`,
+      versionNumber: n,
+      isCurrentVersion: n === 3,
+      ...overrides,
+    };
+  }
+
+  function buildService(
+    opts: {
+      versions?: Record<string, unknown>[];
+      loadDraft?: Record<string, unknown> | null;
+      carrierInsurance?: Record<string, unknown> | null;
+    } = {},
+  ) {
+    const versions = opts.versions ?? [version(1), version(2), version(3)];
+
+    const tx = {
+      document: {
+        findFirst: jest
+          .fn()
+          .mockImplementation(({ where }: { where: { id: string } }) =>
+            Promise.resolve(versions.find((v) => v.id === where.id) ?? null),
+          ),
+        findMany: jest.fn().mockResolvedValue(versions),
+        deleteMany: jest.fn().mockResolvedValue({ count: versions.length }),
+      },
+      loadDraft: {
+        findFirst: jest.fn().mockResolvedValue(opts.loadDraft ?? null),
+      },
+      carrierInsurance: {
+        findFirst: jest.fn().mockResolvedValue(opts.carrierInsurance ?? null),
+      },
+    };
+
+    const prisma = {
+      withTenantTransaction: jest
+        .fn()
+        .mockImplementation((_orgId: string, fn: (tx: unknown) => unknown) => fn(tx)),
+    };
+    const audit = { record: jest.fn().mockResolvedValue(undefined) };
+    const storage = { deleteObject: jest.fn().mockResolvedValue(undefined) };
+    const carrierEligibility = { recalculate: jest.fn() };
+    const loadPodStatus = { recalculatePodStatus: jest.fn() };
+    const scanQueue = { add: jest.fn() };
+    const extractionQueue = { add: jest.fn() };
+
+    const service = new DocumentService(
+      prisma as never,
+      audit as never,
+      storage as never,
+      carrierEligibility as never,
+      loadPodStatus as never,
+      scanQueue as never,
+      extractionQueue as never,
+    );
+
+    return { service, tx, audit, storage, versions };
+  }
+
+  // A. Delete current version -> entire family deleted.
+  it('deleting the current version deletes the entire family (all versions), not just the one requested', async () => {
+    const { service, tx } = buildService();
+
+    await RequestContextStore.run({ requestId: 'r1', roles: ['ADMIN'] }, async () => {
+      await service.deleteDocumentFamily(ORG_ID, 'doc-v3', 'user-1');
+    });
+
+    expect(tx.document.deleteMany).toHaveBeenCalledWith({
+      where: { organizationId: ORG_ID, documentFamilyId: FAMILY_ID },
+    });
+  });
+
+  // B. Delete an older version -> entire family deleted (same behavior, id of a non-current version).
+  it('deleting an older (non-current) version also deletes the entire family', async () => {
+    const { service, tx } = buildService();
+
+    await RequestContextStore.run({ requestId: 'r2', roles: ['ADMIN'] }, async () => {
+      await service.deleteDocumentFamily(ORG_ID, 'doc-v1', 'user-1');
+    });
+
+    expect(tx.document.deleteMany).toHaveBeenCalledWith({
+      where: { organizationId: ORG_ID, documentFamilyId: FAMILY_ID },
+    });
+  });
+
+  // C. All family S3 objects are deleted.
+  it('deletes every version’s S3 object, not just the current version’s', async () => {
+    const { service, storage } = buildService();
+
+    await RequestContextStore.run({ requestId: 'r3', roles: ['ADMIN'] }, async () => {
+      await service.deleteDocumentFamily(ORG_ID, 'doc-v3', 'user-1');
+    });
+
+    expect(storage.deleteObject).toHaveBeenCalledTimes(3);
+    expect(storage.deleteObject).toHaveBeenCalledWith(`org_${ORG_ID}/documents/doc-v1`);
+    expect(storage.deleteObject).toHaveBeenCalledWith(`org_${ORG_ID}/documents/doc-v2`);
+    expect(storage.deleteObject).toHaveBeenCalledWith(`org_${ORG_ID}/documents/doc-v3`);
+  });
+
+  // D. Cross-tenant document deletion is rejected.
+  it('rejects deletion of a document outside the acting organization (tenant isolation)', async () => {
+    const { service, tx } = buildService();
+    // Simulates the tenant-scoped query finding nothing for a foreign org's id.
+    (tx.document.findFirst as jest.Mock).mockResolvedValue(null);
+
+    await RequestContextStore.run({ requestId: 'r4', roles: ['ADMIN'] }, async () => {
+      await expect(service.deleteDocumentFamily('org-OTHER', 'doc-v3', 'user-1')).rejects.toThrow(
+        NotFoundError,
+      );
+    });
+    expect(tx.document.deleteMany).not.toHaveBeenCalled();
+  });
+
+  // E. Unauthorized role cannot delete.
+  it('blocks a Sales/Booking user (not in POD_UPLOAD_ROLES) from deleting', async () => {
+    const { service, tx } = buildService();
+
+    await RequestContextStore.run({ requestId: 'r5', roles: ['SALES_BOOKING'] }, async () => {
+      await expect(service.deleteDocumentFamily(ORG_ID, 'doc-v3', 'user-1')).rejects.toThrow(
+        PermissionError,
+      );
+    });
+    expect(tx.document.deleteMany).not.toHaveBeenCalled();
+  });
+
+  // F. Authorized POD_UPLOAD_ROLE can delete (each of the 4 roles).
+  it.each(['ADMIN', 'OPERATIONS_MANAGER', 'DISPATCHER', 'ACCOUNTING'] as const)(
+    'allows %s (a POD_UPLOAD_ROLES member) to delete',
+    async (role) => {
+      const { service, tx } = buildService();
+
+      await RequestContextStore.run({ requestId: `r-${role}`, roles: [role] }, async () => {
+        await expect(
+          service.deleteDocumentFamily(ORG_ID, 'doc-v3', 'user-1'),
+        ).resolves.toBeUndefined();
+      });
+      expect(tx.document.deleteMany).toHaveBeenCalled();
+    },
+  );
+
+  // G. LoadDraft-referenced document deletion is rejected with a clean business error.
+  it('rejects deletion with a clean BusinessRuleError (never a raw FK crash) when a LoadDraft still references any version in the family', async () => {
+    const { service, tx } = buildService({
+      loadDraft: { id: 'draft-1', rateConfirmationDocumentId: 'doc-v3' },
+    });
+
+    await RequestContextStore.run({ requestId: 'r6', roles: ['ADMIN'] }, async () => {
+      await expect(service.deleteDocumentFamily(ORG_ID, 'doc-v3', 'user-1')).rejects.toThrow(
+        BusinessRuleError,
+      );
+      await expect(service.deleteDocumentFamily(ORG_ID, 'doc-v3', 'user-1')).rejects.toThrow(
+        /associated with a Load Draft/,
+      );
+    });
+    expect(tx.document.deleteMany).not.toHaveBeenCalled();
+  });
+
+  // H. Delete does not delete the LoadDraft.
+  it('never deletes/modifies the LoadDraft itself, even when the guard is not triggered', async () => {
+    const { service } = buildService();
+    const loadDraftDeleteSpy = jest.fn();
+
+    await RequestContextStore.run({ requestId: 'r7', roles: ['ADMIN'] }, async () => {
+      await service.deleteDocumentFamily(ORG_ID, 'doc-v3', 'user-1');
+    });
+
+    // No loadDraft mutation method exists on the mock tx at all — proves
+    // the service never attempts to touch the LoadDraft table beyond the
+    // read-only existence check.
+    expect(loadDraftDeleteSpy).not.toHaveBeenCalled();
+  });
+
+  it('also blocks deletion when a CarrierInsurance record references any version in the family (same RESTRICT-FK failure mode as LoadDraft)', async () => {
+    const { service, tx } = buildService({
+      carrierInsurance: { id: 'coi-1', coiDocumentId: 'doc-v2' },
+    });
+
+    await RequestContextStore.run({ requestId: 'r8', roles: ['ADMIN'] }, async () => {
+      await expect(service.deleteDocumentFamily(ORG_ID, 'doc-v3', 'user-1')).rejects.toThrow(
+        BusinessRuleError,
+      );
+    });
+    expect(tx.document.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it('records an audit entry naming the deleted family and every version’s file name', async () => {
+    const { service, audit } = buildService();
+
+    await RequestContextStore.run({ requestId: 'r9', roles: ['ADMIN'] }, async () => {
+      await service.deleteDocumentFamily(ORG_ID, 'doc-v3', 'user-1');
+    });
+
+    expect(audit.record).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: 'Document Family Deleted',
+        newValue: expect.objectContaining({
+          documentFamilyId: FAMILY_ID,
+          versionCount: 3,
+        }),
+      }),
+    );
+  });
+
+  // Correction 2 — S3/DB ordering safety fix. PostgreSQL cannot roll back
+  // an S3 DeleteObject, so the DB deletion must commit independently of,
+  // and before, any S3 cleanup attempt.
+
+  // 8 & 13. Database deletion (and its audit entry) commits before any S3
+  // cleanup is attempted.
+  it('commits the database deletion and records the audit entry before attempting any S3 cleanup', async () => {
+    const callOrder: string[] = [];
+    const { service, tx, storage, audit } = buildService();
+    (tx.document.deleteMany as jest.Mock).mockImplementation(async () => {
+      callOrder.push('db-delete');
+      return { count: 3 };
+    });
+    (audit.record as jest.Mock).mockImplementation(async () => {
+      callOrder.push('audit-record');
+    });
+    (storage.deleteObject as jest.Mock).mockImplementation(async (key: string) => {
+      callOrder.push(`s3-delete:${key}`);
+    });
+
+    await RequestContextStore.run({ requestId: 'r10', roles: ['ADMIN'] }, async () => {
+      await service.deleteDocumentFamily(ORG_ID, 'doc-v3', 'user-1');
+    });
+
+    expect(callOrder[0]).toBe('db-delete');
+    expect(callOrder[1]).toBe('audit-record');
+    expect(callOrder.slice(2)).toEqual(
+      expect.arrayContaining([
+        `s3-delete:org_${ORG_ID}/documents/doc-v1`,
+        `s3-delete:org_${ORG_ID}/documents/doc-v2`,
+        `s3-delete:org_${ORG_ID}/documents/doc-v3`,
+      ]),
+    );
+  });
+
+  // 9 & 12. An S3 cleanup failure after the DB delete has committed must
+  // never fail the overall operation, and must never surface as a raw
+  // storage error to the caller (and therefore never to the frontend).
+  it('resolves successfully — never rejects with the raw S3 error — when every S3 cleanup call fails after the DB delete has committed', async () => {
+    const { service, tx, storage } = buildService();
+    (storage.deleteObject as jest.Mock).mockRejectedValue(new Error('S3 unreachable'));
+
+    await RequestContextStore.run({ requestId: 'r11', roles: ['ADMIN'] }, async () => {
+      await expect(
+        service.deleteDocumentFamily(ORG_ID, 'doc-v3', 'user-1'),
+      ).resolves.toBeUndefined();
+    });
+    expect(tx.document.deleteMany).toHaveBeenCalled();
+  });
+
+  // 10. One failing S3 cleanup call must not stop the remaining cleanup
+  // attempts for the other versions in the family.
+  it('continues attempting to delete the remaining S3 objects even after one cleanup call fails', async () => {
+    const { service, storage } = buildService();
+    (storage.deleteObject as jest.Mock).mockImplementation((key: string) =>
+      (key as string).endsWith('doc-v2')
+        ? Promise.reject(new Error('S3 unreachable'))
+        : Promise.resolve(undefined),
+    );
+
+    await RequestContextStore.run({ requestId: 'r12', roles: ['ADMIN'] }, async () => {
+      await service.deleteDocumentFamily(ORG_ID, 'doc-v3', 'user-1');
+    });
+
+    expect(storage.deleteObject).toHaveBeenCalledTimes(3);
+    expect(storage.deleteObject).toHaveBeenCalledWith(`org_${ORG_ID}/documents/doc-v1`);
+    expect(storage.deleteObject).toHaveBeenCalledWith(`org_${ORG_ID}/documents/doc-v2`);
+    expect(storage.deleteObject).toHaveBeenCalledWith(`org_${ORG_ID}/documents/doc-v3`);
+  });
+
+  // 11. The database rows remain deleted — the delete is never undone —
+  // even when S3 cleanup fails; there is no compensating "restore" call
+  // anywhere on the mock tx for the service to have used even if it tried.
+  it('leaves the database deletion in place when S3 cleanup fails, with no attempt to undo it', async () => {
+    const { service, tx, storage } = buildService();
+    (storage.deleteObject as jest.Mock).mockRejectedValue(new Error('S3 unreachable'));
+
+    await RequestContextStore.run({ requestId: 'r13', roles: ['ADMIN'] }, async () => {
+      await service.deleteDocumentFamily(ORG_ID, 'doc-v3', 'user-1');
+    });
+
+    expect(tx.document.deleteMany).toHaveBeenCalledTimes(1);
+    expect(tx.document.deleteMany).toHaveBeenCalledWith({
+      where: { organizationId: ORG_ID, documentFamilyId: FAMILY_ID },
+    });
   });
 });

@@ -37,6 +37,11 @@ export type DocumentGenerationStatus = 'PENDING' | 'COMPLETE' | 'FAILED';
 
 export interface AppDocument {
   id: string;
+  // Stable across every version of "the same document" — this, not `id`,
+  // is what a Replace call must pass as `existingDocumentFamilyId` (see
+  // CreateDocumentRequest below). `id` identifies one specific version's
+  // row and is never the right value there.
+  documentFamilyId: string;
   entityType: DocumentEntityType;
   entityId: string;
   documentTypeId: string;
@@ -243,6 +248,17 @@ export const documentsApi = {
 
   getDownloadUrl: (documentId: string) =>
     apiRequest<{ url: string }>(`/documents/${documentId}/download-url`),
+
+  /**
+   * Load-Level Documents Delete — deletes the ENTIRE document family
+   * (every version), not just the version whose id is passed. Backend:
+   * `DELETE /documents/:id` (204 on success). A document still
+   * referenced by a Load Draft returns a `BUSINESS_RULE_ERROR` (422) —
+   * surfaced via the same `ApiError` every other mutation here already
+   * throws, never a raw 500.
+   */
+  delete: (documentId: string) =>
+    apiRequest<void>(`/documents/${documentId}`, { method: 'DELETE' }),
 
   review: (documentId: string, body: ReviewDocumentRequest) =>
     apiRequest<AppDocument>(`/documents/${documentId}/review`, { method: 'POST', body }),

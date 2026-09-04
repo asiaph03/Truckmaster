@@ -125,4 +125,16 @@ export class StorageService {
     );
     await this.client.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: fromKey }));
   }
+
+  /**
+   * Load-Level Documents Delete — permanently removes one object. Only
+   * `moveToQuarantine` used `DeleteObjectCommand` before this (as half of
+   * a copy-then-delete); this is the first standalone, caller-invoked
+   * delete. Deleting a nonexistent key is not an error (S3 delete is
+   * idempotent), which is intentionally convenient for the document
+   * module's family-delete loop.
+   */
+  async deleteObject(key: string): Promise<void> {
+    await this.client.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: key }));
+  }
 }

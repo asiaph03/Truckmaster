@@ -1,4 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { Document, DocumentEntityType, MembershipRoleName, Prisma } from '@prisma/client';
 import { Queue } from 'bullmq';
 import { PrismaService } from '../../../common/prisma/prisma.service';
@@ -105,6 +105,8 @@ const RATE_CONFIRMATION_INTAKE_UPLOAD_ROLES: MembershipRoleName[] = [
 
 @Injectable()
 export class DocumentService {
+  private readonly logger = new Logger(DocumentService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
@@ -633,6 +635,121 @@ export class DocumentService {
 
       return updated;
     });
+  }
+
+  /**
+   * Load-Level Documents Delete — removes the ENTIRE document family
+   * (every version, not just the current one) and every version's S3
+   * object. Reuses `POD_UPLOAD_ROLES` — the same roles that can
+   * upload/replace a Load document (Workflow 7's "manage Load documents"
+   * set) can delete one; no new role model introduced. Not restricted to
+   * `entityType === 'LOAD'` at this layer (the underlying Document model
+   * is generic across entity types, matching every other method here),
+   * but the only caller wired today is the Load-Level Documents screen.
+   *
+   * Blocks deletion with a clean `BusinessRuleError` (422, never a raw
+   * Postgres FK-violation 500) when any version in the family is still
+   * referenced by an open `LoadDraft.rateConfirmationDocumentId` — a
+   * real DB-level `UNIQUE` foreign key with `ON DELETE RESTRICT`
+   * (confirmed in the actual migration SQL) — or by
+   * `CarrierInsurance.coiDocumentId`, the one other Document reference
+   * with the identical RESTRICT behavior. The LoadDraft/CarrierInsurance
+   * row itself is never touched, deleted, or cascaded — the caller must
+   * resolve that dependency first.
+   *
+   * PostgreSQL cannot roll back an S3 `DeleteObjectCommand`, so the two
+   * can never be made atomic — the DB deletion must never depend on S3
+   * cleanup succeeding. Phase 1 does the entire dependency-checked delete
+   * inside the tenant transaction and commits; only once that has
+   * genuinely committed does Phase 2 attempt the S3 deletes, each
+   * independently caught and logged rather than thrown. A storage failure
+   * here can therefore only ever produce an orphaned S3 object (safe to
+   * retry later — `deleteObject` is idempotent), never a live Document row
+   * pointing at a missing object, which is the failure mode that actually
+   * matters (a Download/consumption path breaking for real data).
+   */
+  async deleteDocumentFamily(
+    organizationId: string,
+    documentId: string,
+    actingUserId: string,
+  ): Promise<void> {
+    const { roles = [] } = RequestContextStore.current();
+    if (!POD_UPLOAD_ROLES.some((r) => roles.includes(r))) {
+      throw new PermissionError(
+        'Deleting a document requires Admin, Operations Manager, Dispatcher, or Accounting.',
+      );
+    }
+
+    // PHASE 1 — dependency-checked delete of every DB row in the family,
+    // committed before any S3 call is made. The storage keys are captured
+    // here (from rows that are about to be deleted) for Phase 2 below.
+    const storageKeysToDelete = await this.prisma.withTenantTransaction(
+      organizationId,
+      async (tx) => {
+        const document = await tx.document.findFirst({
+          where: { id: documentId, organizationId },
+        });
+        if (!document) throw new NotFoundError('Document not found.');
+
+        const versions = await tx.document.findMany({
+          where: { organizationId, documentFamilyId: document.documentFamilyId },
+        });
+        const versionIds = versions.map((v) => v.id);
+
+        const referencingDraft = await tx.loadDraft.findFirst({
+          where: { organizationId, rateConfirmationDocumentId: { in: versionIds } },
+        });
+        if (referencingDraft) {
+          throw new BusinessRuleError(
+            'Cannot delete document because it is associated with a Load Draft. Delete the Load Draft first, then try again.',
+          );
+        }
+
+        const referencingCoi = await tx.carrierInsurance.findFirst({
+          where: { organizationId, coiDocumentId: { in: versionIds } },
+        });
+        if (referencingCoi) {
+          throw new BusinessRuleError(
+            'Cannot delete document because it is referenced by a Carrier Insurance record.',
+          );
+        }
+
+        await tx.document.deleteMany({
+          where: { organizationId, documentFamilyId: document.documentFamilyId },
+        });
+
+        await this.audit.record(tx, {
+          organizationId,
+          action: 'Document Family Deleted',
+          entityType: document.entityType,
+          entityId: document.entityId,
+          newValue: {
+            documentFamilyId: document.documentFamilyId,
+            versionCount: versions.length,
+            fileNames: versions.map((v) => v.fileName),
+          },
+          actorUserId: actingUserId,
+        });
+
+        return versions.map((v) => v.fileStorageKey);
+      },
+    );
+
+    // PHASE 2 — S3 cleanup, only reached after Phase 1 has committed. Each
+    // key is deleted independently: one failure must not stop the rest,
+    // and no failure here is ever thrown back to the caller — the database
+    // is already correct and is the source of truth, so the delete
+    // operation has already succeeded from the caller's point of view.
+    for (const key of storageKeysToDelete) {
+      try {
+        await this.storage.deleteObject(key);
+      } catch (error) {
+        this.logger.error(
+          `Failed to delete S3 object "${key}" after document family delete committed (org ${organizationId}). Orphaned object — safe to retry, requires no DB action.`,
+          error instanceof Error ? error.stack : undefined,
+        );
+      }
+    }
   }
 
   /** Invoked only by the malware-scan worker (system-triggered, no acting user). */

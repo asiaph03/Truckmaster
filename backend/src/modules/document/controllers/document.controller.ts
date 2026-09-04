@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Header,
   HttpCode,
@@ -212,6 +213,19 @@ export class DocumentController {
     const actingUserId = RequestContextStore.requireUserId();
     const actingRoles = (RequestContextStore.current().roles ?? []) as MembershipRoleName[];
     return this.documentService.getDownloadUrl(organizationId, id, actingUserId, actingRoles);
+  }
+
+  // Load-Level Documents Delete — permission enforced inside the service
+  // (assertUploadPermission's sibling check, same convention as create()
+  // above), not via @Roles() here. Deletes the entire document family
+  // (every version), not just the one id passed in — see
+  // DocumentService.deleteDocumentFamily's own doc comment.
+  @Delete(':id')
+  @HttpCode(204)
+  async remove(@Param('id', ParseUUIDPipe) id: string): Promise<void> {
+    const organizationId = RequestContextStore.requireOrganizationId();
+    const actingUserId = RequestContextStore.requireUserId();
+    await this.documentService.deleteDocumentFamily(organizationId, id, actingUserId);
   }
 
   @Post(':id/review')

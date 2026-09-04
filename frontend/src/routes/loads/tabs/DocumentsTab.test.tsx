@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { http, HttpResponse } from 'msw';
 import { server } from '../../../test/mswServer';
 import { DocumentsTab } from './DocumentsTab';
+import { ToastViewport } from '../../../components/ui';
 import type { AppDocument, Load, Stop } from '../../../api';
 
 const DOC_TYPES = [
@@ -95,6 +96,7 @@ function renderTab(load: Load, loadDocuments: AppDocument[] = []) {
   return render(
     <QueryClientProvider client={queryClient}>
       <DocumentsTab load={load} />
+      <ToastViewport />
     </QueryClientProvider>,
   );
 }
@@ -102,6 +104,10 @@ function renderTab(load: Load, loadDocuments: AppDocument[] = []) {
 function makeAppDocument(overrides: Partial<AppDocument>): AppDocument {
   return {
     id: 'doc-1',
+    // Deliberately different from `id` — a family id equal to its own
+    // document id would let a regression back to passing `.id` slip past
+    // the "L" Replace test below undetected.
+    documentFamilyId: 'family-doc-1',
     entityType: 'LOAD',
     entityId: 'load-1',
     documentTypeId: 'dt-bol',
@@ -285,5 +291,208 @@ describe('DocumentsTab — scan-status consumption gate (isDocumentConsumable)',
     await waitFor(() => expect(screen.getByText('bol.pdf')).toBeInTheDocument());
     expect(screen.getByText('Scanning…')).toBeInTheDocument();
     expect(screen.queryByText('Download')).not.toBeInTheDocument();
+  });
+});
+
+describe('DocumentsTab — Load-Level Documents Replace + Delete', () => {
+  function selectReplacementFile(): { input: HTMLInputElement; file: File } {
+    const replaceButton = screen.getByText('Replace');
+    const wrapper = replaceButton.closest('.file-upload-field') as HTMLElement;
+    const input = wrapper.querySelector('input[type="file"]') as HTMLInputElement;
+    const file = new File(['content'], 'replacement.pdf', { type: 'application/pdf' });
+    return { input, file };
+  }
+
+  // K. Actions column renders Download/Replace/Delete.
+  it('renders an Actions column with Download, Replace, and Delete for a current, CLEAN Load-level document', async () => {
+    const load = makeLoad([]);
+    const doc = makeAppDocument({ id: 'doc-1', scanStatus: 'CLEAN' });
+    renderTab(load, [doc]);
+
+    await waitFor(() => expect(screen.getByText('bol.pdf')).toBeInTheDocument());
+    expect(screen.getByText('Actions')).toBeInTheDocument();
+    expect(screen.getByText('Download')).toBeInTheDocument();
+    expect(screen.getByText('Replace')).toBeInTheDocument();
+    expect(screen.getByText('Delete')).toBeInTheDocument();
+  });
+
+  // L. Replace passes the correct existingDocumentFamilyId — the row's
+  // documentFamilyId, never its own document id (the two are deliberately
+  // different values in makeAppDocument's default, so this test would fail
+  // if Replace regressed back to passing doc.id).
+  it("Replace uploads with existingDocumentFamilyId set to the row's documentFamilyId, not its document id, keeping the same document type", async () => {
+    const load = makeLoad([]);
+    const doc = makeAppDocument({
+      id: 'doc-1',
+      documentFamilyId: 'family-doc-1',
+      documentTypeId: 'dt-bol',
+      scanStatus: 'CLEAN',
+    });
+    let receivedCreateBody: Record<string, unknown> | undefined;
+    server.use(
+      http.post('/api/v1/documents', async ({ request }) => {
+        receivedCreateBody = (await request.json()) as Record<string, unknown>;
+        return HttpResponse.json({
+          document: makeAppDocument({ id: 'doc-2', scanStatus: 'PENDING' }),
+          uploadUrl: '/mock-upload-url',
+        });
+      }),
+      http.put('/mock-upload-url', () => new HttpResponse(null, { status: 200 })),
+      http.post('/api/v1/documents/doc-2/confirm', () =>
+        HttpResponse.json(makeAppDocument({ id: 'doc-2', scanStatus: 'PENDING' })),
+      ),
+    );
+    renderTab(load, [doc]);
+    await waitFor(() => expect(screen.getByText('bol.pdf')).toBeInTheDocument());
+
+    const { input, file } = selectReplacementFile();
+    fireEvent.change(input, { target: { files: [file] } });
+
+    await waitFor(() => expect(receivedCreateBody).toBeDefined());
+    expect(receivedCreateBody).toMatchObject({
+      entityType: 'LOAD',
+      entityId: 'load-1',
+      documentTypeId: 'dt-bol',
+      existingDocumentFamilyId: 'family-doc-1',
+    });
+    expect(receivedCreateBody?.existingDocumentFamilyId).not.toBe('doc-1');
+  });
+
+  // M. Delete opens confirmation dialog.
+  it('clicking Delete opens the confirmation dialog naming the document, and does not call the API yet', async () => {
+    const load = makeLoad([]);
+    const doc = makeAppDocument({ id: 'doc-1', fileName: 'rate-confirmation.pdf' });
+    let deleteWasCalled = false;
+    server.use(
+      http.delete('/api/v1/documents/doc-1', () => {
+        deleteWasCalled = true;
+        return new HttpResponse(null, { status: 204 });
+      }),
+    );
+    renderTab(load, [doc]);
+    await waitFor(() => expect(screen.getByText('rate-confirmation.pdf')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByText('Delete'));
+
+    expect(await screen.findByText('Delete document?')).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        'This will permanently delete "rate-confirmation.pdf" and all of its versions. This action cannot be undone.',
+      ),
+    ).toBeInTheDocument();
+    expect(deleteWasCalled).toBe(false);
+  });
+
+  // N. Canceling confirmation does not call DELETE.
+  it('canceling the confirmation dialog closes it and never calls the DELETE endpoint', async () => {
+    const load = makeLoad([]);
+    const doc = makeAppDocument({ id: 'doc-1' });
+    let deleteWasCalled = false;
+    server.use(
+      http.delete('/api/v1/documents/doc-1', () => {
+        deleteWasCalled = true;
+        return new HttpResponse(null, { status: 204 });
+      }),
+    );
+    renderTab(load, [doc]);
+    await waitFor(() => expect(screen.getByText('bol.pdf')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByText('Delete'));
+    await screen.findByText('Delete document?');
+    fireEvent.click(screen.getByText('Cancel'));
+
+    await waitFor(() => expect(screen.queryByText('Delete document?')).not.toBeInTheDocument());
+    expect(deleteWasCalled).toBe(false);
+  });
+
+  // O. Confirming delete calls the correct DELETE endpoint.
+  // P. Successful delete refreshes the list and shows success feedback.
+  it('confirming delete calls DELETE /documents/:id, refreshes the list, and shows a success toast', async () => {
+    const load = makeLoad([]);
+    const doc = makeAppDocument({ id: 'doc-1', fileName: 'bol.pdf' });
+    let deletedId: string | undefined;
+    let documentDeleted = false;
+    renderTab(load, [doc]);
+    // Registered after renderTab so these take priority over renderTab's own
+    // static /api/v1/documents handler for every subsequent request,
+    // including the refetch triggered by a successful delete.
+    server.use(
+      http.get('/api/v1/documents', () => HttpResponse.json(documentDeleted ? [] : [doc])),
+      http.delete('/api/v1/documents/:id', ({ params }) => {
+        deletedId = params.id as string;
+        documentDeleted = true;
+        return new HttpResponse(null, { status: 204 });
+      }),
+    );
+    await waitFor(() => expect(screen.getByText('bol.pdf')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByText('Delete'));
+    await screen.findByText('Delete document?');
+    const dialog = screen.getByRole('dialog');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }));
+
+    await waitFor(() => expect(deletedId).toBe('doc-1'));
+    expect(await screen.findByText('bol.pdf deleted.')).toBeInTheDocument();
+    // Confirms the list was actually refetched (not just a local optimistic
+    // removal) — the row is gone because a fresh GET reflects the deletion.
+    await waitFor(() => expect(screen.queryByText('bol.pdf')).not.toBeInTheDocument());
+  });
+
+  // Q. Dependency error is displayed cleanly.
+  it("shows the backend's clean Load Draft dependency error via the existing toast pattern, never a raw failure", async () => {
+    const load = makeLoad([]);
+    const doc = makeAppDocument({ id: 'doc-1' });
+    server.use(
+      http.delete('/api/v1/documents/doc-1', () =>
+        HttpResponse.json(
+          {
+            error: {
+              code: 'BUSINESS_RULE_ERROR',
+              message:
+                'Cannot delete document because it is associated with a Load Draft. Delete the Load Draft first, then try again.',
+            },
+          },
+          { status: 422 },
+        ),
+      ),
+    );
+    renderTab(load, [doc]);
+    await waitFor(() => expect(screen.getByText('bol.pdf')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByText('Delete'));
+    await screen.findByText('Delete document?');
+    const dialog = screen.getByRole('dialog');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }));
+
+    expect(
+      await screen.findByText(
+        'Cannot delete document because it is associated with a Load Draft. Delete the Load Draft first, then try again.',
+      ),
+    ).toBeInTheDocument();
+    // The dialog stays open on failure — nothing was silently discarded.
+    expect(screen.getByText('Delete document?')).toBeInTheDocument();
+  });
+
+  // R. Existing Download behavior still works — covered by the pre-existing
+  // "scan-status consumption gate" describe block above, unmodified;
+  // re-asserted here in the Actions-column context for completeness.
+  it('Download still opens the resolved URL from the Actions column, unchanged', async () => {
+    const load = makeLoad([]);
+    const doc = makeAppDocument({ id: 'doc-1', scanStatus: 'CLEAN' });
+    server.use(
+      http.get('/api/v1/documents/doc-1/download-url', () =>
+        HttpResponse.json({ url: 'https://storage.test/doc-1' }),
+      ),
+    );
+    const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null);
+    renderTab(load, [doc]);
+    await waitFor(() => expect(screen.getByText('bol.pdf')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByText('Download'));
+
+    await waitFor(() =>
+      expect(openSpy).toHaveBeenCalledWith('https://storage.test/doc-1', '_blank', 'noopener'),
+    );
+    openSpy.mockRestore();
   });
 });

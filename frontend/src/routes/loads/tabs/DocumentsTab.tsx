@@ -7,8 +7,16 @@ import {
   type AppDocument,
   type Load,
 } from '../../../api';
+import { ApiError } from '../../../api/errors';
 import { getStatusBadgeColor } from '../../../components/ui/statusBadgeMap';
-import { Badge, Button, DataTable, FileUploadField, Select } from '../../../components/ui';
+import {
+  Badge,
+  Button,
+  ConfirmDialog,
+  DataTable,
+  FileUploadField,
+  Select,
+} from '../../../components/ui';
 import { useToast } from '../../../components/ui/toastStore';
 import { formatDateShort } from '../loadDerived';
 import '../../shared/DetailPage.css';
@@ -66,6 +74,62 @@ function ScanStatusCell({ doc, toast }: { doc: AppDocument; toast: ReturnType<ty
 }
 
 /**
+ * Load-Level Documents Replace + Delete. Replace reuses the exact same
+ * `existingDocumentFamilyId` mechanism already proven by the Carrier
+ * Compliance tab and per-Stop POD/POP (`ComplianceTab.tsx`,
+ * `StopDocumentRow` below) — same document type, new version, normal
+ * malware scanning, never bypassed. Delete removes the entire document
+ * family (all versions, not just this one) via `documentsApi.delete`,
+ * which the backend guards against an open Load Draft reference with a
+ * clean business error rather than a raw FK crash — surfaced here
+ * through the exact same `ApiError`/toast pattern every other mutation
+ * on this page already uses. Neither action is frontend-permission-gated
+ * (matching this table's existing Upload control, which has never had
+ * one either) — the backend's `POD_UPLOAD_ROLES` check is the real
+ * boundary, as documented on `DocumentService.deleteDocumentFamily`.
+ */
+function LoadDocumentActionsCell({
+  doc,
+  load,
+  toast,
+  onChanged,
+  onDeleteRequested,
+}: {
+  doc: AppDocument;
+  load: Load;
+  toast: ReturnType<typeof useToast>;
+  onChanged: () => void;
+  onDeleteRequested: (doc: AppDocument) => void;
+}) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
+      <ScanStatusCell doc={doc} toast={toast} />
+      <FileUploadField
+        label="Replace"
+        onUpload={(file) =>
+          documentsApi.uploadLoadDocumentAndConfirm(
+            {
+              entityType: 'LOAD',
+              entityId: load.id,
+              documentTypeId: doc.documentTypeId,
+              existingDocumentFamilyId: doc.documentFamilyId,
+            },
+            file,
+          )
+        }
+        onCheckScanStatus={(documentId) =>
+          documentsApi.checkScanStatus('LOAD', load.id, documentId)
+        }
+        onComplete={onChanged}
+      />
+      <Button variant="destructive" size="sm" onClick={() => onDeleteRequested(doc)}>
+        Delete
+      </Button>
+    </div>
+  );
+}
+
+/**
  * UI_UX_DESIGN.md §5.4.4 Documents tab. Two grouped tables: Load-level
  * documents (generic, `entityType=LOAD`) and Proof of Pickup/Delivery per
  * Stop (`entityType=STOP`) — a pickup Stop gets POP, a delivery Stop gets
@@ -79,6 +143,8 @@ function ScanStatusCell({ doc, toast }: { doc: AppDocument; toast: ReturnType<ty
 export function DocumentsTab({ load }: { load: Load }) {
   const toast = useToast();
   const [uploadTypeId, setUploadTypeId] = useState('');
+  const [deleting, setDeleting] = useState<AppDocument | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const { data: loadDocTypes = [] } = useQuery({
     queryKey: ['document-types', 'LOAD'],
@@ -88,6 +154,21 @@ export function DocumentsTab({ load }: { load: Load }) {
     queryKey: ['documents', 'LOAD', load.id],
     queryFn: () => documentsApi.list('LOAD', load.id),
   });
+
+  async function onConfirmDelete() {
+    if (!deleting) return;
+    setIsDeleting(true);
+    try {
+      await documentsApi.delete(deleting.id);
+      toast.success(`${deleting.fileName} deleted.`);
+      setDeleting(null);
+      await refetchLoadDocs();
+    } catch (error) {
+      toast.danger(error instanceof ApiError ? error.message : 'Something went wrong.');
+    } finally {
+      setIsDeleting(false);
+    }
+  }
 
   // POD and POP are each only ever uploaded via their own per-stop route
   // below — never through this generic Load-level picker.
@@ -151,7 +232,19 @@ export function DocumentsTab({ load }: { load: Load }) {
             header: 'Uploaded By/At',
             render: (d) => formatDateShort(d.uploadedAt),
           },
-          { key: 'scan', header: '', render: (d) => <ScanStatusCell doc={d} toast={toast} /> },
+          {
+            key: 'actions',
+            header: 'Actions',
+            render: (d) => (
+              <LoadDocumentActionsCell
+                doc={d}
+                load={load}
+                toast={toast}
+                onChanged={() => refetchLoadDocs()}
+                onDeleteRequested={setDeleting}
+              />
+            ),
+          },
         ]}
       />
 
@@ -165,6 +258,17 @@ export function DocumentsTab({ load }: { load: Load }) {
           <StopDocumentRow key={stop.id} loadId={load.id} stop={stop} toast={toast} />
         ))
       )}
+
+      <ConfirmDialog
+        open={deleting !== null}
+        title="Delete document?"
+        message={`This will permanently delete "${deleting?.fileName ?? ''}" and all of its versions. This action cannot be undone.`}
+        confirmLabel="Delete"
+        confirmVariant="destructive"
+        loading={isDeleting}
+        onCancel={() => setDeleting(null)}
+        onConfirm={onConfirmDelete}
+      />
     </div>
   );
 }
