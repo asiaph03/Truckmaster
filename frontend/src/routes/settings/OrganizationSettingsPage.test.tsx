@@ -78,6 +78,90 @@ describe('OrganizationSettingsPage — Frontend Phase 14', () => {
     );
   });
 
+  it('production bug fix — sends ONLY the fields UpdateOrganizationDto accepts, never id/status/createdByUserId/createdAt, even when the GET response includes read-only fields the frontend type does not declare', async () => {
+    useSessionStore.setState({ roles: ['ADMIN'] });
+    let receivedBody: Record<string, unknown> | undefined;
+    server.use(
+      // Deliberately includes `createdByUserId` — a real backend field
+      // that GET /organizations/current returns but the frontend's own
+      // `Organization` TS type does not declare. The fix must not leak
+      // this through regardless of whether the type "knows" about it.
+      http.get('/api/v1/organizations/current', () =>
+        HttpResponse.json({ ...ORGANIZATION, createdByUserId: 'user-999' }),
+      ),
+      http.patch('/api/v1/organizations/current', async ({ request }) => {
+        receivedBody = (await request.json()) as Record<string, unknown>;
+        return HttpResponse.json(ORGANIZATION);
+      }),
+    );
+
+    renderPage();
+    await waitFor(() => expect(screen.getByDisplayValue('Dallas')).toBeInTheDocument());
+
+    fireEvent.change(screen.getByDisplayValue('Dallas'), { target: { value: 'Fort Worth' } });
+    fireEvent.click(screen.getByText('Save Changes'));
+
+    await waitFor(() => expect(receivedBody).toBeDefined());
+    expect(receivedBody).toEqual({
+      legalName: 'Acme Freight LLC',
+      addressLine1: '1 Main St',
+      city: 'Fort Worth',
+      state: 'TX',
+      zip: '75201',
+      country: 'US',
+      primaryContactName: 'Jane Admin',
+      primaryContactEmail: 'jane@acme-freight.test',
+      primaryContactPhone: '555-0100',
+      defaultPaymentTerms: 'NET_30',
+    });
+    expect(receivedBody).not.toHaveProperty('id');
+    expect(receivedBody).not.toHaveProperty('status');
+    expect(receivedBody).not.toHaveProperty('createdByUserId');
+    expect(receivedBody).not.toHaveProperty('createdAt');
+  });
+
+  it('a second edit-and-save cycle (after the post-save reset) still sends only the allowed fields', async () => {
+    useSessionStore.setState({ roles: ['ADMIN'] });
+    const receivedBodies: Record<string, unknown>[] = [];
+    server.use(
+      http.get('/api/v1/organizations/current', () => HttpResponse.json(ORGANIZATION)),
+      http.patch('/api/v1/organizations/current', async ({ request }) => {
+        const body = (await request.json()) as Record<string, unknown>;
+        receivedBodies.push(body);
+        return HttpResponse.json({ ...ORGANIZATION, city: body.city as string });
+      }),
+    );
+
+    renderPage();
+    await waitFor(() => expect(screen.getByDisplayValue('Dallas')).toBeInTheDocument());
+
+    fireEvent.change(screen.getByDisplayValue('Dallas'), { target: { value: 'Fort Worth' } });
+    fireEvent.click(screen.getByText('Save Changes'));
+    await waitFor(() => expect(receivedBodies).toHaveLength(1));
+
+    // The post-save `reset(updated)` re-seeds the form from the PATCH
+    // response — confirm that response's shape doesn't leak either. Wait
+    // for the form to fully settle (isDirty back to false, button
+    // disabled again) before the second edit, so this doesn't race the
+    // async post-save reset.
+    await waitFor(() => expect(screen.getByText('Save Changes').closest('button')).toBeDisabled());
+    expect(screen.getByDisplayValue('Fort Worth')).toBeInTheDocument();
+    fireEvent.change(screen.getByDisplayValue('Fort Worth'), { target: { value: 'Arlington' } });
+    await waitFor(() => expect(screen.getByDisplayValue('Arlington')).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByText('Save Changes').closest('button')).not.toBeDisabled(),
+    );
+    fireEvent.click(screen.getByText('Save Changes'));
+
+    await waitFor(() => expect(receivedBodies).toHaveLength(2));
+    for (const body of receivedBodies) {
+      expect(body).not.toHaveProperty('id');
+      expect(body).not.toHaveProperty('status');
+      expect(body).not.toHaveProperty('createdByUserId');
+      expect(body).not.toHaveProperty('createdAt');
+    }
+  });
+
   it('shows the backend rejection message when an update is invalid, and does not silently succeed', async () => {
     useSessionStore.setState({ roles: ['ADMIN'] });
     server.use(

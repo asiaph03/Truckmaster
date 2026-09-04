@@ -3,7 +3,7 @@ import { useForm } from 'react-hook-form';
 import { useQuery } from '@tanstack/react-query';
 import { Lock } from 'lucide-react';
 import { PAYMENT_TERMS } from '@tms/shared-constants';
-import { organizationsApi, type UpdateOrganizationRequest } from '../../api';
+import { organizationsApi, type Organization, type UpdateOrganizationRequest } from '../../api';
 import { ApiError } from '../../api/errors';
 import { Button, EmptyState, Select, TextField } from '../../components/ui';
 import { useToast } from '../../components/ui/toastStore';
@@ -13,6 +13,35 @@ import '../shared/ListPage.css';
 import '../shared/DetailPage.css';
 
 const PAYMENT_TERMS_OPTIONS = PAYMENT_TERMS.map((t) => ({ value: t, label: t.replace(/_/g, ' ') }));
+
+/**
+ * Production bug fix — `reset()` must only ever be seeded with exactly
+ * `UpdateOrganizationDto`'s fields. Passing the full `Organization`
+ * response object (as this screen previously did) leaks read-only
+ * properties — `id`/`status`/`createdAt`, and `createdByUserId` (present
+ * on the real API response but not even declared on the frontend's own
+ * `Organization` type) — into react-hook-form's internal form-values
+ * object. Since `handleSubmit` submits that entire internal object, not
+ * just the fields bound to a registered `<input>`, those extra
+ * properties rode along into the PATCH body and were rejected by the
+ * backend's `forbidNonWhitelisted` ValidationPipe. Picking fields
+ * explicitly here — never spreading the response — makes this
+ * impossible regardless of what else the backend response ever adds.
+ */
+function toFormValues(org: Organization): UpdateOrganizationRequest {
+  return {
+    legalName: org.legalName,
+    addressLine1: org.addressLine1,
+    city: org.city,
+    state: org.state,
+    zip: org.zip,
+    country: org.country,
+    primaryContactName: org.primaryContactName,
+    primaryContactEmail: org.primaryContactEmail,
+    primaryContactPhone: org.primaryContactPhone,
+    defaultPaymentTerms: org.defaultPaymentTerms,
+  };
+}
 
 /**
  * Frontend Phase 14 — Organization Settings (locked route
@@ -46,13 +75,13 @@ export function OrganizationSettingsPage() {
   } = useForm<UpdateOrganizationRequest>();
 
   useEffect(() => {
-    if (data) reset(data);
+    if (data) reset(toFormValues(data));
   }, [data, reset]);
 
   async function onSubmit(values: UpdateOrganizationRequest) {
     try {
       const updated = await organizationsApi.update(values);
-      reset(updated);
+      reset(toFormValues(updated));
       toast.success('Organization settings saved.');
     } catch (error) {
       toast.danger(error instanceof ApiError ? error.message : 'Something went wrong.');
