@@ -590,6 +590,7 @@ export class CarrierSourcingService {
         driverPhone: load.dispatchRecord.driverPhone,
         customerPoNumber: load.customerPoNumber,
         customerRate: load.customerRate !== null ? load.customerRate.toString() : null,
+        pickupNumber: load.pickupNumber,
         stops: load.stops.map((s) => ({
           stopType: s.stopType,
           companyName: s.companyName,

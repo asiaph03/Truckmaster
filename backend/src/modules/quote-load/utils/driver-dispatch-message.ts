@@ -7,10 +7,10 @@
  * Pure and side-effect-free: no AI, no external calls, no randomness —
  * the exact same input always produces the exact same output. Never
  * hard-codes carrier/driver/phone/truck/trailer/equipment/stops/dates/
- * PO/rate/order number/customer — every value comes from the caller's
- * input, sourced from the real Load/Stop/DispatchRecord/Customer/Carrier
- * records. Missing optional values are omitted cleanly — never a
- * "null"/"undefined" string, never a dangling empty line.
+ * PO/pickup number/rate/order number/customer — every value comes from
+ * the caller's input, sourced from the real Load/Stop/DispatchRecord/
+ * Customer/Carrier records. Missing optional values are omitted cleanly
+ * — never a "null"/"undefined" string, never a dangling empty line.
  */
 
 import {
@@ -47,6 +47,14 @@ export interface DriverDispatchMessageInput {
    * null/undefined when the stop has no notes at all.
    */
   pickupStopNotes: string | null | undefined;
+  /**
+   * Load.pickupNumber — the SAME authoritative field already shown as
+   * "Pickup #" on the Load Overview tab (OverviewTab.tsx). Load-level,
+   * not per-stop, so it's rendered on every PICKUP-type stop block
+   * (never on DELIVERY/OTHER). Never substituted with customerPoNumber
+   * or customerReferenceNumber — those remain their own separate lines.
+   */
+  pickupNumber: string | null;
 }
 
 export interface DriverDispatchMessage {
@@ -143,13 +151,18 @@ function cityStateZip(
   return parts.join(' ');
 }
 
-function buildStopBlock(stop: DriverDispatchStopInput, index: number): string {
+function buildStopBlock(
+  stop: DriverDispatchStopInput,
+  index: number,
+  pickupNumber: string | null,
+): string {
   const label = stop.stopType === 'OTHER' ? `STOP ${index + 1}` : stop.stopType;
   const lines = [`${label}:`];
   if (stop.companyName) lines.push(stop.companyName);
   if (stop.addressLine1) lines.push(stop.addressLine1);
   const csz = cityStateZip(stop.city, stop.state, stop.zip);
   if (csz) lines.push(csz);
+  if (stop.stopType === 'PICKUP' && pickupNumber) lines.push(`Pickup #: ${pickupNumber}`);
   const appt = formatAppointment(stop.appointmentDatetime);
   if (appt) lines.push(`📅 ${appt}`);
   const contact = contactLine(stop.contactName, stop.contactPhone);
@@ -186,7 +199,7 @@ export function buildDriverDispatchMessage(
 
   lines.push('');
   for (const [index, stop] of input.stops.entries()) {
-    lines.push(buildStopBlock(stop, index));
+    lines.push(buildStopBlock(stop, index, input.pickupNumber));
     lines.push('');
   }
   if (lines[lines.length - 1] === '') lines.pop();

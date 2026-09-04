@@ -645,6 +645,59 @@ describe('CarrierSourcingService — Driver Dispatch Email feature', () => {
 
       expect(preview.body).not.toContain('Call the dock before arrival.');
     });
+
+    it('includes "Pickup #: <value>" sourced from Load.pickupNumber — the same authoritative field shown as "Pickup #" on the Load Overview tab', async () => {
+      const { service } = buildService({
+        load: dispatchedLoad({ pickupNumber: '5010181698' }),
+        driver: {
+          id: DRIVER_ID,
+          email: 'julia@carrier.test',
+          organizationId: ORG_ID,
+          carrierId: CARRIER_ID,
+        },
+        rateConfDoc: cleanUploadedRateConfDoc(),
+      });
+
+      const preview = await service.previewDriverDispatchEmail(ORG_ID, LOAD_ID);
+
+      expect(preview.body).toContain('Pickup #: 5010181698');
+    });
+
+    it('omits the Pickup # line when Load.pickupNumber is null, without altering any other line', async () => {
+      const withNumber = await (async () => {
+        const { service } = buildService({
+          load: dispatchedLoad({ pickupNumber: '5010181698' }),
+          driver: {
+            id: DRIVER_ID,
+            email: 'julia@carrier.test',
+            organizationId: ORG_ID,
+            carrierId: CARRIER_ID,
+          },
+          rateConfDoc: cleanUploadedRateConfDoc(),
+        });
+        return service.previewDriverDispatchEmail(ORG_ID, LOAD_ID);
+      })();
+
+      const { service } = buildService({
+        load: dispatchedLoad({ pickupNumber: null }),
+        driver: {
+          id: DRIVER_ID,
+          email: 'julia@carrier.test',
+          organizationId: ORG_ID,
+          carrierId: CARRIER_ID,
+        },
+        rateConfDoc: cleanUploadedRateConfDoc(),
+      });
+      const withoutNumber = await service.previewDriverDispatchEmail(ORG_ID, LOAD_ID);
+
+      expect(withoutNumber.body).not.toContain('Pickup #:');
+      expect(
+        withNumber.body
+          .split('\n')
+          .filter((l) => l !== 'Pickup #: 5010181698')
+          .join('\n'),
+      ).toBe(withoutNumber.body);
+    });
   });
 
   describe('Uploaded Rate Confirmation attachment resolution (preview)', () => {

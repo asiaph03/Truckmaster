@@ -26,6 +26,7 @@ function baseInput(
     driverPhone: '(773) 870-1332',
     customerPoNumber: '120-25370',
     customerRate: '950.00',
+    pickupNumber: '5010181698',
     stops: [
       {
         stopType: 'PICKUP',
@@ -192,6 +193,7 @@ describe('buildDriverDispatchMessage — body, full example', () => {
         'I Love Produce',
         '15 Commerce Blvd',
         'West Grove, PA 19390',
+        'Pickup #: 5010181698',
         '📅 09/02/26 at 8:00 AM',
         'Contact: Eric Frasse — (610) 212-1201',
         '',
@@ -351,6 +353,99 @@ describe('buildDriverDispatchMessage — approved Notes fields mapped correctly,
       baseInput({ pickupStopNotes: `${APPROVED_NOTES}\nDriver must call 30 min out.` }),
     );
     expect(body).not.toContain('Driver must call 30 min out.');
+  });
+});
+
+describe('buildDriverDispatchMessage — Pickup # (Load.pickupNumber, the same authoritative field shown as "Pickup #" on the Load Overview tab)', () => {
+  it('includes "Pickup #: <value>" on the PICKUP stop, positioned after the address and before the appointment', () => {
+    const { body } = buildDriverDispatchMessage(baseInput({ pickupNumber: '5010181698' }));
+    const lines = body.split('\n');
+    const pickupIndex = lines.indexOf('PICKUP:');
+    const cszIndex = lines.indexOf('West Grove, PA 19390');
+    const pickupNumberIndex = lines.indexOf('Pickup #: 5010181698');
+    const apptIndex = lines.indexOf('📅 09/02/26 at 8:00 AM');
+    expect(pickupIndex).toBeGreaterThanOrEqual(0);
+    expect(pickupNumberIndex).toBeGreaterThan(cszIndex);
+    expect(apptIndex).toBeGreaterThan(pickupNumberIndex);
+  });
+
+  it('omits the Pickup # line entirely (never "Pickup #: null"/"Pickup #: undefined") when Load.pickupNumber is null', () => {
+    const { body } = buildDriverDispatchMessage(baseInput({ pickupNumber: null }));
+    expect(body).not.toContain('Pickup #:');
+    expect(body).not.toMatch(/undefined/i);
+    expect(body).not.toMatch(/\bnull\b/i);
+  });
+
+  it('never shows the Pickup # line on a DELIVERY (or OTHER) stop, even though pickupNumber is set', () => {
+    const { body } = buildDriverDispatchMessage(baseInput({ pickupNumber: '5010181698' }));
+    const deliveryBlock = body
+      .split('\n')
+      .slice(body.split('\n').indexOf('DELIVERY:'), body.split('\n').indexOf('PO: 120-25370'));
+    expect(deliveryBlock.some((l) => l.startsWith('Pickup #:'))).toBe(false);
+  });
+
+  it('shows Pickup # on every PICKUP-type stop when a Load has more than one pickup (Load-level value, same number on each)', () => {
+    const { body } = buildDriverDispatchMessage(
+      baseInput({
+        pickupNumber: '5010181698',
+        stops: [
+          {
+            stopType: 'PICKUP',
+            companyName: 'A',
+            addressLine1: null,
+            city: 'Dallas',
+            state: 'TX',
+            zip: '75201',
+            appointmentDatetime: null,
+            contactName: null,
+            contactPhone: null,
+          },
+          {
+            stopType: 'PICKUP',
+            companyName: 'B',
+            addressLine1: null,
+            city: 'Memphis',
+            state: 'TN',
+            zip: '38103',
+            appointmentDatetime: null,
+            contactName: null,
+            contactPhone: null,
+          },
+          {
+            stopType: 'DELIVERY',
+            companyName: 'C',
+            addressLine1: null,
+            city: 'Atlanta',
+            state: 'GA',
+            zip: '30301',
+            appointmentDatetime: null,
+            contactName: null,
+            contactPhone: null,
+          },
+        ],
+      }),
+    );
+    expect(body.split('Pickup #: 5010181698').length - 1).toBe(2);
+  });
+
+  it('never substitutes customerPoNumber or another identifier when pickupNumber is null — the PO line stays separate and unaffected', () => {
+    const { body } = buildDriverDispatchMessage(
+      baseInput({ pickupNumber: null, customerPoNumber: '120-25370' }),
+    );
+    expect(body).not.toContain('Pickup #:');
+    expect(body).toContain('PO: 120-25370');
+  });
+
+  it('does not alter any other existing line in the message', () => {
+    const withPickupNumber = buildDriverDispatchMessage(
+      baseInput({ pickupNumber: '5010181698' }),
+    ).body;
+    const withoutPickupNumber = buildDriverDispatchMessage(baseInput({ pickupNumber: null })).body;
+    const stripped = withPickupNumber
+      .split('\n')
+      .filter((l) => l !== 'Pickup #: 5010181698')
+      .join('\n');
+    expect(stripped).toBe(withoutPickupNumber);
   });
 });
 
