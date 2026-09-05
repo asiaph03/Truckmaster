@@ -3,6 +3,7 @@ import { useForm } from 'react-hook-form';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { AddCarrierInsuranceRequest, Carrier, CarrierInsuranceRecord } from '../../../api';
 import { carriersApi, documentsApi, documentTypesApi } from '../../../api';
+import { ApiError } from '../../../api/errors';
 import { getStatusBadgeColor } from '../../../components/ui/statusBadgeMap';
 import {
   Badge,
@@ -54,11 +55,15 @@ function CoverageCard({
 
   async function onSubmit(values: AddCarrierInsuranceRequest) {
     if (!coiDocumentId) return;
-    await carriersApi.addInsurance(carrierId, { ...values, coverageType, coiDocumentId });
-    await queryClient.invalidateQueries({ queryKey: ['carriers', carrierId] });
-    toast.success(`${title} insurance saved.`);
-    reset();
-    setOpen(false);
+    try {
+      await carriersApi.addInsurance(carrierId, { ...values, coverageType, coiDocumentId });
+      await queryClient.invalidateQueries({ queryKey: ['carriers', carrierId] });
+      toast.success(`${title} insurance saved.`);
+      reset();
+      setOpen(false);
+    } catch (error) {
+      toast.danger(error instanceof ApiError ? error.message : 'Something went wrong.');
+    }
   }
 
   return (

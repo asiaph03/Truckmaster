@@ -185,3 +185,26 @@ describe('ComplianceTab — Replace passes documentFamilyId, not document id', (
     await waitFor(() => expect(approvedId).toBe('w9-doc-1'));
   });
 });
+
+describe('ComplianceTab — Record FMCSA Verification failure handling (Task #5)', () => {
+  it('shows a toast error and keeps the modal open when the record request fails, and never shows success', async () => {
+    useSessionStore.setState({ roles: ['ADMIN', 'COMPLIANCE_REVIEWER'] });
+    server.use(
+      http.post('/api/v1/carriers/carrier-1/fmcsa-verification', () =>
+        HttpResponse.json({ error: { code: 'INTERNAL_ERROR', message: 'boom' } }, { status: 500 }),
+      ),
+    );
+    renderTab(CARRIER, []);
+
+    await waitFor(() => expect(screen.getByText('Record Verification')).toBeInTheDocument());
+    fireEvent.click(screen.getByText('Record Verification'));
+    fireEvent.change(screen.getByLabelText(/^Verification Date/), {
+      target: { value: '2026-01-01' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Record' }));
+
+    await waitFor(() => expect(screen.getByText('boom')).toBeInTheDocument());
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(screen.queryByText('FMCSA verification recorded.')).not.toBeInTheDocument();
+  });
+});

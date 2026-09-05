@@ -4,6 +4,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { CUSTOMER_LOCATION_TYPES } from '@tms/shared-constants';
 import type { AddCustomerLocationRequest, Customer } from '../../../api';
 import { customersApi } from '../../../api';
+import { ApiError } from '../../../api/errors';
 import {
   Badge,
   Button,
@@ -26,11 +27,15 @@ export function LocationsTab({ customer }: { customer: Customer }) {
   const { register, handleSubmit, reset, formState } = useForm<AddCustomerLocationRequest>();
 
   async function onSubmit(values: AddCustomerLocationRequest) {
-    await customersApi.addLocation(customer.id, values);
-    await queryClient.invalidateQueries({ queryKey: ['customers', customer.id] });
-    toast.success('Location added.');
-    reset();
-    setAdding(false);
+    try {
+      await customersApi.addLocation(customer.id, values);
+      await queryClient.invalidateQueries({ queryKey: ['customers', customer.id] });
+      toast.success('Location added.');
+      reset();
+      setAdding(false);
+    } catch (error) {
+      toast.danger(error instanceof ApiError ? error.message : 'Something went wrong.');
+    }
   }
 
   return (

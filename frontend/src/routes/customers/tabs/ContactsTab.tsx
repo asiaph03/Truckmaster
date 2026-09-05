@@ -4,6 +4,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { CUSTOMER_CONTACT_ROLES } from '@tms/shared-constants';
 import type { AddCustomerContactRequest, Customer } from '../../../api';
 import { customersApi } from '../../../api';
+import { ApiError } from '../../../api/errors';
 import {
   Badge,
   Button,
@@ -27,11 +28,15 @@ export function ContactsTab({ customer }: { customer: Customer }) {
   const { register, handleSubmit, reset, formState } = useForm<AddCustomerContactRequest>();
 
   async function onSubmit(values: AddCustomerContactRequest) {
-    await customersApi.addContact(customer.id, values);
-    await queryClient.invalidateQueries({ queryKey: ['customers', customer.id] });
-    toast.success('Contact added.');
-    reset();
-    setAdding(false);
+    try {
+      await customersApi.addContact(customer.id, values);
+      await queryClient.invalidateQueries({ queryKey: ['customers', customer.id] });
+      toast.success('Contact added.');
+      reset();
+      setAdding(false);
+    } catch (error) {
+      toast.danger(error instanceof ApiError ? error.message : 'Something went wrong.');
+    }
   }
 
   return (

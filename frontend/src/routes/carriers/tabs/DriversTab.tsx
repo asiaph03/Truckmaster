@@ -3,6 +3,7 @@ import { useForm } from 'react-hook-form';
 import { useQueryClient } from '@tanstack/react-query';
 import type { AddDriverRequest, Carrier } from '../../../api';
 import { carriersApi } from '../../../api';
+import { ApiError } from '../../../api/errors';
 import { Badge, Button, DataTable, Modal, ModalFooter, TextField } from '../../../components/ui';
 import { useToast } from '../../../components/ui/toastStore';
 import { usePermissions } from '../../../hooks/usePermissions';
@@ -15,11 +16,15 @@ export function DriversTab({ carrier }: { carrier: Carrier }) {
   const { register, handleSubmit, reset, formState } = useForm<AddDriverRequest>();
 
   async function onSubmit(values: AddDriverRequest) {
-    await carriersApi.addDriver(carrier.id, values);
-    await queryClient.invalidateQueries({ queryKey: ['carriers', carrier.id] });
-    toast.success('Driver added.');
-    reset();
-    setAdding(false);
+    try {
+      await carriersApi.addDriver(carrier.id, values);
+      await queryClient.invalidateQueries({ queryKey: ['carriers', carrier.id] });
+      toast.success('Driver added.');
+      reset();
+      setAdding(false);
+    } catch (error) {
+      toast.danger(error instanceof ApiError ? error.message : 'Something went wrong.');
+    }
   }
 
   return (

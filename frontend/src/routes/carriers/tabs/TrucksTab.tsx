@@ -4,6 +4,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { EQUIPMENT_TYPES } from '@tms/shared-constants';
 import type { AddTruckRequest, Carrier } from '../../../api';
 import { carriersApi } from '../../../api';
+import { ApiError } from '../../../api/errors';
 import {
   Badge,
   Button,
@@ -26,14 +27,18 @@ export function TrucksTab({ carrier }: { carrier: Carrier }) {
   const { register, handleSubmit, reset, formState } = useForm<AddTruckRequest>();
 
   async function onSubmit(values: AddTruckRequest) {
-    await carriersApi.addTruck(carrier.id, {
-      ...values,
-      year: values.year ? Number(values.year) : undefined,
-    });
-    await queryClient.invalidateQueries({ queryKey: ['carriers', carrier.id] });
-    toast.success('Truck added.');
-    reset();
-    setAdding(false);
+    try {
+      await carriersApi.addTruck(carrier.id, {
+        ...values,
+        year: values.year ? Number(values.year) : undefined,
+      });
+      await queryClient.invalidateQueries({ queryKey: ['carriers', carrier.id] });
+      toast.success('Truck added.');
+      reset();
+      setAdding(false);
+    } catch (error) {
+      toast.danger(error instanceof ApiError ? error.message : 'Something went wrong.');
+    }
   }
 
   return (

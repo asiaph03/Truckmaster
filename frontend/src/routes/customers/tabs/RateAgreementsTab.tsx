@@ -4,6 +4,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { EQUIPMENT_TYPES } from '@tms/shared-constants';
 import type { AddCustomerRateAgreementRequest, Customer } from '../../../api';
 import { customersApi } from '../../../api';
+import { ApiError } from '../../../api/errors';
 import {
   Badge,
   Button,
@@ -32,11 +33,15 @@ export function RateAgreementsTab({ customer }: { customer: Customer }) {
   const { register, handleSubmit, reset, formState } = useForm<AddCustomerRateAgreementRequest>();
 
   async function onSubmit(values: AddCustomerRateAgreementRequest) {
-    await customersApi.addRateAgreement(customer.id, values);
-    await queryClient.invalidateQueries({ queryKey: ['customers', customer.id] });
-    toast.success('Rate agreement added.');
-    reset();
-    setAdding(false);
+    try {
+      await customersApi.addRateAgreement(customer.id, values);
+      await queryClient.invalidateQueries({ queryKey: ['customers', customer.id] });
+      toast.success('Rate agreement added.');
+      reset();
+      setAdding(false);
+    } catch (error) {
+      toast.danger(error instanceof ApiError ? error.message : 'Something went wrong.');
+    }
   }
 
   return (

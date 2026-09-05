@@ -52,10 +52,14 @@ export function QuoteDetailPage() {
   const convertForm = useForm<{ confirmedCustomerRate: string }>();
 
   async function onMarkLost(values: MarkQuoteLostRequest) {
-    await quotesApi.markLost(id, values);
-    await refetch();
-    toast.success('Quote marked as Lost.');
-    setMarkingLost(false);
+    try {
+      await quotesApi.markLost(id, values);
+      await refetch();
+      toast.success('Quote marked as Lost.');
+      setMarkingLost(false);
+    } catch (error) {
+      toast.danger(error instanceof ApiError ? error.message : 'Something went wrong.');
+    }
   }
 
   async function onConvert(values: { confirmedCustomerRate: string }) {

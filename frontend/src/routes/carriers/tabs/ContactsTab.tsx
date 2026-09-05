@@ -4,6 +4,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { CARRIER_CONTACT_ROLES } from '@tms/shared-constants';
 import type { AddCarrierContactRequest, Carrier } from '../../../api';
 import { carriersApi } from '../../../api';
+import { ApiError } from '../../../api/errors';
 import {
   Badge,
   Button,
@@ -27,11 +28,15 @@ export function ContactsTab({ carrier }: { carrier: Carrier }) {
   const { register, handleSubmit, reset, formState } = useForm<AddCarrierContactRequest>();
 
   async function onSubmit(values: AddCarrierContactRequest) {
-    await carriersApi.addContact(carrier.id, values);
-    await queryClient.invalidateQueries({ queryKey: ['carriers', carrier.id] });
-    toast.success('Contact added.');
-    reset();
-    setAdding(false);
+    try {
+      await carriersApi.addContact(carrier.id, values);
+      await queryClient.invalidateQueries({ queryKey: ['carriers', carrier.id] });
+      toast.success('Contact added.');
+      reset();
+      setAdding(false);
+    } catch (error) {
+      toast.danger(error instanceof ApiError ? error.message : 'Something went wrong.');
+    }
   }
 
   return (

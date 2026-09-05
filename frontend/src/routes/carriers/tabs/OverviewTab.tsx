@@ -5,6 +5,7 @@ import { Check, X } from 'lucide-react';
 import { CARRIER_SERVICE_AREA_TYPES } from '@tms/shared-constants';
 import type { AddServiceAreaRequest, Carrier } from '../../../api';
 import { carriersApi } from '../../../api';
+import { ApiError } from '../../../api/errors';
 import { Badge, Button, Modal, ModalFooter, Select, TextField } from '../../../components/ui';
 import { useToast } from '../../../components/ui/toastStore';
 import { usePermissions } from '../../../hooks/usePermissions';
@@ -41,11 +42,15 @@ export function OverviewTab({ carrier }: { carrier: Carrier }) {
   const areaType = watch('type');
 
   async function onAddArea(values: AddServiceAreaRequest) {
-    await carriersApi.addServiceArea(carrier.id, values);
-    await queryClient.invalidateQueries({ queryKey: ['carriers', carrier.id] });
-    toast.success('Service area added.');
-    reset({ type: 'LANE' });
-    setAddingArea(false);
+    try {
+      await carriersApi.addServiceArea(carrier.id, values);
+      await queryClient.invalidateQueries({ queryKey: ['carriers', carrier.id] });
+      toast.success('Service area added.');
+      reset({ type: 'LANE' });
+      setAddingArea(false);
+    } catch (error) {
+      toast.danger(error instanceof ApiError ? error.message : 'Something went wrong.');
+    }
   }
 
   const equipmentTypes = Array.from(

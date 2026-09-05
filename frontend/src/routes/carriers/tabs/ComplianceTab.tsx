@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { FMCSA_RESULT_STATUS_OPTIONS } from '@tms/shared-constants';
 import type { AddFmcsaVerificationRequest, Carrier } from '../../../api';
 import { carriersApi, documentsApi, documentTypesApi } from '../../../api';
+import { ApiError } from '../../../api/errors';
 import { getStatusBadgeColor } from '../../../components/ui/statusBadgeMap';
 import {
   Badge,
@@ -60,11 +61,15 @@ export function ComplianceTab({ carrier }: { carrier: Carrier }) {
   ) {
     const resultStatus =
       values.resultStatus === 'OTHER' ? (values.resultStatusOther ?? '') : values.resultStatus;
-    await carriersApi.recordFmcsaVerification(carrier.id, { ...values, resultStatus });
-    await queryClient.invalidateQueries({ queryKey: ['carriers', carrier.id] });
-    toast.success('FMCSA verification recorded.');
-    verificationForm.reset();
-    setAddingVerification(false);
+    try {
+      await carriersApi.recordFmcsaVerification(carrier.id, { ...values, resultStatus });
+      await queryClient.invalidateQueries({ queryKey: ['carriers', carrier.id] });
+      toast.success('FMCSA verification recorded.');
+      verificationForm.reset();
+      setAddingVerification(false);
+    } catch (error) {
+      toast.danger(error instanceof ApiError ? error.message : 'Something went wrong.');
+    }
   }
 
   async function handleApprove(documentId: string) {

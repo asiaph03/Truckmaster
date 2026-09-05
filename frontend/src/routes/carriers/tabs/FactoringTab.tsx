@@ -3,6 +3,7 @@ import { useForm } from 'react-hook-form';
 import { useQueryClient } from '@tanstack/react-query';
 import type { Carrier, UpdateFactoringInfoRequest } from '../../../api';
 import { carriersApi } from '../../../api';
+import { ApiError } from '../../../api/errors';
 import { Button, Modal, ModalFooter, TextField, Toggle } from '../../../components/ui';
 import { useToast } from '../../../components/ui/toastStore';
 import { usePermissions } from '../../../hooks/usePermissions';
@@ -16,10 +17,14 @@ export function FactoringTab({ carrier }: { carrier: Carrier }) {
   const { register, handleSubmit, formState, reset } = useForm<UpdateFactoringInfoRequest>();
 
   async function onSubmit(values: UpdateFactoringInfoRequest) {
-    await carriersApi.upsertFactoring(carrier.id, values);
-    await queryClient.invalidateQueries({ queryKey: ['carriers', carrier.id] });
-    toast.success('Factoring info saved.');
-    setEditing(false);
+    try {
+      await carriersApi.upsertFactoring(carrier.id, values);
+      await queryClient.invalidateQueries({ queryKey: ['carriers', carrier.id] });
+      toast.success('Factoring info saved.');
+      setEditing(false);
+    } catch (error) {
+      toast.danger(error instanceof ApiError ? error.message : 'Something went wrong.');
+    }
   }
 
   const info = carrier.factoringInfo;

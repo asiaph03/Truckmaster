@@ -1,5 +1,5 @@
 import { describe, expect, it, afterEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { http, HttpResponse } from 'msw';
@@ -72,5 +72,34 @@ describe('QuoteDetailPage — initial load failure recovery (Task #4)', () => {
 
     await waitFor(() => expect(screen.getByRole('heading', { name: 'Quote' })).toBeInTheDocument());
     expect(callCount).toBe(2);
+  });
+});
+
+describe('QuoteDetailPage — Mark Lost failure handling (Task #5)', () => {
+  afterEach(() => {
+    useSessionStore.setState({ roles: [] });
+  });
+
+  it('shows a toast error and keeps the modal open when the mark-lost request fails, and never shows success', async () => {
+    useSessionStore.setState({ roles: ['ADMIN'] });
+    server.use(
+      http.get('/api/v1/quotes/quote-1', () => HttpResponse.json(QUOTE)),
+      http.get('/api/v1/customers/cust-1', () => HttpResponse.json(CUSTOMER)),
+      http.post('/api/v1/quotes/quote-1/mark-lost', () =>
+        HttpResponse.json({ error: { code: 'INTERNAL_ERROR', message: 'boom' } }, { status: 500 }),
+      ),
+    );
+
+    renderPage();
+    await waitFor(() => expect(screen.getByText('Mark Lost')).toBeInTheDocument());
+    fireEvent.click(screen.getByText('Mark Lost'));
+    fireEvent.change(screen.getByLabelText(/^Reason/), {
+      target: { value: 'Lost to competitor' },
+    });
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Mark Lost' }));
+
+    await waitFor(() => expect(screen.getByText('boom')).toBeInTheDocument());
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(screen.queryByText('Quote marked as Lost.')).not.toBeInTheDocument();
   });
 });
