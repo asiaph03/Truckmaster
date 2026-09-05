@@ -4,7 +4,15 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { loadsApi } from '../../api';
 import { ApiError } from '../../api/errors';
 import { getStatusBadgeColor } from '../../components/ui/statusBadgeMap';
-import { Badge, Breadcrumb, Button, ConfirmDialog, Stepper, Tabs } from '../../components/ui';
+import {
+  Badge,
+  Breadcrumb,
+  Button,
+  ConfirmDialog,
+  QueryErrorState,
+  Stepper,
+  Tabs,
+} from '../../components/ui';
 import { useToast } from '../../components/ui/toastStore';
 import { usePermissions } from '../../hooks/usePermissions';
 import { AssignCarrierModal } from './modals/AssignCarrierModal';
@@ -71,7 +79,12 @@ export function LoadDetailPage() {
   const [cancelling, setCancelling] = useState(false);
   const [isCancelling, setIsCancelling] = useState(false);
 
-  const { data: load, isLoading } = useQuery({
+  const {
+    data: load,
+    isLoading,
+    isError,
+    refetch: refetchQuery,
+  } = useQuery({
     queryKey: ['loads', id],
     queryFn: () => loadsApi.getById(id),
     enabled: Boolean(id),
@@ -83,8 +96,17 @@ export function LoadDetailPage() {
 
   const canAct = can('sourceAndDispatchLoads');
 
-  if (isLoading || !load) {
+  if (isLoading) {
     return <div>Loading…</div>;
+  }
+
+  if (isError || !load) {
+    return (
+      <QueryErrorState
+        message="Couldn't load this load. Please try again."
+        onRetry={() => refetchQuery()}
+      />
+    );
   }
 
   async function onBeginSourcing() {

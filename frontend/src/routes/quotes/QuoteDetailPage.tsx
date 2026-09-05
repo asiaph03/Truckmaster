@@ -13,6 +13,7 @@ import {
   DataTable,
   Modal,
   ModalFooter,
+  QueryErrorState,
   Textarea,
   Toggle,
 } from '../../components/ui';
@@ -33,6 +34,7 @@ export function QuoteDetailPage() {
   const {
     data: quote,
     isLoading,
+    isError,
     refetch,
   } = useQuery({
     queryKey: ['quotes', id],
@@ -71,8 +73,17 @@ export function QuoteDetailPage() {
     }
   }
 
-  if (isLoading || !quote) {
+  if (isLoading) {
     return <div>Loading…</div>;
+  }
+
+  if (isError || !quote) {
+    return (
+      <QueryErrorState
+        message="Couldn't load this quote. Please try again."
+        onRetry={() => refetch()}
+      />
+    );
   }
 
   const canAct = can('createQuoteOrLoad') && quote.status === 'OPEN';

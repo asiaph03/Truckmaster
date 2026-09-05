@@ -14,6 +14,7 @@ import {
   EligibilityBadge,
   Modal,
   ModalFooter,
+  QueryErrorState,
   Tabs,
   TextField,
 } from '../../components/ui';
@@ -71,7 +72,12 @@ export function CarrierDetailPage() {
   const [deactivating, setDeactivating] = useState(false);
   const [reactivating, setReactivating] = useState(false);
 
-  const { data: carrier, isLoading } = useQuery({
+  const {
+    data: carrier,
+    isLoading,
+    isError,
+    refetch: refetchQuery,
+  } = useQuery({
     queryKey: ['carriers', id],
     queryFn: () => carriersApi.getById(id),
     enabled: Boolean(id),
@@ -142,8 +148,17 @@ export function CarrierDetailPage() {
     }
   }
 
-  if (isLoading || !carrier) {
+  if (isLoading) {
     return <div>Loading…</div>;
+  }
+
+  if (isError || !carrier) {
+    return (
+      <QueryErrorState
+        message="Couldn't load this carrier. Please try again."
+        onRetry={() => refetchQuery()}
+      />
+    );
   }
 
   const tabs = [

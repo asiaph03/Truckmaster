@@ -19,6 +19,7 @@ import {
   DatePicker,
   Modal,
   ModalFooter,
+  QueryErrorState,
 } from '../../components/ui';
 import { useToast } from '../../components/ui/toastStore';
 import { useSessionStore } from '../../auth/session-store';
@@ -55,6 +56,7 @@ export function CarrierPaymentDetailPage() {
   const {
     data: payment,
     isLoading,
+    isError,
     refetch,
   } = useQuery({
     queryKey: ['carrier-payments', id],
@@ -132,8 +134,17 @@ export function CarrierPaymentDetailPage() {
     }
   }
 
-  if (isLoading || !payment) {
+  if (isLoading) {
     return <div>Loading…</div>;
+  }
+
+  if (isError || !payment) {
+    return (
+      <QueryErrorState
+        message="Couldn't load this carrier payment. Please try again."
+        onRetry={() => refetch()}
+      />
+    );
   }
 
   const isOwnPreparation = payment.preparedByUserId === userId;

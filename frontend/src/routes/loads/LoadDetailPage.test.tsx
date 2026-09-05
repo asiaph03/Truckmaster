@@ -223,3 +223,49 @@ describe('LoadDetailPage — Cancel Load workflow', () => {
     expect(screen.getByRole('dialog')).toBeInTheDocument();
   });
 });
+
+describe('LoadDetailPage — initial load failure recovery (Task #4)', () => {
+  it('shows an error state (not stuck Loading) when the initial GET fails, and Retry recovers it', async () => {
+    useSessionStore.setState({ roles: ['ADMIN'] });
+    let callCount = 0;
+    // Registered before render() — never relies on a post-render server.use()
+    // override, which can lose the race against a query's own initial fetch.
+    server.use(
+      http.get('/api/v1/loads/:id', () => {
+        callCount += 1;
+        if (callCount === 1) {
+          return HttpResponse.json(
+            { error: { code: 'INTERNAL_ERROR', message: 'boom' } },
+            { status: 500 },
+          );
+        }
+        return HttpResponse.json(makeLoad({}));
+      }),
+      http.get('/api/v1/customers/:id', () => HttpResponse.json(CUSTOMER)),
+      http.get('/api/v1/memberships', () => HttpResponse.json([])),
+    );
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter initialEntries={['/loads/load-1']}>
+          <Routes>
+            <Route path="/loads/:id" element={<LoadDetailPage />} />
+          </Routes>
+        </MemoryRouter>
+        <ToastViewport />
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByText("Couldn't load this load. Please try again.")).toBeInTheDocument(),
+    );
+    expect(screen.queryByText('Loading…')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+
+    await waitFor(() =>
+      expect(screen.getByRole('heading', { name: 'LOAD-000001' })).toBeInTheDocument(),
+    );
+    expect(callCount).toBe(2);
+  });
+});

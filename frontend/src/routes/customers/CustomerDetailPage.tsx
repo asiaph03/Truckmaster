@@ -17,6 +17,7 @@ import {
   Button,
   Modal,
   ModalFooter,
+  QueryErrorState,
   Select,
   Tabs,
   TextField,
@@ -69,7 +70,12 @@ export function CustomerDetailPage() {
   const [changingStatus, setChangingStatus] = useState(false);
   const [newQuoteOpen, setNewQuoteOpen] = useState(false);
 
-  const { data: customer, isLoading } = useQuery({
+  const {
+    data: customer,
+    isLoading,
+    isError,
+    refetch: refetchQuery,
+  } = useQuery({
     queryKey: ['customers', id],
     queryFn: () => customersApi.getById(id),
     enabled: Boolean(id),
@@ -100,8 +106,17 @@ export function CustomerDetailPage() {
     setChangingStatus(false);
   }
 
-  if (isLoading || !customer) {
+  if (isLoading) {
     return <div>Loading…</div>;
+  }
+
+  if (isError || !customer) {
+    return (
+      <QueryErrorState
+        message="Couldn't load this customer. Please try again."
+        onRetry={() => refetchQuery()}
+      />
+    );
   }
 
   const tabs = [

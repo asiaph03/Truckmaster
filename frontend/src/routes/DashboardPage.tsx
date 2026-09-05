@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { reportingApi } from '../api';
-import { EmptyState } from '../components/ui';
+import { EmptyState, QueryErrorState } from '../components/ui';
 import './shared/ListPage.css';
 import './DashboardPage.css';
 
@@ -37,13 +37,22 @@ function KpiCard({ label, value, to }: { label: string; value: ReactNode; to?: s
  * those cards link to the plain list rather than inventing a filtered view.
  */
 export function DashboardPage() {
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ['dashboard'],
     queryFn: () => reportingApi.dashboard(),
   });
 
-  if (isLoading || !data) {
+  if (isLoading) {
     return <div>Loading…</div>;
+  }
+
+  if (isError || !data) {
+    return (
+      <QueryErrorState
+        message="Couldn't load the dashboard. Please try again."
+        onRetry={() => refetch()}
+      />
+    );
   }
 
   const hasAnySection = Boolean(data.dispatcher || data.sales || data.accounting);

@@ -438,3 +438,40 @@ describe('CarrierDetailPage — Block/Deactivate/Reactivate — Task #3', () => 
     await waitFor(() => expect(screen.getByText('Carrier activated.')).toBeInTheDocument());
   });
 });
+
+describe('CarrierDetailPage — initial load failure recovery (Task #4)', () => {
+  afterEach(() => {
+    useSessionStore.setState({ roles: [] });
+  });
+
+  it('shows an error state (not stuck Loading) when the initial GET fails, and Retry recovers it', async () => {
+    useSessionStore.setState({ roles: ['ADMIN'] });
+    let callCount = 0;
+    server.use(
+      http.get('/api/v1/carriers/carrier-1', () => {
+        callCount += 1;
+        if (callCount === 1) {
+          return HttpResponse.json(
+            { error: { code: 'INTERNAL_ERROR', message: 'boom' } },
+            { status: 500 },
+          );
+        }
+        return HttpResponse.json(CARRIER);
+      }),
+    );
+
+    renderPage();
+
+    await waitFor(() =>
+      expect(screen.getByText("Couldn't load this carrier. Please try again.")).toBeInTheDocument(),
+    );
+    expect(screen.queryByText('Loading…')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+
+    await waitFor(() =>
+      expect(screen.getByRole('heading', { name: 'MG Cargo Inc' })).toBeInTheDocument(),
+    );
+    expect(callCount).toBe(2);
+  });
+});

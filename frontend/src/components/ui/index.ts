@@ -19,6 +19,7 @@ export * from './Toggle';
 export * from './SearchableCombobox';
 export * from './Breadcrumb';
 export * from './EmptyState';
+export * from './QueryErrorState';
 export * from './ConfirmDialog';
 export * from './EligibilityBadge';
 export * from './FileUploadField';

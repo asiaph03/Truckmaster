@@ -166,3 +166,43 @@ describe('CustomerDetailPage — Edit/Save', () => {
     expect(screen.getByDisplayValue('Broken Name')).toBeInTheDocument();
   });
 });
+
+describe('CustomerDetailPage — initial load failure recovery (Task #4)', () => {
+  afterEach(() => {
+    useSessionStore.setState({ roles: [] });
+    useToastStore.setState({ toasts: [] });
+  });
+
+  it('shows an error state (not stuck Loading) when the initial GET fails, and Retry recovers it', async () => {
+    useSessionStore.setState({ roles: ['ADMIN'] });
+    let callCount = 0;
+    server.use(
+      http.get('/api/v1/customers/cust-1', () => {
+        callCount += 1;
+        if (callCount === 1) {
+          return HttpResponse.json(
+            { error: { code: 'INTERNAL_ERROR', message: 'boom' } },
+            { status: 500 },
+          );
+        }
+        return HttpResponse.json(CUSTOMER);
+      }),
+    );
+
+    renderPage();
+
+    await waitFor(() =>
+      expect(
+        screen.getByText("Couldn't load this customer. Please try again."),
+      ).toBeInTheDocument(),
+    );
+    expect(screen.queryByText('Loading…')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+
+    await waitFor(() =>
+      expect(screen.getByRole('heading', { name: 'Scotlynn' })).toBeInTheDocument(),
+    );
+    expect(callCount).toBe(2);
+  });
+});

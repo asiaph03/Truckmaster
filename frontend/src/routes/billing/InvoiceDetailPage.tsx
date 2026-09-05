@@ -22,6 +22,7 @@ import {
   DatePicker,
   Modal,
   ModalFooter,
+  QueryErrorState,
   Select,
   Textarea,
   TextField,
@@ -56,6 +57,7 @@ export function InvoiceDetailPage() {
   const {
     data: invoice,
     isLoading,
+    isError,
     refetch,
   } = useQuery({
     queryKey: ['invoices', id],
@@ -143,8 +145,17 @@ export function InvoiceDetailPage() {
     }
   }
 
-  if (isLoading || !invoice) {
+  if (isLoading) {
     return <div>Loading…</div>;
+  }
+
+  if (isError || !invoice) {
+    return (
+      <QueryErrorState
+        message="Couldn't load this invoice. Please try again."
+        onRetry={() => refetch()}
+      />
+    );
   }
 
   const canSend = canManageInvoice && invoice.status === 'DRAFT';
