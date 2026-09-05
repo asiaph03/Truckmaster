@@ -249,6 +249,26 @@ const ACTIVE_LOAD_STATUSES = [
 ] as const;
 const COMPLETED_LOAD_STATUSES = ['DELIVERED', 'CLOSED'] as const;
 
+/**
+ * Cancel Load workflow — production hardening fix. `ACTIVE_LOAD_STATUSES`
+ * union `COMPLETED_LOAD_STATUSES` is exactly "every LoadStatus except
+ * CANCELLED" (9 of the 10 values), reused rather than duplicated so this
+ * list can never drift from the two it's built from. Cancellation
+ * deliberately never reverses a Load's existing ChargeLineItem rows (see
+ * LoadService.cancelLoad's own doc comment — history is preserved, not
+ * rewritten), so any revenue/cost/margin query that joins charge_line_item
+ * to load must exclude CANCELLED explicitly or it will count a cancelled
+ * load's pre-existing charges as real business. Used by `revenueRollup`
+ * (Revenue & Margin, and — via that same engine — Carrier Performance's
+ * cost columns and Sales Performance's revenue/GP columns) and by
+ * `carrierPerformanceRows`'s own load-count query. Not used by
+ * `onTimeRows` (provably unreachable by a CANCELLED load — see that
+ * method's own doc comment), `statusMixRows` (CANCELLED is meant to show
+ * there as its own bucket), or `paymentHistory` (Invoices, and therefore
+ * Payments/Adjustments, can never exist against a CANCELLED load).
+ */
+const NON_CANCELLED_LOAD_STATUSES = [...ACTIVE_LOAD_STATUSES, ...COMPLETED_LOAD_STATUSES] as const;
+
 export interface DispatcherWorkloadRow {
   dispatcherId: string;
   dispatcherName: string;
@@ -597,6 +617,16 @@ export class ReportCatalogService {
    * caller against a fixed enum — this switch only ever selects one of a
    * small number of hardcoded, complete query strings; no identifier is
    * ever built from a variable.
+   *
+   * Cancel Load workflow — production hardening fix. Every branch below
+   * carries a literal `load.status IN (...)` clause matching
+   * `NON_CANCELLED_LOAD_STATUSES` exactly (kept as plain SQL text, not a
+   * bound parameter, since it's a fixed internal enum list rather than
+   * caller input — same convention as this method's other literal
+   * enum-value comparisons, e.g. `cli.side = 'CUSTOMER'` above). Without
+   * it, a CANCELLED load's pre-existing ChargeLineItem rows — created
+   * automatically at booking and at carrier assignment, and never
+   * reversed by cancellation — would be counted as real revenue and cost.
    */
   private async revenueRollup(
     tx: TenantTx,
@@ -622,6 +652,7 @@ export class ReportCatalogService {
         JOIN customer ON customer.id = load.customer_id
         LEFT JOIN charge_line_item cli ON cli.load_id = load.id
         WHERE load.organization_id = ${organizationId}::uuid
+          AND load.status IN ('BOOKED','CARRIER_SOURCING','CARRIER_ASSIGNED','RATE_CONFIRMATION','DISPATCHED','PICKUP','IN_TRANSIT','DELIVERED','CLOSED')
           AND (${dateFrom}::timestamp IS NULL OR load.created_at >= ${dateFrom}::timestamp)
           AND (${dateTo}::timestamp IS NULL OR load.created_at <= ${dateTo}::timestamp)
           AND (${customerId}::uuid IS NULL OR load.customer_id = ${customerId}::uuid)
@@ -640,6 +671,7 @@ export class ReportCatalogService {
         LEFT JOIN charge_line_item cli ON cli.load_id = load.id
         WHERE load.organization_id = ${organizationId}::uuid
           AND load.assigned_carrier_id IS NOT NULL
+          AND load.status IN ('BOOKED','CARRIER_SOURCING','CARRIER_ASSIGNED','RATE_CONFIRMATION','DISPATCHED','PICKUP','IN_TRANSIT','DELIVERED','CLOSED')
           AND (${dateFrom}::timestamp IS NULL OR load.created_at >= ${dateFrom}::timestamp)
           AND (${dateTo}::timestamp IS NULL OR load.created_at <= ${dateTo}::timestamp)
           AND (${customerId}::uuid IS NULL OR load.customer_id = ${customerId}::uuid)
@@ -657,6 +689,7 @@ export class ReportCatalogService {
         FROM load
         LEFT JOIN charge_line_item cli ON cli.load_id = load.id
         WHERE load.organization_id = ${organizationId}::uuid
+          AND load.status IN ('BOOKED','CARRIER_SOURCING','CARRIER_ASSIGNED','RATE_CONFIRMATION','DISPATCHED','PICKUP','IN_TRANSIT','DELIVERED','CLOSED')
           AND (${dateFrom}::timestamp IS NULL OR load.created_at >= ${dateFrom}::timestamp)
           AND (${dateTo}::timestamp IS NULL OR load.created_at <= ${dateTo}::timestamp)
           AND (${customerId}::uuid IS NULL OR load.customer_id = ${customerId}::uuid)
@@ -674,6 +707,7 @@ export class ReportCatalogService {
         JOIN "user" ON "user".id = load.created_by_user_id
         LEFT JOIN charge_line_item cli ON cli.load_id = load.id
         WHERE load.organization_id = ${organizationId}::uuid
+          AND load.status IN ('BOOKED','CARRIER_SOURCING','CARRIER_ASSIGNED','RATE_CONFIRMATION','DISPATCHED','PICKUP','IN_TRANSIT','DELIVERED','CLOSED')
           AND (${dateFrom}::timestamp IS NULL OR load.created_at >= ${dateFrom}::timestamp)
           AND (${dateTo}::timestamp IS NULL OR load.created_at <= ${dateTo}::timestamp)
           AND (${customerId}::uuid IS NULL OR load.customer_id = ${customerId}::uuid)
@@ -698,6 +732,7 @@ export class ReportCatalogService {
               ORDER BY s.sequence DESC LIMIT 1) AS destination
           FROM load
           WHERE load.organization_id = ${organizationId}::uuid
+            AND load.status IN ('BOOKED','CARRIER_SOURCING','CARRIER_ASSIGNED','RATE_CONFIRMATION','DISPATCHED','PICKUP','IN_TRANSIT','DELIVERED','CLOSED')
             AND (${dateFrom}::timestamp IS NULL OR load.created_at >= ${dateFrom}::timestamp)
             AND (${dateTo}::timestamp IS NULL OR load.created_at <= ${dateTo}::timestamp)
             AND (${customerId}::uuid IS NULL OR load.customer_id = ${customerId}::uuid)
@@ -1166,9 +1201,23 @@ export class ReportCatalogService {
     };
 
     const [loadCounts, sourcingAttempts, onTimeRows, costRows] = await Promise.all([
+      // Cancel Load workflow — production hardening fix. `loadCount` is the
+      // denominator of `avgCostPerLoad` below, so a CANCELLED load (which
+      // can still carry an assignedCarrierId + a preserved carrier-side
+      // ChargeLineItem from before it was cancelled) must not count here,
+      // or it inflates the count without contributing real freight moved.
+      // `sourcingAttempts` (rejection rate) is deliberately left unfiltered
+      // — it measures carrier sourcing behavior, not revenue/cost, and a
+      // decline/rejection is a fact about the carrier regardless of the
+      // load's later fate.
       tx.load.groupBy({
         by: ['assignedCarrierId'],
-        where: { organizationId, assignedCarrierId: { not: null }, ...loadFilter },
+        where: {
+          organizationId,
+          assignedCarrierId: { not: null },
+          status: { in: [...NON_CANCELLED_LOAD_STATUSES] },
+          ...loadFilter,
+        },
         _count: true,
       }),
       tx.carrierSourcingAttempt.groupBy({

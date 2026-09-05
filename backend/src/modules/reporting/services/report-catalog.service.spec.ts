@@ -281,6 +281,31 @@ describe('ReportCatalogService.revenueMargin', () => {
     expect(tx.$queryRaw).toHaveBeenCalledTimes(1);
     expect(result.previousPeriod).toBeUndefined();
   });
+
+  // Cancel Load workflow — production hardening fix (P0). A cancelled Load
+  // is never deleted and its pre-existing ChargeLineItem rows (created
+  // automatically at booking / at carrier assignment) are never reversed —
+  // so without an explicit status filter, a CANCELLED load's customer
+  // revenue and carrier cost would both be counted as real business here.
+  // Unlike this file's other revenueMargin tests (which mock $queryRaw's
+  // *result* only), these inspect the tagged-template SQL text itself —
+  // the only way to pin the filter is present without a live database,
+  // matching the existing LANE/stopPurpose test's own established pattern.
+  it.each(['CUSTOMER', 'CARRIER', 'MONTH', 'LANE'])(
+    'excludes CANCELLED loads from the %s revenue/cost rollup — never inflates revenue or carrier cost',
+    async (groupBy) => {
+      const { service, tx } = buildService();
+
+      await service.revenueMargin(ORG_ID, groupBy, {}, { page: 1, pageSize: 50 }, false);
+
+      const [strings] = tx.$queryRaw.mock.calls[0] as [TemplateStringsArray];
+      const sql = strings.join('');
+      expect(sql).toContain(
+        "load.status IN ('BOOKED','CARRIER_SOURCING','CARRIER_ASSIGNED','RATE_CONFIRMATION','DISPATCHED','PICKUP','IN_TRANSIT','DELIVERED','CLOSED')",
+      );
+      expect(sql).not.toContain("'CANCELLED'");
+    },
+  );
 });
 
 describe('ReportCatalogService.loadVolume', () => {
@@ -438,6 +463,39 @@ describe('ReportCatalogService.carrierPerformance — cost redaction (approved d
     expect(result.items[0].totalCost).toBeNull();
     expect(result.items[0].avgCostPerLoad).toBeNull();
   });
+
+  // Cancel Load workflow — production hardening fix (P0). `loadCount` is
+  // the denominator of `avgCostPerLoad`; a CANCELLED load can still carry
+  // an assignedCarrierId and a preserved carrier-side ChargeLineItem from
+  // before it was cancelled, so the query must exclude it explicitly or
+  // it inflates the carrier's load count without any real cost/margin
+  // impact behind it. `sourcingAttempts` (rejection rate) is deliberately
+  // NOT asserted here — it is not a revenue/cost/margin query.
+  it('excludes CANCELLED loads from the carrier load-count query that avgCostPerLoad divides by', async () => {
+    const { service, tx } = buildCarrierPerfService();
+
+    await service.carrierPerformance(ORG_ID, ['ADMIN'], {}, { page: 1, pageSize: 50 });
+
+    expect(tx.load.groupBy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          status: {
+            in: [
+              'BOOKED',
+              'CARRIER_SOURCING',
+              'CARRIER_ASSIGNED',
+              'RATE_CONFIRMATION',
+              'DISPATCHED',
+              'PICKUP',
+              'IN_TRANSIT',
+              'DELIVERED',
+              'CLOSED',
+            ],
+          },
+        }),
+      }),
+    );
+  });
 });
 
 describe('ReportCatalogService.salesPerformance — own-row scoping and GP redaction (approved decision)', () => {
@@ -518,5 +576,23 @@ describe('ReportCatalogService.salesPerformance — own-row scoping and GP redac
     expect(result.items[0].repUserId).toBe('rep-1');
     expect(result.items[0].revenue).toBe('3000.00');
     expect(result.items[0].grossProfit).toBeNull();
+  });
+
+  // Cancel Load workflow — production hardening fix (P0). Sales
+  // Performance's revenue/Gross Profit columns are sourced from the same
+  // `revenueRollup` engine (SALES_USER grouping) as Revenue & Margin — a
+  // CANCELLED load's preserved charges must not inflate a rep's revenue
+  // or GP here either.
+  it('excludes CANCELLED loads from the SALES_USER revenue/GP rollup', async () => {
+    const { service, tx } = buildSalesService();
+
+    await service.salesPerformance(ORG_ID, 'admin-1', ['ADMIN'], {}, { page: 1, pageSize: 50 });
+
+    const [strings] = tx.$queryRaw.mock.calls[0] as [TemplateStringsArray];
+    const sql = strings.join('');
+    expect(sql).toContain(
+      "load.status IN ('BOOKED','CARRIER_SOURCING','CARRIER_ASSIGNED','RATE_CONFIRMATION','DISPATCHED','PICKUP','IN_TRANSIT','DELIVERED','CLOSED')",
+    );
+    expect(sql).not.toContain("'CANCELLED'");
   });
 });
