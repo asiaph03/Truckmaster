@@ -17,6 +17,7 @@ import {
   Badge,
   BulkActionBar,
   Button,
+  ConfirmDialog,
   CurrencyInput,
   DataTable,
   Drawer,
@@ -63,6 +64,14 @@ const STATUS_OPTIONS = [
 ];
 
 type QuickFilter = 'pickups4h' | 'deliveries4h' | 'today' | 'overdue' | null;
+
+// Task #8 — mirrors DispatchTrackingService's own POST_DISPATCH_STATUSES
+// constant server-side: a Load actively in transit relies on
+// assignedDispatcherId being present for the check-call/lateness
+// notification sweeps (neither has an admin fallback recipient), so the
+// backend rejects unassigning here too. Hiding the action client-side is
+// a UX convenience, not the source of truth.
+const DISPATCHER_UNASSIGN_BLOCKED_STATUSES = ['DISPATCHED', 'PICKUP', 'IN_TRANSIT'];
 
 function isToday(dateStr: string | null): boolean {
   if (!dateStr) return false;
@@ -131,6 +140,7 @@ export function DispatchBoardPage() {
   const [drawerLoad, setDrawerLoad] = useState<LoadSummary | null>(null);
   const [newLoadModalOpen, setNewLoadModalOpen] = useState(false);
   const [assigningDispatcherFor, setAssigningDispatcherFor] = useState<string | null>(null);
+  const [unassigningDispatcherFor, setUnassigningDispatcherFor] = useState<string | null>(null);
   const [bulkAssigning, setBulkAssigning] = useState(false);
   const [bulkAssigningCarrier, setBulkAssigningCarrier] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -313,6 +323,18 @@ export function DispatchBoardPage() {
 
   function afterMutation() {
     queryClient.invalidateQueries({ queryKey: ['loads'] });
+  }
+
+  async function onUnassignDispatcher() {
+    if (!unassigningDispatcherFor) return;
+    try {
+      await loadsApi.setDispatcher(unassigningDispatcherFor, { dispatcherUserId: null });
+      afterMutation();
+      toast.success('Dispatcher unassigned.');
+      setUnassigningDispatcherFor(null);
+    } catch (error) {
+      toast.danger(error instanceof ApiError ? error.message : 'Something went wrong.');
+    }
   }
 
   return (
@@ -600,6 +622,15 @@ export function DispatchBoardPage() {
                     >
                       {r.assignedDispatcherId ? 'Reassign Dispatcher' : 'Assign Dispatcher'}
                     </button>
+                    {r.assignedDispatcherId &&
+                    !DISPATCHER_UNASSIGN_BLOCKED_STATUSES.includes(r.status) ? (
+                      <button
+                        className="data-table-row-action"
+                        onClick={() => setUnassigningDispatcherFor(r.id)}
+                      >
+                        Unassign Dispatcher
+                      </button>
+                    ) : null}
                   </RowActionsMenu>
                 )
               : undefined
@@ -648,6 +679,16 @@ export function DispatchBoardPage() {
           }}
         />
       ) : null}
+
+      <ConfirmDialog
+        open={unassigningDispatcherFor !== null}
+        title="Unassign Dispatcher"
+        message="This will remove the dispatcher from this load."
+        confirmLabel="Unassign Dispatcher"
+        confirmVariant="destructive"
+        onCancel={() => setUnassigningDispatcherFor(null)}
+        onConfirm={onUnassignDispatcher}
+      />
 
       {bulkAssigning ? (
         <BulkAssignDispatcherFlow

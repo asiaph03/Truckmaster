@@ -678,9 +678,14 @@ export class DispatchTrackingService {
 
   /**
    * Independent action (Workflow 4 §4.11 / Workflow 5 §5.8 — approved
-   * Phase 4 decision): assigns or reassigns the Load's dispatcher. Never a
-   * prerequisite for any other Phase 4 transition, and carries no status
-   * gate of its own.
+   * Phase 4 decision): assigns, reassigns, or (Task #8) unassigns the
+   * Load's dispatcher. Never a prerequisite for any other Phase 4
+   * transition. Assign/reassign carry no status gate of their own —
+   * unchanged. Unassign (`dispatcherUserId: null`) is blocked during
+   * POST_DISPATCH_STATUSES: a Load actively in transit relies on
+   * assignedDispatcherId being present for the check-call and lateness
+   * notification sweeps (neither has an admin fallback recipient), so
+   * clearing it mid-transit would go notification-dark with no fallback.
    */
   async assignDispatcher(
     organizationId: string,
@@ -692,11 +697,19 @@ export class DispatchTrackingService {
       const load = await tx.load.findFirst({ where: { id: loadId, organizationId } });
       if (!load) throw new NotFoundError('Load not found.');
 
-      const membership = await tx.organizationMembership.findFirst({
-        where: { organizationId, userId: dto.dispatcherUserId, status: 'ACTIVE' },
-      });
-      if (!membership) {
-        throw new NotFoundError('This user is not an active member of the organization.');
+      if (dto.dispatcherUserId === null) {
+        if (POST_DISPATCH_STATUSES.includes(load.status)) {
+          throw new InvalidTransitionError(
+            'The dispatcher cannot be unassigned while this Load is Dispatched, at Pickup, or In Transit.',
+          );
+        }
+      } else {
+        const membership = await tx.organizationMembership.findFirst({
+          where: { organizationId, userId: dto.dispatcherUserId, status: 'ACTIVE' },
+        });
+        if (!membership) {
+          throw new NotFoundError('This user is not an active member of the organization.');
+        }
       }
 
       if (load.assignedDispatcherId === dto.dispatcherUserId) {
@@ -710,9 +723,16 @@ export class DispatchTrackingService {
         data: { assignedDispatcherId: dto.dispatcherUserId },
       });
 
+      const action =
+        dto.dispatcherUserId === null
+          ? 'Dispatcher Unassigned'
+          : isReassignment
+            ? 'Dispatcher Reassigned'
+            : 'Dispatcher Assigned';
+
       await this.audit.record(tx, {
         organizationId,
-        action: isReassignment ? 'Dispatcher Reassigned' : 'Dispatcher Assigned',
+        action,
         entityType: 'Load',
         entityId: loadId,
         previousValue: { assignedDispatcherId: load.assignedDispatcherId },

@@ -1260,4 +1260,99 @@ describe('DispatchTrackingService.assignDispatcher — independent action (appro
       service.assignDispatcher(ORG_ID, LOAD_ID, { dispatcherUserId: 'not-a-member' }, USER_ID),
     ).rejects.toThrow(NotFoundError);
   });
+
+  describe('unassign (Task #8) — dispatcherUserId: null', () => {
+    it('unassigns successfully, clears assignedDispatcherId, and audits "Dispatcher Unassigned"', async () => {
+      const { service, tx, audit } = buildService({
+        load: { id: LOAD_ID, status: 'BOOKED', assignedDispatcherId: 'dispatcher-1' },
+      });
+
+      const load = await service.assignDispatcher(
+        ORG_ID,
+        LOAD_ID,
+        { dispatcherUserId: null },
+        USER_ID,
+      );
+
+      expect(load.assignedDispatcherId).toBeNull();
+      expect(tx.load.update).toHaveBeenCalledWith({
+        where: { id: LOAD_ID },
+        data: { assignedDispatcherId: null },
+      });
+      expect(audit.record).toHaveBeenCalledWith(
+        tx,
+        expect.objectContaining({
+          action: 'Dispatcher Unassigned',
+          entityType: 'Load',
+          entityId: LOAD_ID,
+          previousValue: { assignedDispatcherId: 'dispatcher-1' },
+          newValue: { assignedDispatcherId: null },
+          actorUserId: USER_ID,
+        }),
+      );
+    });
+
+    it('does not validate organization membership when unassigning', async () => {
+      const { service, tx } = buildService({
+        load: { id: LOAD_ID, status: 'BOOKED', assignedDispatcherId: 'dispatcher-1' },
+        membership: null,
+      });
+
+      await expect(
+        service.assignDispatcher(ORG_ID, LOAD_ID, { dispatcherUserId: null }, USER_ID),
+      ).resolves.toBeDefined();
+      expect(tx.organizationMembership.findFirst).not.toHaveBeenCalled();
+    });
+
+    it('is a no-op with no audit event when already unassigned', async () => {
+      const { service, tx, audit } = buildService({
+        load: { id: LOAD_ID, status: 'BOOKED', assignedDispatcherId: null },
+      });
+
+      await service.assignDispatcher(ORG_ID, LOAD_ID, { dispatcherUserId: null }, USER_ID);
+
+      expect(audit.record).not.toHaveBeenCalled();
+      expect(tx.load.update).not.toHaveBeenCalled();
+    });
+
+    it.each(['DISPATCHED', 'PICKUP', 'IN_TRANSIT'] as const)(
+      'rejects unassigning while the Load is %s',
+      async (status) => {
+        const { service, tx } = buildService({
+          load: { id: LOAD_ID, status, assignedDispatcherId: 'dispatcher-1' },
+        });
+
+        await expect(
+          service.assignDispatcher(ORG_ID, LOAD_ID, { dispatcherUserId: null }, USER_ID),
+        ).rejects.toThrow(InvalidTransitionError);
+        expect(tx.load.update).not.toHaveBeenCalled();
+      },
+    );
+
+    it.each([
+      'BOOKED',
+      'CARRIER_SOURCING',
+      'CARRIER_ASSIGNED',
+      'RATE_CONFIRMATION',
+      'DELIVERED',
+      'CLOSED',
+      'CANCELLED',
+    ] as const)('allows unassigning while the Load is %s', async (status) => {
+      const { service } = buildService({
+        load: { id: LOAD_ID, status, assignedDispatcherId: 'dispatcher-1' },
+      });
+
+      await expect(
+        service.assignDispatcher(ORG_ID, LOAD_ID, { dispatcherUserId: null }, USER_ID),
+      ).resolves.toBeDefined();
+    });
+
+    it('throws NotFoundError for a Load outside the organization', async () => {
+      const { service } = buildService({ load: null });
+
+      await expect(
+        service.assignDispatcher(ORG_ID, 'nonexistent', { dispatcherUserId: null }, USER_ID),
+      ).rejects.toThrow(NotFoundError);
+    });
+  });
 });

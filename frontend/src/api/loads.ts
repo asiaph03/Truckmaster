@@ -448,7 +448,8 @@ export interface SetRiskStatusRequest {
 }
 
 export interface AssignDispatcherRequest {
-  dispatcherUserId: string;
+  /** Task #8 — `null` explicitly unassigns; the field must still be present. */
+  dispatcherUserId: string | null;
 }
 
 export interface AddChargeRequest {

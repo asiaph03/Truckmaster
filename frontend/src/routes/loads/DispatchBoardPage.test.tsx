@@ -1,11 +1,11 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
+import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { http, HttpResponse } from 'msw';
 import { server } from '../../test/mswServer';
 import { useSessionStore } from '../../auth/session-store';
-import { ToastViewport } from '../../components/ui';
+import { ToastViewport, useToastStore } from '../../components/ui';
 import { DispatchBoardPage } from './DispatchBoardPage';
 
 function load(overrides: Record<string, unknown> = {}) {
@@ -645,5 +645,106 @@ describe('DispatchBoardPage — Cancel Load workflow', () => {
       ),
     ).toBeInTheDocument();
     expect(transitionCalled).toBe(false);
+  });
+});
+
+describe('DispatchBoardPage — Unassign Dispatcher (Task #8)', () => {
+  beforeEach(() => {
+    useSessionStore.setState({ roles: ['ADMIN'] });
+  });
+  afterEach(() => {
+    useToastStore.setState({ toasts: [] });
+  });
+
+  it('shows "Unassign Dispatcher" in the row kebab when a dispatcher is assigned and the status allows it', async () => {
+    mockBaseHandlers([
+      load({
+        id: 'load-1',
+        loadNumber: 'LOAD-000001',
+        status: 'BOOKED',
+        assignedDispatcherId: 'user-1',
+      }),
+    ]);
+    renderPage();
+    await waitFor(() => expect(screen.getByText('LOAD-000001')).toBeInTheDocument());
+
+    expect(screen.getByText('Unassign Dispatcher')).toBeInTheDocument();
+  });
+
+  it('hides "Unassign Dispatcher" when no dispatcher is assigned', async () => {
+    mockBaseHandlers([load({ id: 'load-1', loadNumber: 'LOAD-000001', status: 'BOOKED' })]);
+    renderPage();
+    await waitFor(() => expect(screen.getByText('LOAD-000001')).toBeInTheDocument());
+
+    expect(screen.queryByText('Unassign Dispatcher')).not.toBeInTheDocument();
+  });
+
+  it.each(['DISPATCHED', 'PICKUP', 'IN_TRANSIT'])(
+    'hides "Unassign Dispatcher" when the Load is %s even though a dispatcher is assigned',
+    async (status) => {
+      mockBaseHandlers([
+        load({ id: 'load-1', loadNumber: 'LOAD-000001', status, assignedDispatcherId: 'user-1' }),
+      ]);
+      renderPage();
+      await waitFor(() => expect(screen.getByText('LOAD-000001')).toBeInTheDocument());
+
+      expect(screen.queryByText('Unassign Dispatcher')).not.toBeInTheDocument();
+    },
+  );
+
+  it('confirming Unassign Dispatcher sends { dispatcherUserId: null } with no reason field, and shows success', async () => {
+    let requestBody: unknown;
+    mockBaseHandlers([
+      load({
+        id: 'load-1',
+        loadNumber: 'LOAD-000001',
+        status: 'BOOKED',
+        assignedDispatcherId: 'user-1',
+      }),
+    ]);
+    server.use(
+      http.patch('/api/v1/loads/load-1/dispatcher', async ({ request }) => {
+        requestBody = await request.json();
+        return HttpResponse.json(load({ id: 'load-1', assignedDispatcherId: null }));
+      }),
+    );
+    renderPage();
+    await waitFor(() => expect(screen.getByText('LOAD-000001')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByText('Unassign Dispatcher'));
+    const dialog = screen.getByRole('dialog');
+    expect(within(dialog).queryByLabelText(/^Reason/)).not.toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Unassign Dispatcher' }));
+
+    await waitFor(() => expect(screen.getByText('Dispatcher unassigned.')).toBeInTheDocument());
+    expect(requestBody).toEqual({ dispatcherUserId: null });
+  });
+
+  it('shows a toast error and keeps the dialog open when unassign fails', async () => {
+    mockBaseHandlers([
+      load({
+        id: 'load-1',
+        loadNumber: 'LOAD-000001',
+        status: 'BOOKED',
+        assignedDispatcherId: 'user-1',
+      }),
+    ]);
+    server.use(
+      http.patch('/api/v1/loads/load-1/dispatcher', () =>
+        HttpResponse.json(
+          { error: { code: 'INVALID_TRANSITION', message: 'boom' } },
+          { status: 409 },
+        ),
+      ),
+    );
+    renderPage();
+    await waitFor(() => expect(screen.getByText('LOAD-000001')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByText('Unassign Dispatcher'));
+    const dialog = screen.getByRole('dialog');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Unassign Dispatcher' }));
+
+    await waitFor(() => expect(screen.getByText('boom')).toBeInTheDocument());
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
   });
 });
