@@ -575,6 +575,7 @@ export class CarrierSourcingService {
             id: load.dispatchRecord.sourceDriverId,
             organizationId,
             carrierId: load.assignedCarrierId ?? undefined,
+            active: true,
           },
         });
         if (driver?.email) recipientEmail = driver.email;

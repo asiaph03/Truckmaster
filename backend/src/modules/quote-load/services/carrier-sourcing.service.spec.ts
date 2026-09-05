@@ -496,6 +496,7 @@ describe('CarrierSourcingService — Driver Dispatch Email feature', () => {
           email: 'julia@carrier.test',
           organizationId: ORG_ID,
           carrierId: CARRIER_ID,
+          active: true,
         },
         rateConfDoc: cleanUploadedRateConfDoc(),
       });
@@ -504,8 +505,50 @@ describe('CarrierSourcingService — Driver Dispatch Email feature', () => {
 
       expect(preview.recipientEmail).toBe('julia@carrier.test');
       expect(tx.driver.findFirst).toHaveBeenCalledWith({
-        where: { id: DRIVER_ID, organizationId: ORG_ID, carrierId: CARRIER_ID },
+        where: { id: DRIVER_ID, organizationId: ORG_ID, carrierId: CARRIER_ID, active: true },
       });
+    });
+
+    /**
+     * Task #7 — like the cross-carrier test below, the mock models "the
+     * DB's `active: true` filter excluded this row" the same way it
+     * models any other non-matching WHERE clause: by returning `null`
+     * from tx.driver.findFirst (the mock does not itself apply the where
+     * clause — see buildService above). Asserting the where clause
+     * includes `active: true` is what actually proves the production
+     * code sends the correct filter to the database.
+     */
+    it('does not resolve an inactive driver email (Task #7 active-filter guard)', async () => {
+      const { service, tx } = buildService({
+        load: dispatchedLoad(),
+        driver: null,
+        rateConfDoc: cleanUploadedRateConfDoc(),
+      });
+
+      const preview = await service.previewDriverDispatchEmail(ORG_ID, LOAD_ID);
+
+      expect(tx.driver.findFirst).toHaveBeenCalledWith({
+        where: { id: DRIVER_ID, organizationId: ORG_ID, carrierId: CARRIER_ID, active: true },
+      });
+      expect(preview.recipientEmail).toBeNull();
+    });
+
+    it('still resolves an active driver email (Task #7 active-filter regression)', async () => {
+      const { service } = buildService({
+        load: dispatchedLoad(),
+        driver: {
+          id: DRIVER_ID,
+          email: 'julia@carrier.test',
+          organizationId: ORG_ID,
+          carrierId: CARRIER_ID,
+          active: true,
+        },
+        rateConfDoc: cleanUploadedRateConfDoc(),
+      });
+
+      const preview = await service.previewDriverDispatchEmail(ORG_ID, LOAD_ID);
+
+      expect(preview.recipientEmail).toBe('julia@carrier.test');
     });
 
     it('returns null recipientEmail when the driver has no email on file', async () => {

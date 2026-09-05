@@ -204,6 +204,8 @@ export interface AddDriverRequest {
   notes?: string;
 }
 
+export type UpdateDriverRequest = Partial<AddDriverRequest>;
+
 export interface AddTruckRequest {
   unitNumber: string;
   truckType: EquipmentType;
@@ -264,6 +266,21 @@ export const carriersApi = {
 
   addDriver: (id: string, body: AddDriverRequest) =>
     apiRequest<CarrierDriver>(`/carriers/${id}/drivers`, { method: 'POST', body }),
+
+  updateDriver: (id: string, driverId: string, body: UpdateDriverRequest) =>
+    apiRequest<CarrierDriver>(`/carriers/${id}/drivers/${driverId}`, { method: 'PATCH', body }),
+
+  deactivateDriver: (id: string, driverId: string, body: { reason: string }) =>
+    apiRequest<CarrierDriver>(`/carriers/${id}/drivers/${driverId}/deactivate`, {
+      method: 'POST',
+      body,
+    }),
+
+  reactivateDriver: (id: string, driverId: string, body: { reason: string }) =>
+    apiRequest<CarrierDriver>(`/carriers/${id}/drivers/${driverId}/reactivate`, {
+      method: 'POST',
+      body,
+    }),
 
   addTruck: (id: string, body: AddTruckRequest) =>
     apiRequest<CarrierTruck>(`/carriers/${id}/trucks`, { method: 'POST', body }),

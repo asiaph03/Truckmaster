@@ -11,6 +11,7 @@ import { AddFmcsaVerificationDto } from '../dto/add-fmcsa-verification.dto';
 import { AddServiceAreaDto } from '../dto/add-service-area.dto';
 import { UpdateFactoringInfoDto } from '../dto/update-factoring-info.dto';
 import { AddDriverDto } from '../dto/add-driver.dto';
+import { UpdateDriverDto } from '../dto/update-driver.dto';
 import { AddTruckDto } from '../dto/add-truck.dto';
 import { AddTrailerDto } from '../dto/add-trailer.dto';
 import { CarrierLifecycleReasonDto } from '../dto/carrier-lifecycle-reason.dto';
@@ -372,6 +373,10 @@ export class CarrierService {
       const carrier = await tx.carrier.findFirst({ where: { id: carrierId, organizationId } });
       if (!carrier) throw new NotFoundError('Carrier not found.');
 
+      if (dto.licenseNumber) {
+        await this.assertNoDuplicateLicense(tx, organizationId, carrierId, dto.licenseNumber, null);
+      }
+
       const driver = await tx.driver.create({
         data: { organizationId, carrierId, ...dto, active: true },
       });
@@ -387,6 +392,188 @@ export class CarrierService {
 
       return driver;
     });
+  }
+
+  /**
+   * Task #7 — service-level only (no DB unique constraint; see
+   * update-driver.dto.ts / carrier.service.spec.ts for the rationale).
+   * Scoped to (organizationId, carrierId, licenseNumber), active drivers
+   * only — an inactive driver's old license number doesn't block reuse.
+   */
+  private async assertNoDuplicateLicense(
+    tx: Prisma.TransactionClient,
+    organizationId: string,
+    carrierId: string,
+    licenseNumber: string,
+    excludeDriverId: string | null,
+  ): Promise<void> {
+    const trimmed = licenseNumber.trim();
+    if (!trimmed) return;
+
+    const duplicate = await tx.driver.findFirst({
+      where: {
+        organizationId,
+        carrierId,
+        licenseNumber: trimmed,
+        active: true,
+        ...(excludeDriverId ? { id: { not: excludeDriverId } } : {}),
+      },
+    });
+    if (duplicate) {
+      throw new ConflictError(
+        'A driver with this license number already exists for this carrier.',
+        { existingDriverId: duplicate.id },
+      );
+    }
+  }
+
+  /** Task #7 — diff-based update, mirroring CarrierService.update()'s own pattern. */
+  async updateDriver(
+    organizationId: string,
+    carrierId: string,
+    driverId: string,
+    dto: UpdateDriverDto,
+    actingUserId: string,
+  ) {
+    return this.prisma.withTenantTransaction(organizationId, async (tx) => {
+      const existing = await tx.driver.findFirst({
+        where: { id: driverId, organizationId, carrierId },
+      });
+      if (!existing) throw new NotFoundError('Driver not found.');
+
+      if (dto.licenseNumber) {
+        await this.assertNoDuplicateLicense(
+          tx,
+          organizationId,
+          carrierId,
+          dto.licenseNumber,
+          driverId,
+        );
+      }
+
+      const fieldChanges: { field: string; previous: unknown; new: unknown }[] = [];
+      for (const [field, newValue] of Object.entries(dto)) {
+        if (newValue === undefined) continue;
+        const previousValue = (existing as unknown as Record<string, unknown>)[field];
+        if (previousValue !== newValue)
+          fieldChanges.push({ field, previous: previousValue, new: newValue });
+      }
+
+      const updated = await tx.driver.update({ where: { id: driverId }, data: dto });
+
+      if (fieldChanges.length > 0) {
+        await this.audit.record(tx, {
+          organizationId,
+          action: 'Driver Updated',
+          entityType: 'Driver',
+          entityId: driverId,
+          previousValue: { field_changes: fieldChanges },
+          actorUserId: actingUserId,
+        });
+      }
+
+      return updated;
+    });
+  }
+
+  /**
+   * Task #7 — shared guard for deactivateDriver/reactivateDriver only,
+   * mirroring transitionStatus's Carrier-status equivalent but for
+   * Driver's plain `active` boolean (no schema/migration change — see
+   * update-driver.dto.ts and the Task #7 audit for why). The reason is
+   * trimmed and re-validated as non-empty HERE, same rationale as
+   * transitionStatus above.
+   */
+  private async transitionDriverActive(
+    tx: Prisma.TransactionClient,
+    organizationId: string,
+    carrierId: string,
+    driverId: string,
+    fromActive: boolean,
+    toActive: boolean,
+    action: string,
+    invalidTransitionMessage: string,
+    reason: string,
+    actingUserId: string,
+  ) {
+    const driver = await tx.driver.findFirst({
+      where: { id: driverId, organizationId, carrierId },
+    });
+    if (!driver) throw new NotFoundError('Driver not found.');
+    if (driver.active !== fromActive) {
+      throw new BusinessRuleError(invalidTransitionMessage);
+    }
+
+    const trimmedReason = reason.trim();
+    if (trimmedReason.length === 0) {
+      throw new BusinessRuleError('A reason is required.');
+    }
+
+    const updated = await tx.driver.update({
+      where: { id: driverId },
+      data: { active: toActive },
+    });
+
+    await this.audit.record(tx, {
+      organizationId,
+      action,
+      entityType: 'Driver',
+      entityId: driverId,
+      previousValue: { active: driver.active },
+      newValue: { active: toActive },
+      reason: trimmedReason,
+      actorUserId: actingUserId,
+    });
+
+    return updated;
+  }
+
+  /** Task #7 — active -> inactive only. Never touches DispatchRecord (snapshot data). */
+  async deactivateDriver(
+    organizationId: string,
+    carrierId: string,
+    driverId: string,
+    dto: CarrierLifecycleReasonDto,
+    actingUserId: string,
+  ) {
+    return this.prisma.withTenantTransaction(organizationId, (tx) =>
+      this.transitionDriverActive(
+        tx,
+        organizationId,
+        carrierId,
+        driverId,
+        true,
+        false,
+        'Driver Deactivated',
+        'Only an active driver can be deactivated.',
+        dto.reason,
+        actingUserId,
+      ),
+    );
+  }
+
+  /** Task #7 — inactive -> active only. */
+  async reactivateDriver(
+    organizationId: string,
+    carrierId: string,
+    driverId: string,
+    dto: CarrierLifecycleReasonDto,
+    actingUserId: string,
+  ) {
+    return this.prisma.withTenantTransaction(organizationId, (tx) =>
+      this.transitionDriverActive(
+        tx,
+        organizationId,
+        carrierId,
+        driverId,
+        false,
+        true,
+        'Driver Reactivated',
+        'Only an inactive driver can be reactivated.',
+        dto.reason,
+        actingUserId,
+      ),
+    );
   }
 
   async addTruck(

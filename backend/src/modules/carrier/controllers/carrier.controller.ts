@@ -19,6 +19,7 @@ import { AddFmcsaVerificationDto } from '../dto/add-fmcsa-verification.dto';
 import { AddServiceAreaDto } from '../dto/add-service-area.dto';
 import { UpdateFactoringInfoDto } from '../dto/update-factoring-info.dto';
 import { AddDriverDto } from '../dto/add-driver.dto';
+import { UpdateDriverDto } from '../dto/update-driver.dto';
 import { AddTruckDto } from '../dto/add-truck.dto';
 import { AddTrailerDto } from '../dto/add-trailer.dto';
 import { CarrierLifecycleReasonDto } from '../dto/carrier-lifecycle-reason.dto';
@@ -151,6 +152,45 @@ export class CarrierController {
     const organizationId = RequestContextStore.requireOrganizationId();
     const actingUserId = RequestContextStore.requireUserId();
     return this.carrierService.addDriver(organizationId, id, dto, actingUserId);
+  }
+
+  /** Task #7 — diff-based field update, mirroring update(id)'s style at the row level. */
+  @Patch(':id/drivers/:driverId')
+  @Roles(...CREATE_EDIT_ROLES)
+  updateDriver(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('driverId', ParseUUIDPipe) driverId: string,
+    @Body() dto: UpdateDriverDto,
+  ) {
+    const organizationId = RequestContextStore.requireOrganizationId();
+    const actingUserId = RequestContextStore.requireUserId();
+    return this.carrierService.updateDriver(organizationId, id, driverId, dto, actingUserId);
+  }
+
+  @Post(':id/drivers/:driverId/deactivate')
+  @Roles(...CREATE_EDIT_ROLES)
+  @HttpCode(200)
+  deactivateDriver(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('driverId', ParseUUIDPipe) driverId: string,
+    @Body() dto: CarrierLifecycleReasonDto,
+  ) {
+    const organizationId = RequestContextStore.requireOrganizationId();
+    const actingUserId = RequestContextStore.requireUserId();
+    return this.carrierService.deactivateDriver(organizationId, id, driverId, dto, actingUserId);
+  }
+
+  @Post(':id/drivers/:driverId/reactivate')
+  @Roles(...CREATE_EDIT_ROLES)
+  @HttpCode(200)
+  reactivateDriver(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('driverId', ParseUUIDPipe) driverId: string,
+    @Body() dto: CarrierLifecycleReasonDto,
+  ) {
+    const organizationId = RequestContextStore.requireOrganizationId();
+    const actingUserId = RequestContextStore.requireUserId();
+    return this.carrierService.reactivateDriver(organizationId, id, driverId, dto, actingUserId);
   }
 
   @Post(':id/trucks')
