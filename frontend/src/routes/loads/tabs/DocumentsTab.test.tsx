@@ -247,6 +247,140 @@ describe('DocumentsTab — Proof of Pickup (POP) / Proof of Delivery (POD) by St
     expect(optionLabels).not.toContain('Proof of Delivery');
     expect(optionLabels).not.toContain('Proof of Pickup');
   });
+
+  /**
+   * Finds the file input inside the `.file-upload-field` whose visible
+   * label matches `label` exactly — mirrors the Load-Level Documents
+   * describe block's own `selectReplacementFile` helper below, generalized
+   * to a caller-supplied label since a Stop's control reads "Replace POD"/
+   * "Replace POP", never the bare "Replace" Load-level documents use.
+   */
+  function selectStopReplacementFile(label: string): { input: HTMLInputElement; file: File } {
+    const replaceButton = screen.getByText(label);
+    const wrapper = replaceButton.closest('.file-upload-field') as HTMLElement;
+    const input = wrapper.querySelector('input[type="file"]') as HTMLInputElement;
+    const file = new File(['content'], 'replacement.pdf', { type: 'application/pdf' });
+    return { input, file };
+  }
+
+  /**
+   * Renders directly (rather than the shared `renderTab` helper above)
+   * because `renderTab`'s own `GET /api/v1/documents` handler answers
+   * every entityType/entityId combination identically — fine for the
+   * Load-level tests, which never have a Stop competing for the same
+   * endpoint, but wrong here: `StopDocumentRow`'s per-stop query fires on
+   * mount, before a `server.use()` call placed after `renderTab()` can
+   * possibly register (proved by this test's own first failing attempt),
+   * so the differentiated handler has to be in place *before* the first
+   * render, not race it.
+   */
+  function renderTabWithStopDocuments(
+    load: Load,
+    documentsByEntity: (entityType: string, entityId: string) => AppDocument[],
+  ) {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    server.use(
+      http.get('/api/v1/document-types', () => HttpResponse.json(DOC_TYPES)),
+      http.get('/api/v1/documents', ({ request }) => {
+        const url = new URL(request.url);
+        const entityType = url.searchParams.get('entityType') ?? '';
+        const entityId = url.searchParams.get('entityId') ?? '';
+        return HttpResponse.json(documentsByEntity(entityType, entityId));
+      }),
+    );
+    return render(
+      <QueryClientProvider client={queryClient}>
+        <DocumentsTab load={load} />
+        <ToastViewport />
+      </QueryClientProvider>,
+    );
+  }
+
+  // Cancel Load / Document Replace hardening — Replace POD must pass the
+  // Stop's documentFamilyId, never its own document id (the two are
+  // deliberately different values here, exactly like the Load-Level
+  // Documents "L" test below — this test would fail if StopDocumentRow's
+  // Replace regressed back to passing `current.id`).
+  it("Replace POD uploads with existingDocumentFamilyId set to the current POD's documentFamilyId, not its document id", async () => {
+    const load = makeLoad([makeStop({ sequence: 1, stopType: 'DELIVERY', city: 'Chicago' })]);
+    const podDoc = makeAppDocument({
+      id: 'pod-doc-1',
+      documentFamilyId: 'family-pod-1',
+      entityType: 'STOP',
+      entityId: 'stop-1',
+      documentTypeId: 'dt-pod',
+      fileName: 'pod.pdf',
+      scanStatus: 'CLEAN',
+    });
+    let receivedBody: Record<string, unknown> | undefined;
+    server.use(
+      http.post('/api/v1/loads/load-1/stops/1/pod-documents', async ({ request }) => {
+        receivedBody = (await request.json()) as Record<string, unknown>;
+        return HttpResponse.json({
+          document: makeAppDocument({ id: 'pod-doc-2', entityType: 'STOP', scanStatus: 'PENDING' }),
+          uploadUrl: '/mock-upload-url',
+        });
+      }),
+      http.put('/mock-upload-url', () => new HttpResponse(null, { status: 200 })),
+      http.post('/api/v1/documents/pod-doc-2/confirm', () =>
+        HttpResponse.json(
+          makeAppDocument({ id: 'pod-doc-2', entityType: 'STOP', scanStatus: 'PENDING' }),
+        ),
+      ),
+    );
+    renderTabWithStopDocuments(load, (entityType, entityId) =>
+      entityType === 'STOP' && entityId === 'stop-1' ? [podDoc] : [],
+    );
+
+    await waitFor(() => expect(screen.getByText('Replace POD')).toBeInTheDocument());
+    const { input, file } = selectStopReplacementFile('Replace POD');
+    fireEvent.change(input, { target: { files: [file] } });
+
+    await waitFor(() => expect(receivedBody).toBeDefined());
+    expect(receivedBody).toMatchObject({ existingDocumentFamilyId: 'family-pod-1' });
+    expect(receivedBody?.existingDocumentFamilyId).not.toBe('pod-doc-1');
+  });
+
+  // Symmetric pickup-side counterpart of the Replace POD test above.
+  it("Replace POP uploads with existingDocumentFamilyId set to the current POP's documentFamilyId, not its document id", async () => {
+    const load = makeLoad([makeStop({ sequence: 1, stopType: 'PICKUP', city: 'Dallas' })]);
+    const popDoc = makeAppDocument({
+      id: 'pop-doc-1',
+      documentFamilyId: 'family-pop-1',
+      entityType: 'STOP',
+      entityId: 'stop-1',
+      documentTypeId: 'dt-pop',
+      fileName: 'pop.pdf',
+      scanStatus: 'CLEAN',
+    });
+    let receivedBody: Record<string, unknown> | undefined;
+    server.use(
+      http.post('/api/v1/loads/load-1/stops/1/pop-documents', async ({ request }) => {
+        receivedBody = (await request.json()) as Record<string, unknown>;
+        return HttpResponse.json({
+          document: makeAppDocument({ id: 'pop-doc-2', entityType: 'STOP', scanStatus: 'PENDING' }),
+          uploadUrl: '/mock-upload-url',
+        });
+      }),
+      http.put('/mock-upload-url', () => new HttpResponse(null, { status: 200 })),
+      http.post('/api/v1/documents/pop-doc-2/confirm', () =>
+        HttpResponse.json(
+          makeAppDocument({ id: 'pop-doc-2', entityType: 'STOP', scanStatus: 'PENDING' }),
+        ),
+      ),
+    );
+    renderTabWithStopDocuments(load, (entityType, entityId) =>
+      entityType === 'STOP' && entityId === 'stop-1' ? [popDoc] : [],
+    );
+
+    await waitFor(() => expect(screen.getByText('Replace POP')).toBeInTheDocument());
+    const { input, file } = selectStopReplacementFile('Replace POP');
+    fireEvent.change(input, { target: { files: [file] } });
+
+    await waitFor(() => expect(receivedBody).toBeDefined());
+    expect(receivedBody).toMatchObject({ existingDocumentFamilyId: 'family-pop-1' });
+    expect(receivedBody?.existingDocumentFamilyId).not.toBe('pop-doc-1');
+  });
 });
 
 describe('DocumentsTab — scan-status consumption gate (isDocumentConsumable)', () => {

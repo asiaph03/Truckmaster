@@ -134,7 +134,10 @@ export function ComplianceTab({ carrier }: { carrier: Carrier }) {
                       onUpload={(file) =>
                         documentsApi.uploadCarrierDocumentAndConfirm(
                           carrier.id,
-                          { documentTypeId: r.type.id, existingDocumentFamilyId: r.doc?.id },
+                          {
+                            documentTypeId: r.type.id,
+                            existingDocumentFamilyId: r.doc?.documentFamilyId,
+                          },
                           file,
                         )
                       }

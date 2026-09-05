@@ -321,7 +321,12 @@ function StopDocumentRow({
           <FileUploadField
             label={current ? `Replace ${code}` : `Upload ${code}`}
             onUpload={(file) =>
-              upload(loadId, stop.sequence, { existingDocumentFamilyId: current?.id }, file)
+              upload(
+                loadId,
+                stop.sequence,
+                { existingDocumentFamilyId: current?.documentFamilyId },
+                file,
+              )
             }
             onCheckScanStatus={(documentId) =>
               documentsApi.checkScanStatus('STOP', stop.id, documentId)
