@@ -39,9 +39,84 @@ jobs:
       - name: Unit tests
         run: npm test --workspace=backend
 
-      # Integration/E2E tests against a real Postgres/Redis service
-      # container are added starting Phase 1, once there is a schema and
-      # RLS policies to test against (docs/TECHNICAL_ARCHITECTURE.md §16).
+      - name: E2E safety guard tests
+        run: npm run test:e2e-safety --workspace=backend
+
+  # Task #6 — runs the full backend/test/*.e2e-spec.ts suite against
+  # ephemeral, isolated service containers only. Every E2E_* value below
+  # is synthetic/local — none is a real credential, and none is a repo
+  # secret, so this job needs no `secrets.` access at all. Depends on the
+  # `backend` job so a cheap lint/build/unit failure fails fast without
+  # also paying for container startup + the full E2E run.
+  e2e:
+    needs: backend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: tms
+          POSTGRES_PASSWORD: tms_e2e_ci_password
+          POSTGRES_DB: tms_e2e_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U tms"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      E2E_DATABASE_URL: postgresql://tms:tms_e2e_ci_password@localhost:5432/tms_e2e_test?schema=public
+      E2E_REDIS_URL: redis://localhost:6379/1
+      E2E_S3_ENDPOINT: http://127.0.0.1:9000
+      E2E_S3_BUCKET: tms-documents
+      E2E_S3_ACCESS_KEY_ID: S3RVER
+      E2E_S3_SECRET_ACCESS_KEY: S3RVER
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        working-directory: .
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Start local S3 mock (s3rver)
+        run: npm run s3:local &
+
+      - name: Wait for S3 mock to be ready
+        run: |
+          for i in $(seq 1 15); do
+            curl -sf http://127.0.0.1:9000 && exit 0
+            sleep 1
+          done
+          echo "s3rver did not become ready in time" >&2
+          exit 1
+
+      - name: Bootstrap E2E database (migrate + RLS + seed)
+        run: npm run test:e2e:bootstrap
+
+      - name: Run E2E suite
+        run: npm run test:e2e
 
   frontend:
     runs-on: ubuntu-latest

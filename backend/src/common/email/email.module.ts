@@ -1,11 +1,30 @@
 import { Inject, Module, OnModuleDestroy } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { Queue } from 'bullmq';
 import Redis from 'ioredis';
+import { AppConfig } from '../../config/configuration';
 import { REDIS_CLIENT } from '../redis/redis.module';
-import { EMAIL_SENDER } from './email-sender.interface';
+import { EMAIL_SENDER, IEmailSender } from './email-sender.interface';
 import { PostmarkEmailSender } from './postmark-email-sender';
+import { NoopEmailSender } from './noop-email-sender';
 import { EmailSendWorker } from './email-send.worker';
 import { EMAIL_QUEUE, EMAIL_QUEUE_NAME } from './email-queue.constants';
+
+/**
+ * Task #6 — pure selection logic, exported and unit-tested directly
+ * (email.module.spec.ts) without needing to boot the Nest DI container.
+ * `nodeEnv` only ever equals `'test'` when
+ * test/setup-e2e-env.ts explicitly sets it (see that file) — production
+ * and every local-dev NODE_ENV value are unaffected, so this changes
+ * nothing about real deployments.
+ */
+export function chooseEmailSender(
+  nodeEnv: string,
+  postmark: PostmarkEmailSender,
+  noop: NoopEmailSender,
+): IEmailSender {
+  return nodeEnv === 'test' ? noop : postmark;
+}
 
 /**
  * Internal token for the Queue producer's own duplicated Redis connection
@@ -28,7 +47,17 @@ const EMAIL_QUEUE_CONNECTION = 'EMAIL_QUEUE_CONNECTION';
 @Module({
   providers: [
     EmailSendWorker,
-    { provide: EMAIL_SENDER, useClass: PostmarkEmailSender },
+    PostmarkEmailSender,
+    NoopEmailSender,
+    {
+      provide: EMAIL_SENDER,
+      useFactory: (
+        config: ConfigService<AppConfig>,
+        postmark: PostmarkEmailSender,
+        noop: NoopEmailSender,
+      ) => chooseEmailSender(config.get('nodeEnv', { infer: true })!, postmark, noop),
+      inject: [ConfigService, PostmarkEmailSender, NoopEmailSender],
+    },
     {
       provide: EMAIL_QUEUE_CONNECTION,
       useFactory: (redis: Redis) => redis.duplicate(),

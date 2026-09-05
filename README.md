@@ -103,10 +103,28 @@ npm run prisma:migrate:deploy   # applies the Phase 1 + 2 + 3 migrations to Post
 npm run prisma:apply-rls         # applies FORCE ROW LEVEL SECURITY policies (all three phases)
 npm run prisma:seed              # seeds the 13 system-default document types
 
+# Task #6 — npm run test:e2e now REQUIRES an explicit, isolated E2E_*
+# environment (E2E_DATABASE_URL, E2E_REDIS_URL, E2E_S3_*) — see
+# backend/.env.e2e.example for the full list and placeholder values. It
+# hard-fails immediately if any is missing or looks production-like
+# (backend/test/e2e-env-guard.ts); it never reads DATABASE_URL/REDIS_URL/
+# S3_* from backend/.env, so the app's own dev/prod config can never be
+# used by accident. Provision a SEPARATE Postgres database (not tms_dev)
+# and a distinct Redis DB index (not DB 0) before running these:
+export E2E_DATABASE_URL="postgresql://tms:tms_dev_password@127.0.0.1:5432/tms_e2e_test?schema=public"
+export E2E_REDIS_URL="redis://127.0.0.1:6379/1"
+export E2E_S3_ENDPOINT="http://127.0.0.1:9000"
+export E2E_S3_BUCKET="tms-documents-e2e-test"
+export E2E_S3_ACCESS_KEY_ID="S3RVER"
+export E2E_S3_SECRET_ACCESS_KEY="S3RVER"
+
+npm run test:e2e-safety     # fast guard-only tests, no DB/Redis/S3 needed
+npm run test:e2e:bootstrap  # migrate + apply-rls + seed the isolated E2E DB
 npm run test:e2e            # full Workflow 1 + 2/3 + 4 lifecycle, malware-
                              # scan quarantine, and cross-tenant RLS proof,
-                             # against the real Postgres/Redis/S3-compatible
-                             # storage from above (Postgres, Memurai, s3rver).
+                             # against the isolated Postgres/Redis/S3-compatible
+                             # storage above — never against your local dev
+                             # database/Redis DB 0/real S3.
                              # Runs sequentially (--runInBand) — every e2e
                              # spec's AppModule starts a real BullMQ worker
                              # on the same Redis queue name, so running spec
@@ -164,8 +182,9 @@ cp .env.example .env
 ## Current Status
 
 **Stage 7, Phase 3 (Load Lifecycle Core) implemented and verified: build/lint/unit tests
-green, full `test:e2e` suite (5 files, 56 tests) passing reproducibly against real
-PostgreSQL + Memurai + `s3rver`.** Phase 1 (Identity & Tenancy) and Phase 2 (Core Master
+green.** The `test:e2e` suite has grown to 19 files / 342 tests as of Task #6, which also
+made it require an explicit isolated PostgreSQL + Redis + `s3rver` environment (see above) —
+it must never be run against your local dev database/Redis/S3. Phase 1 (Identity & Tenancy) and Phase 2 (Core Master
 Data) remain locked from their own verification passes. See
 [`docs/TECHNICAL_ARCHITECTURE.md`](docs/TECHNICAL_ARCHITECTURE.md) §15 for the full phase
 sequence. Phase 4 (Sourcing & Dispatch) is next, pending explicit approval.
