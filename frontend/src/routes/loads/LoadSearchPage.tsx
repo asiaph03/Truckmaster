@@ -36,6 +36,7 @@ const STATUS_OPTIONS = [
   { value: 'IN_TRANSIT', label: 'In Transit' },
   { value: 'DELIVERED', label: 'Delivered' },
   { value: 'CLOSED', label: 'Closed' },
+  { value: 'CANCELLED', label: 'Cancelled' },
 ];
 const RISK_OPTIONS = [
   { value: '', label: 'All risk levels' },

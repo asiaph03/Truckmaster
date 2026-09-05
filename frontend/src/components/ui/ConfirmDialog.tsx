@@ -7,6 +7,8 @@ export interface ConfirmDialogProps {
   title: string;
   message: string;
   confirmLabel: string;
+  /** Cancel Load workflow — lets a dialog whose own confirm action is itself named "Cancel X" avoid an ambiguous "Cancel"/"Cancel" button pair (e.g. "Keep Load" instead). Defaults to ModalFooter's own "Cancel". */
+  cancelLabel?: string;
   confirmVariant?: 'primary' | 'destructive';
   /** When set, the confirm action requires a non-empty reason (e.g. reject-with-reason). */
   requireReason?: boolean;
@@ -25,6 +27,7 @@ export function ConfirmDialog({
   title,
   message,
   confirmLabel,
+  cancelLabel,
   confirmVariant = 'primary',
   requireReason = false,
   loading = false,
@@ -45,6 +48,7 @@ export function ConfirmDialog({
           onCancel={onCancel}
           onConfirm={() => canConfirm && onConfirm(requireReason ? reason : undefined)}
           confirmLabel={confirmLabel}
+          {...(cancelLabel ? { cancelLabel } : {})}
           confirmVariant={confirmVariant}
           loading={loading}
         />

@@ -19,6 +19,7 @@ import { CreateLoadDto } from '../dto/create-load.dto';
 import { UpdateLoadReferenceNumbersDto } from '../dto/update-load-reference-numbers.dto';
 import { AddChargeDto } from '../dto/add-charge.dto';
 import { LinkReturnLoadDto } from '../dto/link-return-load.dto';
+import { CancelLoadDto } from '../dto/cancel-load.dto';
 import {
   BusinessRuleError,
   InvalidTransitionError,
@@ -71,6 +72,22 @@ export interface CreateFromBookingParams {
   actingUserId: string;
   auditAction: string;
 }
+
+/**
+ * Cancel Load workflow — v1 scope only allows cancellation before a Load is
+ * physically moving. `DISPATCHED`/`PICKUP`/`IN_TRANSIT` (mid-transit) are
+ * deliberately excluded — aborting a Load already underway is a materially
+ * different problem (carrier relationship, physical freight) with no
+ * existing precedent in this codebase, left for a future decision.
+ * `DELIVERED`/`CLOSED`/`CANCELLED` are excluded because there's nothing left
+ * to cancel.
+ */
+const CANCELLABLE_STATUSES: Load['status'][] = [
+  'BOOKED',
+  'CARRIER_SOURCING',
+  'CARRIER_ASSIGNED',
+  'RATE_CONFIRMATION',
+];
 
 @Injectable()
 export class LoadService {
@@ -635,6 +652,60 @@ export class LoadService {
       });
 
       return { load: updated, checklistSnapshot };
+    });
+  }
+
+  /**
+   * Cancel Load workflow. Only allowed from `CANCELLABLE_STATUSES` (pre-
+   * dispatch) — anything else (mid-transit, DELIVERED, CLOSED, or an
+   * already-CANCELLED Load) is a clean `InvalidTransitionError`, never a
+   * raw constraint failure, and this same guard is what makes a double-
+   * cancel attempt fail safely (an already-CANCELLED Load is not in
+   * `CANCELLABLE_STATUSES`, so the second call rejects before writing
+   * anything, and no second audit entry is ever created). Mirrors
+   * `closeLoad` exactly: `cancelledAt`/`cancelledByUserId` alongside the
+   * status write, in the same transaction as the audit entry. The reason
+   * is intentionally not a Load column — it lives only in the audit
+   * entry's `reason` field (`AuditService.record`), matching
+   * `carrierRejected`'s own convention. Nothing else is touched: Stops,
+   * CheckCalls, Documents, ChargeLineItems, CarrierPayments, and every
+   * carrier/driver/dispatcher field are preserved exactly as they were —
+   * cancellation stops the pipeline, it never rewrites history.
+   */
+  async cancelLoad(
+    organizationId: string,
+    loadId: string,
+    dto: CancelLoadDto,
+    actingUserId: string,
+  ): Promise<Load> {
+    return this.prisma.withTenantTransaction(organizationId, async (tx) => {
+      const load = await tx.load.findFirst({ where: { id: loadId, organizationId } });
+      if (!load) throw new NotFoundError('Load not found.');
+      if (!CANCELLABLE_STATUSES.includes(load.status)) {
+        throw new InvalidTransitionError(
+          load.status === 'CANCELLED'
+            ? 'This Load has already been Cancelled.'
+            : 'This Load can no longer be cancelled — it has already been dispatched or completed.',
+        );
+      }
+
+      const updated = await tx.load.update({
+        where: { id: loadId },
+        data: { status: 'CANCELLED', cancelledAt: new Date(), cancelledByUserId: actingUserId },
+      });
+
+      await this.audit.record(tx, {
+        organizationId,
+        action: 'Load Cancelled',
+        entityType: 'Load',
+        entityId: loadId,
+        reason: dto.reason,
+        previousValue: { status: load.status },
+        newValue: { status: 'CANCELLED', reason: dto.reason },
+        actorUserId: actingUserId,
+      });
+
+      return updated;
     });
   }
 

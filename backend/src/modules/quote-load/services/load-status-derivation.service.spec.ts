@@ -118,6 +118,15 @@ describe('LoadStatusDerivationService.deriveLoadStatus', () => {
       stops: [stop('PICKUP', 'COMPLETED', 1), stop('DELIVERY', 'COMPLETED', 2)],
       expected: 'CLOSED',
     },
+    // Cancel Load workflow — CANCELLED is terminal, same as CLOSED/DELIVERED:
+    // not in DERIVABLE_STATUSES, so no stop completion state can ever move
+    // it back into an operational status.
+    {
+      name: 'CANCELLED is never re-derived (not in the applicable set) — never reactivated back into an operational status',
+      currentStatus: 'CANCELLED',
+      stops: [stop('PICKUP', 'COMPLETED', 1), stop('DELIVERY', 'COMPLETED', 2)],
+      expected: 'CANCELLED',
+    },
     // --- Return Product feature — Decision 1 (stopPurpose: STANDARD filter) ---
     {
       name: 'a completed return pickup+delivery, appended after an already-DELIVERED standard pair, does not change the outcome (DELIVERED)',

@@ -119,6 +119,7 @@ model User {
   loadsCreated              Load[]  @relation("LoadCreatedBy")
   loadsAssignedAsDispatcher Load[]  @relation("LoadAssignedDispatcher")
   loadsClosed               Load[]  @relation("LoadClosedBy")
+  loadsCancelled            Load[]  @relation("LoadCancelledBy")
 
   // Phase 4 reverse relations
   sourcingAttemptsLogged CarrierSourcingAttempt[] @relation("SourcingAttemptLoggedBy")
@@ -1005,6 +1006,10 @@ enum LoadStatus {
   IN_TRANSIT
   DELIVERED
   CLOSED
+  /// Cancel Load workflow — terminal, only reachable from BOOKED,
+  /// CARRIER_SOURCING, CARRIER_ASSIGNED, or RATE_CONFIRMATION (v1 scope
+  /// excludes mid-transit cancellation). No transition out of it exists.
+  CANCELLED
 }
 
 /// Persisted derived field (Workflow 7 §7.2) — Phase 5 owns the
@@ -1207,6 +1212,14 @@ model Load {
   closedAt       DateTime? @map("closed_at")
   closedByUserId String?   @map("closed_by_user_id") @db.Uuid
   closedBy       User?     @relation("LoadClosedBy", fields: [closedByUserId], references: [id])
+
+  /// Cancel Load workflow — mirrors closedAt/closedByUserId exactly. The
+  /// cancellation reason itself is not a column here — it's stored only in
+  /// the AuditLog entry (`AuditService.record`'s `reason` field), matching
+  /// how CarrierRejected's reason is recorded.
+  cancelledAt       DateTime? @map("cancelled_at")
+  cancelledByUserId String?   @map("cancelled_by_user_id") @db.Uuid
+  cancelledBy       User?     @relation("LoadCancelledBy", fields: [cancelledByUserId], references: [id])
 
   createdByUserId String @map("created_by_user_id") @db.Uuid
   createdBy       User   @relation("LoadCreatedBy", fields: [createdByUserId], references: [id])

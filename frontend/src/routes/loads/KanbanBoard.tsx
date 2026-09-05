@@ -21,17 +21,26 @@ const COLUMNS: { status: LoadStatus; label: string }[] = [
   { status: 'DELIVERED', label: 'Delivered' },
 ];
 const CLOSED_COLUMN: { status: LoadStatus; label: string } = { status: 'CLOSED', label: 'Closed' };
+// Cancel Load workflow — mirrors CLOSED_COLUMN exactly: a separate,
+// opt-in column behind its own "Show Cancelled" toggle, never part of the
+// default board.
+const CANCELLED_COLUMN: { status: LoadStatus; label: string } = {
+  status: 'CANCELLED',
+  label: 'Cancelled',
+};
 
 // UI_UX_DESIGN.md §5.4.2 drag table — cards in these statuses have no
 // valid manual transition out of them (derived-status columns, or
 // DELIVERED which only leaves via the full Load Closing checklist, not
-// a drag), so they are never drag-sources at all.
+// a drag), so they are never drag-sources at all. CANCELLED is terminal
+// the same way CLOSED is — added here for the same reason.
 const NOT_DRAG_SOURCES = new Set<LoadStatus>([
   'DISPATCHED',
   'PICKUP',
   'IN_TRANSIT',
   'DELIVERED',
   'CLOSED',
+  'CANCELLED',
 ]);
 const SYSTEM_DERIVED_TARGETS = new Set<LoadStatus>(['PICKUP', 'IN_TRANSIT', 'DELIVERED']);
 
@@ -75,6 +84,7 @@ export function KanbanBoard({
   loads,
   canManage,
   showClosed,
+  showCancelled,
   customerName,
   carrierName,
   dispatcherInitial,
@@ -84,6 +94,7 @@ export function KanbanBoard({
   loads: LoadSummary[];
   canManage: boolean;
   showClosed: boolean;
+  showCancelled: boolean;
   customerName: (id: string) => string;
   carrierName: (id?: string) => string;
   dispatcherInitial: (id?: string) => string;
@@ -98,7 +109,11 @@ export function KanbanBoard({
   const [dispatchingFor, setDispatchingFor] = useState<LoadSummary | null>(null);
   const [rejectingFor, setRejectingFor] = useState<string | null>(null);
 
-  const columns = showClosed ? [...COLUMNS, CLOSED_COLUMN] : COLUMNS;
+  const columns = [
+    ...COLUMNS,
+    ...(showClosed ? [CLOSED_COLUMN] : []),
+    ...(showCancelled ? [CANCELLED_COLUMN] : []),
+  ];
   const draggedValidTargets = draggedLoad ? new Set(validTargets(draggedLoad.status)) : null;
 
   const byColumn = useMemo(() => {
@@ -106,6 +121,7 @@ export function KanbanBoard({
     for (const col of columns) map.set(col.status, []);
     for (const load of loads) {
       if (!showClosed && load.status === 'CLOSED') continue;
+      if (!showCancelled && load.status === 'CANCELLED') continue;
       map.get(load.status)?.push(load);
     }
     for (const [, list] of map) {
@@ -120,7 +136,7 @@ export function KanbanBoard({
     }
     return map;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loads, showClosed]);
+  }, [loads, showClosed, showCancelled]);
 
   async function beginSourcingDirect(loadId: string) {
     try {
@@ -145,6 +161,10 @@ export function KanbanBoard({
       toast.danger(
         'Closing requires the full readiness-checklist review on the Load Closing screen.',
       );
+      return;
+    }
+    if (targetStatus === 'CANCELLED') {
+      toast.danger('Cancelling requires the Cancel Load action on the Load Detail page.');
       return;
     }
     if (load.status === 'BOOKED' && targetStatus === 'CARRIER_SOURCING') {

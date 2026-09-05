@@ -33,6 +33,7 @@ import { LinkReturnLoadDto } from '../dto/link-return-load.dto';
 import { LogCheckCallDto } from '../dto/log-check-call.dto';
 import { SetRiskStatusDto } from '../dto/set-risk-status.dto';
 import { AssignDispatcherDto } from '../dto/assign-dispatcher.dto';
+import { CancelLoadDto } from '../dto/cancel-load.dto';
 import { AddChargeDto } from '../dto/add-charge.dto';
 import { CreateInternalNoteDto } from '../dto/create-internal-note.dto';
 import { CreateCommunicationActivityDto } from '../dto/create-communication-activity.dto';
@@ -567,6 +568,17 @@ export class LoadController {
     const organizationId = RequestContextStore.requireOrganizationId();
     const actingUserId = RequestContextStore.requireUserId();
     return this.dispatchTracking.assignDispatcher(organizationId, id, dto, actingUserId);
+  }
+
+  // Cancel Load workflow — same SOURCING_DISPATCH_ROLES as every other
+  // operational status-change route above (no new permission set).
+  @Post(':id/cancel')
+  @Roles(...SOURCING_DISPATCH_ROLES)
+  @HttpCode(200)
+  cancelLoad(@Param('id', ParseUUIDPipe) id: string, @Body() dto: CancelLoadDto) {
+    const organizationId = RequestContextStore.requireOrganizationId();
+    const actingUserId = RequestContextStore.requireUserId();
+    return this.loadService.cancelLoad(organizationId, id, dto, actingUserId);
   }
 
   // --- Phase 6: Financials (Charges D9, Load Closing Workflow 10) ------

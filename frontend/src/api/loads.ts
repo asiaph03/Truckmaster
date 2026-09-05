@@ -11,7 +11,8 @@ export type LoadStatus =
   | 'PICKUP'
   | 'IN_TRANSIT'
   | 'DELIVERED'
-  | 'CLOSED';
+  | 'CLOSED'
+  | 'CANCELLED';
 
 export type StopType = 'PICKUP' | 'DELIVERY' | 'OTHER';
 export type StopStatus = 'PENDING' | 'ARRIVED' | 'COMPLETED';
@@ -151,6 +152,8 @@ export interface Load {
   invoiced: boolean;
   closedAt?: string;
   closedByUserId?: string;
+  cancelledAt?: string;
+  cancelledByUserId?: string;
   createdByUserId: string;
   createdAt: string;
   updatedAt: string;
@@ -316,6 +319,10 @@ export interface AssignCarrierRequest {
 }
 
 export interface CarrierRejectedRequest {
+  reason: string;
+}
+
+export interface CancelLoadRequest {
   reason: string;
 }
 
@@ -627,4 +634,7 @@ export const loadsApi = {
   /** Frontend Phase 4 gap-fix — read-only preview of the same checklist `close` computes. */
   getClosingChecklist: (id: string) =>
     apiRequest<{ checklist: ClosingChecklistItem[] }>(`/loads/${id}/closing-checklist`),
+
+  cancelLoad: (id: string, body: CancelLoadRequest) =>
+    apiRequest<Load>(`/loads/${id}/cancel`, { method: 'POST', body }),
 };

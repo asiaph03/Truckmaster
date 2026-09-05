@@ -113,6 +113,19 @@ describe('CarrierPaymentService.create — Workflow 9 §9.1-9.2', () => {
     ).rejects.toThrow(BusinessRuleError);
   });
 
+  // Cancel Load workflow regression — CANCELLED is not in the ['DELIVERED',
+  // 'CLOSED'] eligibility list, so a cancelled Load is never treated as
+  // operationally eligible for a Carrier Payment.
+  it('rejects a CANCELLED Load — never treated as operationally eligible', async () => {
+    const { service } = buildService({
+      load: { id: LOAD_ID, status: 'CANCELLED', assignedCarrierId: 'carrier-1' },
+    });
+
+    await expect(
+      service.create(ORG_ID, LOAD_ID, { paymentType: 'DEPOSIT', amount: '500.00' }, PREPARER_ID),
+    ).rejects.toThrow(BusinessRuleError);
+  });
+
   it("Accessorial Charges regression — never persists a computed value into `amount`; the preparer's typed amount is stored verbatim", async () => {
     const { service, tx } = buildService({
       load: {

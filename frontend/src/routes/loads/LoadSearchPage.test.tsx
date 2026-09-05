@@ -151,6 +151,27 @@ describe('LoadSearchPage — Frontend Phase 13', () => {
     expect(screen.getAllByText('—').length).toBeGreaterThan(0);
   });
 
+  // Cancel Load workflow — Load Search must be able to explicitly filter by
+  // CANCELLED, unlike the Dispatch Board's default view which excludes it.
+  it('the Status filter offers a Cancelled option and sends status=CANCELLED to the server', async () => {
+    const receivedUrls: string[] = [];
+    mockBaseHandlers(({ request }) => {
+      receivedUrls.push(request.url);
+      return HttpResponse.json({ items: [], total: 0, page: 1, pageSize: 50 });
+    });
+
+    renderPage();
+    await waitFor(() => expect(receivedUrls.length).toBeGreaterThan(0));
+
+    fireEvent.change(screen.getByDisplayValue('All statuses'), {
+      target: { value: 'CANCELLED' },
+    });
+
+    await waitFor(() =>
+      expect(receivedUrls.some((u) => u.includes('status=CANCELLED'))).toBe(true),
+    );
+  });
+
   it('Export CSV calls the export endpoint with the current filters', async () => {
     mockBaseHandlers(() =>
       HttpResponse.json({ items: [LOAD_ROW], total: 1, page: 1, pageSize: 50 }),

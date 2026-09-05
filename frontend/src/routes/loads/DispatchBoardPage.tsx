@@ -49,7 +49,7 @@ type BoardView = 'table' | 'kanban' | 'calendar';
 
 const EQUIPMENT_OPTIONS = EQUIPMENT_TYPES.map((t) => ({ value: t, label: t.replace('_', ' ') }));
 const STATUS_OPTIONS = [
-  { value: '', label: 'All (excl. Closed)' },
+  { value: '', label: 'All (excl. Closed & Cancelled)' },
   { value: 'BOOKED', label: 'Booked' },
   { value: 'CARRIER_SOURCING', label: 'Carrier Sourcing' },
   { value: 'CARRIER_ASSIGNED', label: 'Carrier Assigned' },
@@ -59,6 +59,7 @@ const STATUS_OPTIONS = [
   { value: 'IN_TRANSIT', label: 'In Transit' },
   { value: 'DELIVERED', label: 'Delivered' },
   { value: 'CLOSED', label: 'Closed' },
+  { value: 'CANCELLED', label: 'Cancelled' },
 ];
 
 type QuickFilter = 'pickups4h' | 'deliveries4h' | 'today' | 'overdue' | null;
@@ -125,6 +126,7 @@ export function DispatchBoardPage() {
   const [search, setSearch] = useState('');
   const [quickFilter, setQuickFilter] = useState<QuickFilter>(null);
   const [showClosed, setShowClosed] = useState(false);
+  const [showCancelled, setShowCancelled] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [drawerLoad, setDrawerLoad] = useState<LoadSummary | null>(null);
   const [newLoadModalOpen, setNewLoadModalOpen] = useState(false);
@@ -249,7 +251,7 @@ export function DispatchBoardPage() {
 
   const filtered = useMemo(() => {
     let rows = loads;
-    if (!status) rows = rows.filter((l) => l.status !== 'CLOSED');
+    if (!status) rows = rows.filter((l) => l.status !== 'CLOSED' && l.status !== 'CANCELLED');
     if (search.trim()) {
       const q = search.trim().toLowerCase();
       rows = rows.filter((l) => matchesSearch(l, q));
@@ -271,11 +273,13 @@ export function DispatchBoardPage() {
           (pickup &&
             new Date(pickup).getTime() < now &&
             l.status !== 'DELIVERED' &&
-            l.status !== 'CLOSED') ||
+            l.status !== 'CLOSED' &&
+            l.status !== 'CANCELLED') ||
           (delivery &&
             new Date(delivery).getTime() < now &&
             l.status !== 'DELIVERED' &&
-            l.status !== 'CLOSED')
+            l.status !== 'CLOSED' &&
+            l.status !== 'CANCELLED')
         );
       });
     return rows;
@@ -292,16 +296,18 @@ export function DispatchBoardPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loads, search, customers]);
 
-  // Calendar has no "Show Closed" toggle of its own (§5.4.3 lists no such
-  // control) — Closed loads stay reachable via Load Search's "all loads
-  // including closed" escape hatch (Frontend Phase 13), matching Table
-  // View's own default-excludes-Closed behavior rather than inventing a
-  // new toggle.
+  // Calendar has no "Show Closed"/"Show Cancelled" toggle of its own
+  // (§5.4.3 lists no such control) — Closed/Cancelled loads stay reachable
+  // via Load Search's "all loads including closed" escape hatch (Frontend
+  // Phase 13), matching Table View's own default-excludes-Closed behavior
+  // rather than inventing a new toggle. Cancelled loads are excluded here
+  // for the same reason: neither is "active operational work" a calendar
+  // of pickups/deliveries should surface.
   const calendarFiltered = useMemo(() => {
-    const notClosed = loads.filter((l) => l.status !== 'CLOSED');
-    if (!search.trim()) return notClosed;
+    const active = loads.filter((l) => l.status !== 'CLOSED' && l.status !== 'CANCELLED');
+    if (!search.trim()) return active;
     const q = search.trim().toLowerCase();
-    return notClosed.filter((l) => matchesSearch(l, q));
+    return active.filter((l) => matchesSearch(l, q));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loads, search, customers]);
 
@@ -426,6 +432,13 @@ export function DispatchBoardPage() {
             onChange={(e) => setShowClosed(e.target.checked)}
           />
         ) : null}
+        {view === 'kanban' ? (
+          <Toggle
+            label="Show Cancelled"
+            checked={showCancelled}
+            onChange={(e) => setShowCancelled(e.target.checked)}
+          />
+        ) : null}
       </div>
 
       {view === 'table' && selected.size > 0 ? (
@@ -479,6 +492,7 @@ export function DispatchBoardPage() {
           loads={kanbanFiltered}
           canManage={canManage}
           showClosed={showClosed}
+          showCancelled={showCancelled}
           customerName={customerName}
           carrierName={carrierName}
           dispatcherInitial={dispatcherName}

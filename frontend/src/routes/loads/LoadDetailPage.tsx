@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { loadsApi } from '../../api';
 import { ApiError } from '../../api/errors';
 import { getStatusBadgeColor } from '../../components/ui/statusBadgeMap';
-import { Badge, Breadcrumb, Button, Stepper, Tabs } from '../../components/ui';
+import { Badge, Breadcrumb, Button, ConfirmDialog, Stepper, Tabs } from '../../components/ui';
 import { useToast } from '../../components/ui/toastStore';
 import { usePermissions } from '../../hooks/usePermissions';
 import { AssignCarrierModal } from './modals/AssignCarrierModal';
@@ -33,6 +33,16 @@ const STEPS = [
 
 const TRACKING_STATUSES = ['DISPATCHED', 'PICKUP', 'IN_TRANSIT'] as const;
 
+// Cancel Load workflow — v1 scope only allows cancellation before a Load is
+// physically moving; mirrors the backend's own CANCELLABLE_STATUSES guard
+// exactly (LoadService.cancelLoad). Mid-transit cancellation is out of scope.
+const CANCELLABLE_STATUSES = [
+  'BOOKED',
+  'CARRIER_SOURCING',
+  'CARRIER_ASSIGNED',
+  'RATE_CONFIRMATION',
+] as const;
+
 /**
  * UI_UX_DESIGN.md §5.4.4 Load Detail. Phase 3 shipped Overview, Stops &
  * Tracking, Carrier & Dispatch, Documents; Phase 4 adds the Financials
@@ -58,6 +68,8 @@ export function LoadDetailPage() {
   const [dispatching, setDispatching] = useState(false);
   const [beginningSourcing, setBeginningSourcing] = useState(false);
   const [recordingStop, setRecordingStop] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
+  const [isCancelling, setIsCancelling] = useState(false);
 
   const { data: load, isLoading } = useQuery({
     queryKey: ['loads', id],
@@ -108,6 +120,20 @@ export function LoadDetailPage() {
       toast.danger(error instanceof ApiError ? error.message : 'Something went wrong.');
     } finally {
       setRecordingStop(false);
+    }
+  }
+
+  async function onConfirmCancel(reason?: string) {
+    setIsCancelling(true);
+    try {
+      await loadsApi.cancelLoad(load!.id, { reason: reason ?? '' });
+      toast.success('Load cancelled.');
+      setCancelling(false);
+      await refetch();
+    } catch (error) {
+      toast.danger(error instanceof ApiError ? error.message : 'Something went wrong.');
+    } finally {
+      setIsCancelling(false);
     }
   }
 
@@ -182,6 +208,11 @@ export function LoadDetailPage() {
                 {nextStop.sequence}
               </Button>
             ) : null}
+            {(CANCELLABLE_STATUSES as readonly string[]).includes(load.status) ? (
+              <Button variant="destructive" onClick={() => setCancelling(true)}>
+                Cancel Load
+              </Button>
+            ) : null}
           </div>
         ) : null}
       </div>
@@ -230,6 +261,19 @@ export function LoadDetailPage() {
           setDispatching(false);
           refetch();
         }}
+      />
+
+      <ConfirmDialog
+        open={cancelling}
+        title="Cancel Load?"
+        message={`This will cancel Load ${load.loadNumber}. This action is permanent and cannot be undone — a cancelled Load cannot be reactivated.`}
+        confirmLabel="Cancel Load"
+        cancelLabel="Keep Load"
+        confirmVariant="destructive"
+        requireReason
+        loading={isCancelling}
+        onCancel={() => setCancelling(false)}
+        onConfirm={onConfirmCancel}
       />
     </div>
   );

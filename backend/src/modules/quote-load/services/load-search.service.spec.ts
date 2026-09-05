@@ -510,7 +510,7 @@ describe('LoadSearchService.exportCsv — Dispatch Board Phase 18 additions', ()
     expect(where).not.toHaveProperty('id');
   });
 
-  it('excludes CLOSED loads when excludeClosed is true and no explicit status is given', async () => {
+  it('excludes CLOSED and CANCELLED loads when excludeClosed is true and no explicit status is given', async () => {
     const loadFindMany = jest.fn().mockResolvedValue([]);
     const { service, tx } = buildService({ loadFindMany });
 
@@ -518,7 +518,7 @@ describe('LoadSearchService.exportCsv — Dispatch Board Phase 18 additions', ()
 
     expect(tx.load.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: expect.objectContaining({ status: { notIn: ['CLOSED'] } }),
+        where: expect.objectContaining({ status: { notIn: ['CLOSED', 'CANCELLED'] } }),
       }),
     );
   });

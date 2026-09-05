@@ -72,6 +72,24 @@ afterAll(() => {
   jest.useRealTimers();
 });
 
+describe('LoadLatenessSweepService — Cancel Load workflow (CANCELLED loads never notify)', () => {
+  it('never queries for a CANCELLED load — the status filter is a fixed operational whitelist that CANCELLED is not part of', async () => {
+    const { service, tx } = buildService({ loads: [] });
+
+    await service.run();
+
+    expect(tx.load.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          status: { in: ['DISPATCHED', 'PICKUP', 'IN_TRANSIT'] },
+        }),
+      }),
+    );
+    const where = (tx.load.findMany as jest.Mock).mock.calls[0][0].where;
+    expect(where.status.in).not.toContain('CANCELLED');
+  });
+});
+
 describe('LoadLatenessSweepService — the one backend-owned "Load Late" notification', () => {
   it('notifies the assigned dispatcher when a PENDING stop has a past appointment', async () => {
     const { service, notifications, audit } = buildService({ loads: [load()] });

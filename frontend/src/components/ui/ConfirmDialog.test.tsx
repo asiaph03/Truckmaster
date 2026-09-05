@@ -73,4 +73,41 @@ describe('ConfirmDialog', () => {
     fireEvent.mouseDown(plainContainer.querySelector('.modal-backdrop')!);
     expect(onCancelPlain).toHaveBeenCalledTimes(1);
   });
+
+  // Cancel Load workflow — cancelLabel lets a dialog whose own confirm
+  // action is itself named "Cancel X" avoid an ambiguous "Cancel"/"Cancel"
+  // button pair.
+  it('defaults the dismiss button to "Cancel" when cancelLabel is not given', () => {
+    render(
+      <ConfirmDialog
+        open
+        title="Deactivate User"
+        message="Are you sure?"
+        confirmLabel="Deactivate User"
+        onCancel={() => {}}
+        onConfirm={() => {}}
+      />,
+    );
+    expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
+  });
+
+  it('uses a custom cancelLabel when given, e.g. "Keep Load" for a Cancel Load dialog', () => {
+    const onCancel = vi.fn();
+    render(
+      <ConfirmDialog
+        open
+        title="Cancel Load?"
+        message="This will cancel the Load."
+        confirmLabel="Cancel Load"
+        cancelLabel="Keep Load"
+        confirmVariant="destructive"
+        requireReason
+        onCancel={onCancel}
+        onConfirm={() => {}}
+      />,
+    );
+    expect(screen.queryByRole('button', { name: 'Cancel' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Keep Load' }));
+    expect(onCancel).toHaveBeenCalledTimes(1);
+  });
 });

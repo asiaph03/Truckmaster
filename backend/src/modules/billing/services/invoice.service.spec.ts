@@ -227,6 +227,17 @@ describe('InvoiceService.create — Workflow 8 §8.1-8.5', () => {
       service.create(ORG_ID, { customerId: CUSTOMER_ID, loadIds: ['load-1'] }, USER_ID),
     ).rejects.toThrow(BusinessRuleError);
   });
+
+  // Cancel Load workflow regression — CANCELLED is not in the ['DELIVERED',
+  // 'CLOSED'] eligibility list, so a cancelled Load is never treated as
+  // operationally eligible for invoicing.
+  it('rejects a CANCELLED Load — never treated as operationally eligible for invoicing', async () => {
+    const { service } = buildService({ loads: [{ ...LOAD_1, status: 'CANCELLED' }] });
+
+    await expect(
+      service.create(ORG_ID, { customerId: CUSTOMER_ID, loadIds: ['load-1'] }, USER_ID),
+    ).rejects.toThrow(BusinessRuleError);
+  });
 });
 
 describe('InvoiceService.send — Workflow 8 §8.6/§8.8', () => {

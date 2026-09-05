@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { http, HttpResponse } from 'msw';
 import { server } from '../../test/mswServer';
 import { useSessionStore } from '../../auth/session-store';
+import { ToastViewport } from '../../components/ui';
 import { DispatchBoardPage } from './DispatchBoardPage';
 
 function load(overrides: Record<string, unknown> = {}) {
@@ -45,6 +46,7 @@ function renderPage() {
       <MemoryRouter>
         <DispatchBoardPage />
       </MemoryRouter>
+      <ToastViewport />
     </QueryClientProvider>,
   );
 }
@@ -168,7 +170,7 @@ describe('DispatchBoardPage — Frontend Phase 18 (bulk Export + bulk Assign Car
     clickSpy.mockRestore();
   });
 
-  it('the page-level Export sends excludeClosed=true in the default "All (excl. Closed)" state', async () => {
+  it('the page-level Export sends excludeClosed=true in the default "All (excl. Closed & Cancelled)" state', async () => {
     mockBaseHandlers([load({ id: 'load-1' })]);
     let exportUrl: string | undefined;
     server.use(
@@ -216,7 +218,7 @@ describe('DispatchBoardPage — Frontend Phase 18 (bulk Export + bulk Assign Car
     renderPage();
     await waitFor(() => expect(screen.getByText('LOAD-000001')).toBeInTheDocument());
 
-    fireEvent.change(screen.getByDisplayValue('All (excl. Closed)'), {
+    fireEvent.change(screen.getByDisplayValue('All (excl. Closed & Cancelled)'), {
       target: { value: 'CLOSED' },
     });
     await waitFor(() => expect(screen.getByRole('button', { name: 'Export' })).not.toBeDisabled());
@@ -564,5 +566,84 @@ describe('DispatchBoardPage — Dispatch Board Driver visibility', () => {
       expect(screen.getByText('LOAD-000060')).toBeInTheDocument();
       expect(screen.queryByText('LOAD-000070')).not.toBeInTheDocument();
     });
+  });
+});
+
+describe('DispatchBoardPage — Cancel Load workflow', () => {
+  beforeEach(() => {
+    useSessionStore.setState({ roles: ['ADMIN'] });
+  });
+
+  const ACTIVE_LOAD = load({ id: 'load-active', loadNumber: 'LOAD-000090', status: 'BOOKED' });
+  const CANCELLED_LOAD = load({
+    id: 'load-cancelled',
+    loadNumber: 'LOAD-000091',
+    status: 'CANCELLED',
+  });
+
+  it('Table View default excludes CANCELLED loads, alongside CLOSED', async () => {
+    mockBaseHandlers([ACTIVE_LOAD, CANCELLED_LOAD]);
+    renderPage();
+    await waitFor(() => expect(screen.getByText('LOAD-000090')).toBeInTheDocument());
+
+    expect(screen.queryByText('LOAD-000091')).not.toBeInTheDocument();
+  });
+
+  it('the Status filter offers a Cancelled option, and selecting it shows only CANCELLED loads', async () => {
+    mockBaseHandlers([ACTIVE_LOAD, CANCELLED_LOAD]);
+    renderPage();
+    await waitFor(() => expect(screen.getByText('LOAD-000090')).toBeInTheDocument());
+
+    fireEvent.change(screen.getByDisplayValue('All (excl. Closed & Cancelled)'), {
+      target: { value: 'CANCELLED' },
+    });
+
+    await waitFor(() => expect(screen.getByText('LOAD-000091')).toBeInTheDocument());
+  });
+
+  it('Kanban hides Cancelled loads by default and reveals them via a "Show Cancelled" toggle', async () => {
+    mockBaseHandlers([ACTIVE_LOAD, CANCELLED_LOAD]);
+    renderPage();
+    await waitFor(() => expect(screen.getByText('LOAD-000090')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByText('Kanban'));
+    expect(screen.queryByText('LOAD-000091')).not.toBeInTheDocument();
+    expect(screen.queryByText('Cancelled')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByLabelText('Show Cancelled'));
+
+    await waitFor(() => expect(screen.getByText('LOAD-000091')).toBeInTheDocument());
+  });
+
+  it('dropping a dragged card onto the Cancelled column never calls a transition API — Cancel Load only happens from Load Detail', async () => {
+    let transitionCalled = false;
+    mockBaseHandlers([ACTIVE_LOAD, CANCELLED_LOAD]);
+    server.use(
+      http.post('/api/v1/loads/:id/begin-sourcing', () => {
+        transitionCalled = true;
+        return HttpResponse.json(load({ id: 'load-active', status: 'CARRIER_SOURCING' }));
+      }),
+    );
+    renderPage();
+    await waitFor(() => expect(screen.getByText('LOAD-000090')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByText('Kanban'));
+    fireEvent.click(screen.getByLabelText('Show Cancelled'));
+    await waitFor(() => expect(screen.getByText('LOAD-000091')).toBeInTheDocument());
+
+    const draggedCard = screen.getByText('LOAD-000090').closest('.kanban-card') as HTMLElement;
+    const cancelledColumn = screen
+      .getByText('LOAD-000091')
+      .closest('.kanban-column') as HTMLElement;
+
+    fireEvent.dragStart(draggedCard);
+    fireEvent.drop(cancelledColumn);
+
+    expect(
+      await screen.findByText(
+        'Cancelling requires the Cancel Load action on the Load Detail page.',
+      ),
+    ).toBeInTheDocument();
+    expect(transitionCalled).toBe(false);
   });
 });

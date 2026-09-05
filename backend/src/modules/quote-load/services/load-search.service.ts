@@ -39,11 +39,12 @@ export interface LoadSearchFilters {
   ids?: string[];
   /**
    * Frontend Phase 18 — export-only: mirrors Dispatch Board Table View's
-   * own default client-side rule (`status !== 'CLOSED'`) for the
+   * own default client-side rule (`status !== 'CLOSED' && status !==
+   * 'CANCELLED'`, updated by the Cancel Load workflow) for the
    * page-level filtered Export button, which has no other way to
-   * express "not CLOSED" through the single-value `status` filter above.
-   * Ignored whenever `status` is explicitly set — an explicit status
-   * always wins, never combined with this.
+   * express "not Closed/Cancelled" through the single-value `status`
+   * filter above. Ignored whenever `status` is explicitly set — an
+   * explicit status always wins, never combined with this.
    */
   excludeClosed?: boolean;
 }
@@ -138,7 +139,7 @@ export class LoadSearchService {
       ...(filters.status
         ? { status: filters.status as Load['status'] }
         : filters.excludeClosed
-          ? { status: { notIn: ['CLOSED'] as Load['status'][] } }
+          ? { status: { notIn: ['CLOSED', 'CANCELLED'] as Load['status'][] } }
           : {}),
       ...(filters.customerId ? { customerId: filters.customerId } : {}),
       ...(filters.carrierId ? { assignedCarrierId: filters.carrierId } : {}),

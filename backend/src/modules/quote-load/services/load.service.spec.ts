@@ -1,6 +1,10 @@
 import { Prisma } from '@prisma/client';
 import { LoadService } from './load.service';
-import { BusinessRuleError, NotFoundError } from '../../../common/errors/app-error';
+import {
+  BusinessRuleError,
+  InvalidTransitionError,
+  NotFoundError,
+} from '../../../common/errors/app-error';
 
 const ORG_ID = 'org-1';
 const CUSTOMER_ID = 'customer-1';
@@ -772,6 +776,102 @@ describe('LoadService.closeLoad — Workflow 10', () => {
     tx.load.findFirst.mockResolvedValue(null);
 
     await expect(service.closeLoad(ORG_ID, 'nonexistent', USER_ID)).rejects.toThrow(NotFoundError);
+  });
+});
+
+describe('LoadService.cancelLoad — Cancel Load workflow', () => {
+  const CANCEL_DTO = { reason: 'Customer cancelled the order.' };
+
+  // 1-4: cancellation succeeds from each of the four pre-dispatch statuses.
+  it.each(['BOOKED', 'CARRIER_SOURCING', 'CARRIER_ASSIGNED', 'RATE_CONFIRMATION'] as const)(
+    'cancels a Load from %s, setting status/cancelledAt/cancelledByUserId and recording the audit entry',
+    async (status) => {
+      const { service, tx, audit } = buildService({});
+      tx.load.findFirst.mockResolvedValue({ id: 'load-1', status });
+
+      const result = await service.cancelLoad(ORG_ID, 'load-1', CANCEL_DTO, USER_ID);
+
+      expect(result.status).toBe('CANCELLED');
+      expect(result.cancelledAt).toBeInstanceOf(Date);
+      expect(result.cancelledByUserId).toBe(USER_ID);
+      expect(tx.load.update).toHaveBeenCalledWith({
+        where: { id: 'load-1' },
+        data: {
+          status: 'CANCELLED',
+          cancelledAt: expect.any(Date),
+          cancelledByUserId: USER_ID,
+        },
+      });
+      expect(audit.record).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          action: 'Load Cancelled',
+          entityType: 'Load',
+          entityId: 'load-1',
+          reason: CANCEL_DTO.reason,
+          previousValue: { status },
+          newValue: { status: 'CANCELLED', reason: CANCEL_DTO.reason },
+          actorUserId: USER_ID,
+        }),
+      );
+    },
+  );
+
+  // 5-10: cancellation is rejected — a clean InvalidTransitionError, never
+  // a raw crash — from every status that isn't pre-dispatch, including an
+  // already-CANCELLED Load (idempotency: the second cancel attempt fails
+  // cleanly and writes no second audit entry, since it never reaches
+  // `tx.load.update`/`audit.record` at all).
+  it.each(['DISPATCHED', 'PICKUP', 'IN_TRANSIT', 'DELIVERED', 'CLOSED', 'CANCELLED'] as const)(
+    'rejects cancelling a Load that is already %s',
+    async (status) => {
+      const { service, tx, audit } = buildService({});
+      tx.load.findFirst.mockResolvedValue({ id: 'load-1', status });
+
+      await expect(service.cancelLoad(ORG_ID, 'load-1', CANCEL_DTO, USER_ID)).rejects.toThrow(
+        InvalidTransitionError,
+      );
+      expect(tx.load.update).not.toHaveBeenCalled();
+      expect(audit.record).not.toHaveBeenCalled();
+    },
+  );
+
+  it('throws NotFoundError for a nonexistent Load', async () => {
+    const { service, tx } = buildService({});
+    tx.load.findFirst.mockResolvedValue(null);
+
+    await expect(service.cancelLoad(ORG_ID, 'nonexistent', CANCEL_DTO, USER_ID)).rejects.toThrow(
+      NotFoundError,
+    );
+  });
+
+  // Cross-tenant isolation — a Load id that doesn't belong to the acting
+  // organization resolves to nothing via the tenant-scoped `where`, so it's
+  // indistinguishable from "not found" (never a raw cross-tenant leak).
+  it('rejects cancelling a Load outside the acting organization (tenant isolation)', async () => {
+    const { service, tx } = buildService({});
+    tx.load.findFirst.mockResolvedValue(null);
+
+    await expect(service.cancelLoad('org-OTHER', 'load-1', CANCEL_DTO, USER_ID)).rejects.toThrow(
+      NotFoundError,
+    );
+  });
+
+  // Preserves all operational/financial history: the only write is the
+  // single `tx.load.update` call asserted above (status/cancelledAt/
+  // cancelledByUserId, nothing else). This harness's `tx` mock has no
+  // stop/checkCall/dispatchRecord/carrier/driver mutation methods defined
+  // at all — if `cancelLoad` ever touched any of those tables, every test
+  // in this block would fail with a runtime error, not silently pass.
+  // `chargeLineItem` IS present on this harness (used by `addCharge`
+  // elsewhere), so it gets an explicit assertion too.
+  it('never creates a ChargeLineItem or touches any table beyond the Load row itself', async () => {
+    const { service, tx } = buildService({});
+    tx.load.findFirst.mockResolvedValue({ id: 'load-1', status: 'BOOKED' });
+
+    await service.cancelLoad(ORG_ID, 'load-1', CANCEL_DTO, USER_ID);
+
+    expect(tx.chargeLineItem.create).not.toHaveBeenCalled();
   });
 });
 
