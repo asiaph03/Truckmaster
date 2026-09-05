@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { Carrier } from '@prisma/client';
+import { Carrier, Prisma } from '@prisma/client';
 import { PrismaService } from '../../../common/prisma/prisma.service';
 import { AuditService } from '../../../common/audit/audit.service';
 import { CarrierEligibilityService } from './carrier-eligibility.service';
@@ -13,6 +13,7 @@ import { UpdateFactoringInfoDto } from '../dto/update-factoring-info.dto';
 import { AddDriverDto } from '../dto/add-driver.dto';
 import { AddTruckDto } from '../dto/add-truck.dto';
 import { AddTrailerDto } from '../dto/add-trailer.dto';
+import { CarrierLifecycleReasonDto } from '../dto/carrier-lifecycle-reason.dto';
 import {
   BusinessRuleError,
   ConflictError,
@@ -487,6 +488,131 @@ export class CarrierService {
 
       await this.eligibility.recalculate(tx, organizationId, carrierId);
 
+      return updated;
+    });
+  }
+
+  /**
+   * Task #3 — shared guard for blockCarrier/deactivateCarrier/
+   * reactivateCarrier only; activate() above keeps its own separate
+   * PENDING-only + checkActivationReadiness gate untouched. The reason is
+   * trimmed and re-validated as non-empty HERE (not just at the DTO
+   * level) because this codebase has no established DTO-level
+   * whitespace-only-string rejection pattern (CarrierRejectedDto and
+   * every other "reason" DTO use plain @IsString/@MinLength(1) too) — this
+   * is the single, intentional, authoritative guard against a
+   * whitespace-only reason. Only the trimmed reason is ever stored, in
+   * AuditLog.reason (no new Carrier column).
+   */
+  private async transitionStatus(
+    tx: Prisma.TransactionClient,
+    organizationId: string,
+    carrierId: string,
+    allowedFrom: Carrier['status'][],
+    toStatus: Carrier['status'],
+    action: string,
+    invalidTransitionMessage: string,
+    reason: string,
+    actingUserId: string,
+  ): Promise<Carrier> {
+    const carrier = await tx.carrier.findFirst({ where: { id: carrierId, organizationId } });
+    if (!carrier) throw new NotFoundError('Carrier not found.');
+    if (!allowedFrom.includes(carrier.status)) {
+      throw new BusinessRuleError(invalidTransitionMessage);
+    }
+
+    const trimmedReason = reason.trim();
+    if (trimmedReason.length === 0) {
+      throw new BusinessRuleError('A reason is required.');
+    }
+
+    const updated = await tx.carrier.update({
+      where: { id: carrierId },
+      data: { status: toStatus },
+    });
+
+    await this.audit.record(tx, {
+      organizationId,
+      action,
+      entityType: 'Carrier',
+      entityId: carrierId,
+      previousValue: { status: carrier.status },
+      newValue: { status: toStatus },
+      reason: trimmedReason,
+      actorUserId: actingUserId,
+    });
+
+    return updated;
+  }
+
+  /** Task #3 — ACTIVE -> BLOCKED only. Hard-ineligible per CarrierEligibilityService. */
+  async blockCarrier(
+    organizationId: string,
+    carrierId: string,
+    dto: CarrierLifecycleReasonDto,
+    actingUserId: string,
+  ): Promise<Carrier> {
+    return this.prisma.withTenantTransaction(organizationId, async (tx) => {
+      const updated = await this.transitionStatus(
+        tx,
+        organizationId,
+        carrierId,
+        ['ACTIVE'],
+        'BLOCKED',
+        'Carrier Blocked',
+        'Only an Active carrier can be blocked.',
+        dto.reason,
+        actingUserId,
+      );
+      await this.eligibility.recalculate(tx, organizationId, carrierId);
+      return updated;
+    });
+  }
+
+  /** Task #3 — ACTIVE -> INACTIVE only. Hard-ineligible per CarrierEligibilityService. */
+  async deactivateCarrier(
+    organizationId: string,
+    carrierId: string,
+    dto: CarrierLifecycleReasonDto,
+    actingUserId: string,
+  ): Promise<Carrier> {
+    return this.prisma.withTenantTransaction(organizationId, async (tx) => {
+      const updated = await this.transitionStatus(
+        tx,
+        organizationId,
+        carrierId,
+        ['ACTIVE'],
+        'INACTIVE',
+        'Carrier Deactivated',
+        'Only an Active carrier can be deactivated.',
+        dto.reason,
+        actingUserId,
+      );
+      await this.eligibility.recalculate(tx, organizationId, carrierId);
+      return updated;
+    });
+  }
+
+  /** Task #3 — BLOCKED or INACTIVE -> ACTIVE only. Never from PENDING (use activate()). */
+  async reactivateCarrier(
+    organizationId: string,
+    carrierId: string,
+    dto: CarrierLifecycleReasonDto,
+    actingUserId: string,
+  ): Promise<Carrier> {
+    return this.prisma.withTenantTransaction(organizationId, async (tx) => {
+      const updated = await this.transitionStatus(
+        tx,
+        organizationId,
+        carrierId,
+        ['BLOCKED', 'INACTIVE'],
+        'ACTIVE',
+        'Carrier Reactivated',
+        'Only a Blocked or Inactive carrier can be reactivated.',
+        dto.reason,
+        actingUserId,
+      );
+      await this.eligibility.recalculate(tx, organizationId, carrierId);
       return updated;
     });
   }

@@ -253,6 +253,31 @@ describe('CarrierSourcingService.assignCarrier — Workflow 5 §5.3/§5.4', () =
     );
   });
 
+  it.each(['BLOCKED', 'INACTIVE'] as const)(
+    'hard-blocks assignment of a carrier whose real status is %s — Task #3',
+    async (status) => {
+      const { service, tx, audit } = buildService({
+        carrier: { id: CARRIER_ID, status },
+        eligibility: { eligible: false, reasons: ['Carrier status is not Active'] },
+      });
+
+      await expect(
+        service.assignCarrier(
+          ORG_ID,
+          LOAD_ID,
+          { carrierId: CARRIER_ID, carrierRate: '2000.00' },
+          USER_ID,
+        ),
+      ).rejects.toThrow(EligibilityError);
+
+      expect(tx.load.update).not.toHaveBeenCalled();
+      expect(audit.record).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ action: 'Carrier Assignment Blocked — Ineligible' }),
+      );
+    },
+  );
+
   it('rejects assignment when the Load is not in CARRIER_SOURCING', async () => {
     const { service } = buildService({ load: { id: LOAD_ID, status: 'BOOKED' } });
 

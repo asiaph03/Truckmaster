@@ -154,6 +154,23 @@ describe('DispatchTrackingService.dispatch — Workflow 6 §6.1', () => {
     expect(carrierEligibility.recalculate).toHaveBeenCalled();
   });
 
+  it.each([
+    ['BLOCKED', ['Carrier is Blocked', 'Carrier status is not Active']],
+    ['INACTIVE', ['Carrier status is not Active']],
+  ] as const)(
+    'blocks dispatch when the assigned carrier has since become %s — Task #3',
+    async (_status, reasons) => {
+      const { service, carrierEligibility } = buildService({
+        eligibility: { eligible: false, reasons: [...reasons] },
+      });
+
+      await expect(service.dispatch(ORG_ID, LOAD_ID, DISPATCH_DTO, USER_ID)).rejects.toThrow(
+        EligibilityError,
+      );
+      expect(carrierEligibility.recalculate).toHaveBeenCalled();
+    },
+  );
+
   it('blocks when no Rate Confirmation is on file', async () => {
     const { service } = buildService({ rateConfirmationDoc: null });
 

@@ -21,6 +21,7 @@ import { UpdateFactoringInfoDto } from '../dto/update-factoring-info.dto';
 import { AddDriverDto } from '../dto/add-driver.dto';
 import { AddTruckDto } from '../dto/add-truck.dto';
 import { AddTrailerDto } from '../dto/add-trailer.dto';
+import { CarrierLifecycleReasonDto } from '../dto/carrier-lifecycle-reason.dto';
 import { RolesGuard } from '../../identity/guards/roles.guard';
 import { Roles } from '../../identity/decorators/roles.decorator';
 import { RequestContextStore } from '../../../common/tenant-context/request-context';
@@ -106,6 +107,34 @@ export class CarrierController {
     const organizationId = RequestContextStore.requireOrganizationId();
     const actingUserId = RequestContextStore.requireUserId();
     return this.carrierService.activate(organizationId, id, actingUserId);
+  }
+
+  /** Task #3 — mirrors activate()'s style, not Customer's generic :id/status. */
+  @Post(':id/block')
+  @Roles(...CREATE_EDIT_ROLES)
+  @HttpCode(200)
+  block(@Param('id', ParseUUIDPipe) id: string, @Body() dto: CarrierLifecycleReasonDto) {
+    const organizationId = RequestContextStore.requireOrganizationId();
+    const actingUserId = RequestContextStore.requireUserId();
+    return this.carrierService.blockCarrier(organizationId, id, dto, actingUserId);
+  }
+
+  @Post(':id/deactivate')
+  @Roles(...CREATE_EDIT_ROLES)
+  @HttpCode(200)
+  deactivate(@Param('id', ParseUUIDPipe) id: string, @Body() dto: CarrierLifecycleReasonDto) {
+    const organizationId = RequestContextStore.requireOrganizationId();
+    const actingUserId = RequestContextStore.requireUserId();
+    return this.carrierService.deactivateCarrier(organizationId, id, dto, actingUserId);
+  }
+
+  @Post(':id/reactivate')
+  @Roles(...CREATE_EDIT_ROLES)
+  @HttpCode(200)
+  reactivate(@Param('id', ParseUUIDPipe) id: string, @Body() dto: CarrierLifecycleReasonDto) {
+    const organizationId = RequestContextStore.requireOrganizationId();
+    const actingUserId = RequestContextStore.requireUserId();
+    return this.carrierService.reactivateCarrier(organizationId, id, dto, actingUserId);
   }
 
   @Post(':id/service-areas')

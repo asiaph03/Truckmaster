@@ -88,6 +88,18 @@ describe('CarrierEligibilityService', () => {
     expect(result.reasons).toContain('Carrier status is not Active');
   });
 
+  it('is ineligible (generic reason only, no Blocked-specific reason) when the carrier is Inactive — Task #3', async () => {
+    const fixture = fullyCompliantFixture();
+    fixture.carrier.status = 'INACTIVE';
+    const { service, tx } = buildService(fixture);
+
+    const result = await service.recalculate(tx as never, ORG_ID, CARRIER_ID);
+
+    expect(result.eligible).toBe(false);
+    expect(result.reasons).toEqual(['Carrier status is not Active']);
+    expect(result.reasons).not.toContain('Carrier is Blocked');
+  });
+
   it('is ineligible when the carrier is Pending (not yet Active)', async () => {
     const fixture = fullyCompliantFixture();
     fixture.carrier.status = 'PENDING';

@@ -10,6 +10,7 @@ import {
   Badge,
   Breadcrumb,
   Button,
+  ConfirmDialog,
   EligibilityBadge,
   Modal,
   ModalFooter,
@@ -66,6 +67,9 @@ export function CarrierDetailPage() {
   const [editing, setEditing] = useState(false);
   const [activating, setActivating] = useState(false);
   const [activateError, setActivateError] = useState<string | null>(null);
+  const [blocking, setBlocking] = useState(false);
+  const [deactivating, setDeactivating] = useState(false);
+  const [reactivating, setReactivating] = useState(false);
 
   const { data: carrier, isLoading } = useQuery({
     queryKey: ['carriers', id],
@@ -102,6 +106,39 @@ export function CarrierDetailPage() {
       }
     } finally {
       setActivating(false);
+    }
+  }
+
+  async function onBlock(reason?: string) {
+    try {
+      await carriersApi.block(id, { reason: reason ?? '' });
+      await queryClient.invalidateQueries({ queryKey: ['carriers', id] });
+      toast.success('Carrier blocked.');
+      setBlocking(false);
+    } catch (error) {
+      toast.danger(error instanceof ApiError ? error.message : 'Something went wrong.');
+    }
+  }
+
+  async function onDeactivate(reason?: string) {
+    try {
+      await carriersApi.deactivate(id, { reason: reason ?? '' });
+      await queryClient.invalidateQueries({ queryKey: ['carriers', id] });
+      toast.success('Carrier deactivated.');
+      setDeactivating(false);
+    } catch (error) {
+      toast.danger(error instanceof ApiError ? error.message : 'Something went wrong.');
+    }
+  }
+
+  async function onReactivate(reason?: string) {
+    try {
+      await carriersApi.reactivate(id, { reason: reason ?? '' });
+      await queryClient.invalidateQueries({ queryKey: ['carriers', id] });
+      toast.success('Carrier reactivated.');
+      setReactivating(false);
+    } catch (error) {
+      toast.danger(error instanceof ApiError ? error.message : 'Something went wrong.');
     }
   }
 
@@ -164,6 +201,20 @@ export function CarrierDetailPage() {
               Activate Carrier
             </Button>
           ) : null}
+          {can('manageCarriers') && carrier.status === 'ACTIVE' ? (
+            <>
+              <Button variant="destructive" onClick={() => setDeactivating(true)}>
+                Deactivate Carrier
+              </Button>
+              <Button variant="destructive" onClick={() => setBlocking(true)}>
+                Block Carrier
+              </Button>
+            </>
+          ) : null}
+          {can('manageCarriers') &&
+          (carrier.status === 'INACTIVE' || carrier.status === 'BLOCKED') ? (
+            <Button onClick={() => setReactivating(true)}>Reactivate Carrier</Button>
+          ) : null}
         </div>
       </div>
 
@@ -215,6 +266,38 @@ export function CarrierDetailPage() {
           <TextField label="Primary Contact Email" {...editForm.register('primaryContactEmail')} />
         </form>
       </Modal>
+
+      <ConfirmDialog
+        open={blocking}
+        title="Block Carrier"
+        message="This carrier will be blocked from new assignment and dispatch until reactivated. Existing assigned loads are not affected."
+        confirmLabel="Block Carrier"
+        confirmVariant="destructive"
+        requireReason
+        onCancel={() => setBlocking(false)}
+        onConfirm={onBlock}
+      />
+
+      <ConfirmDialog
+        open={deactivating}
+        title="Deactivate Carrier"
+        message="This carrier will be marked Inactive and excluded from new assignment and dispatch until reactivated. Existing assigned loads are not affected."
+        confirmLabel="Deactivate Carrier"
+        confirmVariant="destructive"
+        requireReason
+        onCancel={() => setDeactivating(false)}
+        onConfirm={onDeactivate}
+      />
+
+      <ConfirmDialog
+        open={reactivating}
+        title="Reactivate Carrier"
+        message="This carrier will become eligible for new assignment again, subject to its current compliance status."
+        confirmLabel="Reactivate Carrier"
+        requireReason
+        onCancel={() => setReactivating(false)}
+        onConfirm={onReactivate}
+      />
     </div>
   );
 }

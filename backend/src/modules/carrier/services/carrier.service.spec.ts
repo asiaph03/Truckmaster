@@ -3,6 +3,7 @@ import {
   BusinessRuleError,
   ConflictError,
   EligibilityError,
+  NotFoundError,
 } from '../../../common/errors/app-error';
 
 describe('CarrierService', () => {
@@ -24,7 +25,7 @@ describe('CarrierService', () => {
 
   function buildService(opts: {
     duplicateCarrier?: { id: string } | null;
-    carrier?: Record<string, unknown>;
+    carrier?: Record<string, unknown> | null;
     activationReadiness?: { eligible: boolean; reasons: string[] };
   }) {
     const carrierRow = opts.carrier ?? {
@@ -183,6 +184,168 @@ describe('CarrierService', () => {
       expect(eligibility.checkActivationReadiness).not.toHaveBeenCalled();
       expect(result.assignmentEligible).toBe(true);
       expect(result.ineligibilityReasons).toEqual([]);
+    });
+  });
+
+  describe('blockCarrier / deactivateCarrier / reactivateCarrier — Task #3', () => {
+    const REASON_DTO = { reason: 'Insurance lapsed' };
+
+    it('blocks an Active carrier, audits Carrier Blocked with reason, and recalculates eligibility', async () => {
+      const { service, tx, audit, eligibility } = buildService({
+        carrier: { id: 'c1', status: 'ACTIVE' },
+      });
+
+      await service.blockCarrier(ORG_ID, 'c1', REASON_DTO, ACTING_USER);
+
+      expect(tx.carrier.update).toHaveBeenCalledWith({
+        where: { id: 'c1' },
+        data: { status: 'BLOCKED' },
+      });
+      expect(audit.record).toHaveBeenCalledWith(
+        tx,
+        expect.objectContaining({
+          action: 'Carrier Blocked',
+          entityType: 'Carrier',
+          entityId: 'c1',
+          previousValue: { status: 'ACTIVE' },
+          newValue: { status: 'BLOCKED' },
+          reason: 'Insurance lapsed',
+          actorUserId: ACTING_USER,
+        }),
+      );
+      expect(eligibility.recalculate).toHaveBeenCalledWith(tx, ORG_ID, 'c1');
+    });
+
+    it('deactivates an Active carrier, audits Carrier Deactivated with reason, and recalculates eligibility', async () => {
+      const { service, tx, audit, eligibility } = buildService({
+        carrier: { id: 'c1', status: 'ACTIVE' },
+      });
+
+      await service.deactivateCarrier(ORG_ID, 'c1', REASON_DTO, ACTING_USER);
+
+      expect(tx.carrier.update).toHaveBeenCalledWith({
+        where: { id: 'c1' },
+        data: { status: 'INACTIVE' },
+      });
+      expect(audit.record).toHaveBeenCalledWith(
+        tx,
+        expect.objectContaining({
+          action: 'Carrier Deactivated',
+          previousValue: { status: 'ACTIVE' },
+          newValue: { status: 'INACTIVE' },
+          reason: 'Insurance lapsed',
+        }),
+      );
+      expect(eligibility.recalculate).toHaveBeenCalledWith(tx, ORG_ID, 'c1');
+    });
+
+    it('reactivates a Blocked carrier back to Active, audits Carrier Reactivated, and recalculates eligibility', async () => {
+      const { service, tx, audit, eligibility } = buildService({
+        carrier: { id: 'c1', status: 'BLOCKED' },
+      });
+
+      await service.reactivateCarrier(ORG_ID, 'c1', REASON_DTO, ACTING_USER);
+
+      expect(tx.carrier.update).toHaveBeenCalledWith({
+        where: { id: 'c1' },
+        data: { status: 'ACTIVE' },
+      });
+      expect(audit.record).toHaveBeenCalledWith(
+        tx,
+        expect.objectContaining({
+          action: 'Carrier Reactivated',
+          previousValue: { status: 'BLOCKED' },
+          newValue: { status: 'ACTIVE' },
+        }),
+      );
+      expect(eligibility.recalculate).toHaveBeenCalledWith(tx, ORG_ID, 'c1');
+    });
+
+    it('reactivates an Inactive carrier back to Active', async () => {
+      const { service, tx } = buildService({ carrier: { id: 'c1', status: 'INACTIVE' } });
+
+      await service.reactivateCarrier(ORG_ID, 'c1', REASON_DTO, ACTING_USER);
+
+      expect(tx.carrier.update).toHaveBeenCalledWith({
+        where: { id: 'c1' },
+        data: { status: 'ACTIVE' },
+      });
+    });
+
+    it.each([
+      ['blockCarrier', 'PENDING'],
+      ['blockCarrier', 'BLOCKED'],
+      ['blockCarrier', 'INACTIVE'],
+      ['deactivateCarrier', 'PENDING'],
+      ['deactivateCarrier', 'BLOCKED'],
+      ['deactivateCarrier', 'INACTIVE'],
+      ['reactivateCarrier', 'PENDING'],
+      ['reactivateCarrier', 'ACTIVE'],
+    ] as const)('rejects %s from status %s with BusinessRuleError', async (method, fromStatus) => {
+      const { service, tx } = buildService({ carrier: { id: 'c1', status: fromStatus } });
+
+      await expect(service[method](ORG_ID, 'c1', REASON_DTO, ACTING_USER)).rejects.toThrow(
+        BusinessRuleError,
+      );
+      expect(tx.carrier.update).not.toHaveBeenCalled();
+    });
+
+    it.each(['blockCarrier', 'deactivateCarrier', 'reactivateCarrier'] as const)(
+      'rejects an empty reason for %s',
+      async (method) => {
+        const { service } = buildService({
+          carrier: { id: 'c1', status: method === 'reactivateCarrier' ? 'BLOCKED' : 'ACTIVE' },
+        });
+
+        await expect(service[method](ORG_ID, 'c1', { reason: '' }, ACTING_USER)).rejects.toThrow(
+          BusinessRuleError,
+        );
+      },
+    );
+
+    it.each(['blockCarrier', 'deactivateCarrier', 'reactivateCarrier'] as const)(
+      'rejects a whitespace-only reason for %s (trimmed before validation)',
+      async (method) => {
+        const { service } = buildService({
+          carrier: { id: 'c1', status: method === 'reactivateCarrier' ? 'BLOCKED' : 'ACTIVE' },
+        });
+
+        await expect(
+          service[method](ORG_ID, 'c1', { reason: '   \t  ' }, ACTING_USER),
+        ).rejects.toThrow(BusinessRuleError);
+      },
+    );
+
+    it('stores only the trimmed reason in the audit record', async () => {
+      const { service, audit } = buildService({ carrier: { id: 'c1', status: 'ACTIVE' } });
+
+      await service.blockCarrier(ORG_ID, 'c1', { reason: '  Insurance lapsed  ' }, ACTING_USER);
+
+      expect(audit.record).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ reason: 'Insurance lapsed' }),
+      );
+    });
+
+    it('throws NotFoundError for a carrier outside the organization', async () => {
+      const { service } = buildService({ carrier: null });
+
+      await expect(
+        service.blockCarrier(ORG_ID, 'nonexistent', REASON_DTO, ACTING_USER),
+      ).rejects.toThrow(NotFoundError);
+    });
+
+    it('never touches Load, DispatchRecord, CarrierPayment, or any other entity — only reads/writes the Carrier row', async () => {
+      const { service, tx } = buildService({ carrier: { id: 'c1', status: 'ACTIVE' } });
+
+      // The shared tx mock in this file only defines a `carrier` table.
+      // blockCarrier() resolving without a runtime error here is itself
+      // proof its transaction body never references tx.load/
+      // dispatchRecord/carrierPayment/document/etc.
+      await expect(
+        service.blockCarrier(ORG_ID, 'c1', REASON_DTO, ACTING_USER),
+      ).resolves.toBeDefined();
+      expect(Object.keys(tx)).toEqual(['carrier']);
     });
   });
 });

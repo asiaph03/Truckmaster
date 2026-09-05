@@ -250,6 +250,15 @@ export const carriersApi = {
 
   activate: (id: string) => apiRequest<Carrier>(`/carriers/${id}/activate`, { method: 'POST' }),
 
+  block: (id: string, body: { reason: string }) =>
+    apiRequest<Carrier>(`/carriers/${id}/block`, { method: 'POST', body }),
+
+  deactivate: (id: string, body: { reason: string }) =>
+    apiRequest<Carrier>(`/carriers/${id}/deactivate`, { method: 'POST', body }),
+
+  reactivate: (id: string, body: { reason: string }) =>
+    apiRequest<Carrier>(`/carriers/${id}/reactivate`, { method: 'POST', body }),
+
   addServiceArea: (id: string, body: AddServiceAreaRequest) =>
     apiRequest<CarrierServiceArea>(`/carriers/${id}/service-areas`, { method: 'POST', body }),
 
