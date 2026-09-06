@@ -6,7 +6,14 @@ export type NotificationType =
   | 'COMPLIANCE_EXPIRING_7_DAY'
   | 'CHECK_CALL_OVERDUE'
   | 'CHECK_CALL_DUE_SOON'
-  | 'LOAD_LATE';
+  | 'LOAD_LATE'
+  // Task #9 — Notification Coverage Expansion.
+  | 'CARRIER_ASSIGNED'
+  | 'LOAD_CANCELLED'
+  | 'DOCUMENT_SCAN_QUARANTINED'
+  | 'COMPLIANCE_DOCUMENT_REJECTED'
+  | 'QUOTE_EXPIRED'
+  | 'INVITATION_EXPIRED';
 
 export interface AppNotification {
   id: string;

@@ -40,6 +40,7 @@ describe('DocumentService.review — Workflow 3 §3.4 self-review prevention', (
         update: jest.fn().mockImplementation(({ data }) => ({ ...document, ...data })),
       },
       documentTypeDefinition: { findFirst: jest.fn().mockResolvedValue(documentType) },
+      notification: { findFirst: jest.fn().mockResolvedValue(null) },
     };
 
     const prisma = {
@@ -56,17 +57,20 @@ describe('DocumentService.review — Workflow 3 §3.4 self-review prevention', (
     const scanQueue = { add: jest.fn() };
     const extractionQueue = { add: jest.fn() };
 
+    const notifications = { createForUserAndRoles: jest.fn().mockResolvedValue(undefined) };
+
     const service = new DocumentService(
       prisma as never,
       audit as never,
       storage as never,
       carrierEligibility as never,
       loadPodStatus as never,
+      notifications as never,
       scanQueue as never,
       extractionQueue as never,
     );
 
-    return { service, tx, audit, carrierEligibility, document };
+    return { service, tx, audit, carrierEligibility, document, notifications };
   }
 
   it('blocks a reviewer from approving a document they uploaded themselves', async () => {
@@ -105,6 +109,51 @@ describe('DocumentService.review — Workflow 3 §3.4 self-review prevention', (
         }),
       }),
     );
+  });
+
+  it('notifies the uploader + ADMIN on rejection (Task #9)', async () => {
+    const { service, notifications } = buildService({});
+
+    await service.review(
+      ORG_ID,
+      DOC_ID,
+      { decision: 'REJECTED', rejectionReason: 'Illegible scan' },
+      REVIEWER_ID,
+    );
+
+    expect(notifications.createForUserAndRoles).toHaveBeenCalledWith(
+      expect.anything(),
+      ORG_ID,
+      UPLOADER_ID,
+      ['ADMIN'],
+      expect.objectContaining({
+        type: 'COMPLIANCE_DOCUMENT_REJECTED',
+        relatedEntityType: 'Document',
+        relatedEntityId: DOC_ID,
+      }),
+    );
+  });
+
+  it('does not notify on approval — only REJECTED creates a notification (Task #9)', async () => {
+    const { service, notifications } = buildService({});
+
+    await service.review(ORG_ID, DOC_ID, { decision: 'APPROVED' }, REVIEWER_ID);
+
+    expect(notifications.createForUserAndRoles).not.toHaveBeenCalled();
+  });
+
+  it('does not create a duplicate COMPLIANCE_DOCUMENT_REJECTED notification when one already exists', async () => {
+    const { service, tx, notifications } = buildService({});
+    (tx.notification.findFirst as jest.Mock).mockResolvedValue({ id: 'existing-notif' });
+
+    await service.review(
+      ORG_ID,
+      DOC_ID,
+      { decision: 'REJECTED', rejectionReason: 'Illegible scan' },
+      REVIEWER_ID,
+    );
+
+    expect(notifications.createForUserAndRoles).not.toHaveBeenCalled();
   });
 
   it('rejects review of a document type that does not require review (400-equivalent BusinessRuleError)', async () => {
@@ -173,6 +222,7 @@ describe('DocumentService.listPendingReview — Frontend Phase 5 gap-fix (Compli
       storage as never,
       carrierEligibility as never,
       loadPodStatus as never,
+      { createForUserAndRoles: jest.fn().mockResolvedValue(undefined) } as never,
       scanQueue as never,
       extractionQueue as never,
     );
@@ -270,7 +320,9 @@ describe('DocumentService.applyScanResult — malware scan / quarantine (Decisio
       entityType: 'CARRIER',
       entityId: 'carrier-1',
       fileStorageKey: `org_${ORG_ID}/documents/${DOC_ID}`,
+      fileName: 'coi.pdf',
       scanStatus: 'PENDING',
+      uploadedByUserId: 'uploader-1',
     };
 
     const tx = {
@@ -278,6 +330,7 @@ describe('DocumentService.applyScanResult — malware scan / quarantine (Decisio
         findFirst: jest.fn().mockResolvedValue(document),
         update: jest.fn().mockResolvedValue(document),
       },
+      notification: { findFirst: jest.fn().mockResolvedValue(null) },
     };
     const prisma = {
       withTenantTransaction: jest
@@ -293,6 +346,7 @@ describe('DocumentService.applyScanResult — malware scan / quarantine (Decisio
     const loadPodStatus = { recalculatePodStatus: jest.fn().mockResolvedValue('NOT_RECEIVED') };
     const scanQueue = { add: jest.fn() };
     const extractionQueue = { add: jest.fn() };
+    const notifications = { createForUserAndRoles: jest.fn().mockResolvedValue(undefined) };
 
     const service = new DocumentService(
       prisma as never,
@@ -300,11 +354,12 @@ describe('DocumentService.applyScanResult — malware scan / quarantine (Decisio
       storage as never,
       carrierEligibility as never,
       loadPodStatus as never,
+      notifications as never,
       scanQueue as never,
       extractionQueue as never,
     );
 
-    return { service, tx, audit, storage, document, loadPodStatus };
+    return { service, tx, audit, storage, document, loadPodStatus, notifications };
   }
 
   it('marks a clean file CLEAN without touching storage', async () => {
@@ -355,6 +410,55 @@ describe('DocumentService.applyScanResult — malware scan / quarantine (Decisio
       expect.objectContaining({ actorType: 'SYSTEM' }),
     );
   });
+
+  it('notifies the uploader + ADMIN on INFECTED (Task #9)', async () => {
+    const { service, notifications } = buildService();
+
+    await service.applyScanResult(ORG_ID, DOC_ID, { status: 'INFECTED', provider: 'stub' });
+
+    expect(notifications.createForUserAndRoles).toHaveBeenCalledWith(
+      expect.anything(),
+      ORG_ID,
+      'uploader-1',
+      ['ADMIN'],
+      expect.objectContaining({
+        type: 'DOCUMENT_SCAN_QUARANTINED',
+        relatedEntityType: 'Document',
+        relatedEntityId: DOC_ID,
+      }),
+    );
+  });
+
+  it('notifies the uploader + ADMIN on SCAN_FAILED, using the same combined type as INFECTED (Task #9)', async () => {
+    const { service, notifications } = buildService();
+
+    await service.applyScanResult(ORG_ID, DOC_ID, { status: 'SCAN_FAILED', provider: 'stub' });
+
+    expect(notifications.createForUserAndRoles).toHaveBeenCalledWith(
+      expect.anything(),
+      ORG_ID,
+      'uploader-1',
+      ['ADMIN'],
+      expect.objectContaining({ type: 'DOCUMENT_SCAN_QUARANTINED' }),
+    );
+  });
+
+  it('does not notify on a CLEAN result', async () => {
+    const { service, notifications } = buildService();
+
+    await service.applyScanResult(ORG_ID, DOC_ID, { status: 'CLEAN', provider: 'stub' });
+
+    expect(notifications.createForUserAndRoles).not.toHaveBeenCalled();
+  });
+
+  it('does not create a duplicate DOCUMENT_SCAN_QUARANTINED notification when one already exists', async () => {
+    const { service, tx, notifications } = buildService();
+    (tx.notification.findFirst as jest.Mock).mockResolvedValue({ id: 'existing-notif' });
+
+    await service.applyScanResult(ORG_ID, DOC_ID, { status: 'INFECTED', provider: 'stub' });
+
+    expect(notifications.createForUserAndRoles).not.toHaveBeenCalled();
+  });
 });
 
 describe('DocumentService.applyScanResult — RATE_CONFIRMATION_INTAKE extraction enqueue (isDocumentConsumable gate)', () => {
@@ -377,6 +481,7 @@ describe('DocumentService.applyScanResult — RATE_CONFIRMATION_INTAKE extractio
         findFirst: jest.fn().mockResolvedValue(document),
         update: jest.fn().mockResolvedValue(document),
       },
+      notification: { findFirst: jest.fn().mockResolvedValue(null) },
     };
     const prisma = {
       withTenantTransaction: jest
@@ -399,6 +504,7 @@ describe('DocumentService.applyScanResult — RATE_CONFIRMATION_INTAKE extractio
       storage as never,
       carrierEligibility as never,
       loadPodStatus as never,
+      { createForUserAndRoles: jest.fn().mockResolvedValue(undefined) } as never,
       scanQueue as never,
       extractionQueue as never,
     );
@@ -471,6 +577,7 @@ describe('DocumentService.getDownloadUrl — §8.4 gates on scan_status', () => 
       storage as never,
       carrierEligibility as never,
       loadPodStatus as never,
+      { createForUserAndRoles: jest.fn().mockResolvedValue(undefined) } as never,
       scanQueue as never,
       extractionQueue as never,
     );
@@ -559,6 +666,7 @@ describe('DocumentService — entity-type-aware view authorization (Invoice/Carr
       prisma as never,
       {} as never,
       storage as never,
+      {} as never,
       {} as never,
       {} as never,
       {} as never,
@@ -710,6 +818,7 @@ describe('DocumentService upload permission — entity-aware (§2.5)', () => {
       storage as never,
       carrierEligibility as never,
       loadPodStatus as never,
+      { createForUserAndRoles: jest.fn().mockResolvedValue(undefined) } as never,
       scanQueue as never,
       extractionQueue as never,
     );
@@ -791,6 +900,7 @@ describe('DocumentService — Load-level document uploads (Load Detail Documents
       storage as never,
       carrierEligibility as never,
       loadPodStatus as never,
+      { createForUserAndRoles: jest.fn().mockResolvedValue(undefined) } as never,
       scanQueue as never,
       extractionQueue as never,
     );
@@ -974,6 +1084,7 @@ describe('DocumentService — Phase 5 POD/Stop uploads (Workflow 7 §7.1)', () =
       storage as never,
       carrierEligibility as never,
       loadPodStatus as never,
+      { createForUserAndRoles: jest.fn().mockResolvedValue(undefined) } as never,
       scanQueue as never,
       extractionQueue as never,
     );
@@ -1108,6 +1219,7 @@ describe('DocumentService — POP/Stop uploads (symmetric pickup-side counterpar
       storage as never,
       carrierEligibility as never,
       loadPodStatus as never,
+      { createForUserAndRoles: jest.fn().mockResolvedValue(undefined) } as never,
       scanQueue as never,
       extractionQueue as never,
     );
@@ -1217,6 +1329,7 @@ describe('DocumentService.applyScanResult — Phase 5 POD milestone recalculatio
         update: jest.fn().mockResolvedValue(document),
       },
       stop: { findFirst: jest.fn().mockResolvedValue({ id: 'stop-1', loadId: 'load-1' }) },
+      notification: { findFirst: jest.fn().mockResolvedValue(null) },
     };
     const prisma = {
       withTenantTransaction: jest
@@ -1239,6 +1352,7 @@ describe('DocumentService.applyScanResult — Phase 5 POD milestone recalculatio
       storage as never,
       carrierEligibility as never,
       loadPodStatus as never,
+      { createForUserAndRoles: jest.fn().mockResolvedValue(undefined) } as never,
       scanQueue as never,
       extractionQueue as never,
     );
@@ -1339,6 +1453,7 @@ describe('DocumentService.deleteDocumentFamily — Load-Level Documents Delete',
       storage as never,
       carrierEligibility as never,
       loadPodStatus as never,
+      { createForUserAndRoles: jest.fn().mockResolvedValue(undefined) } as never,
       scanQueue as never,
       extractionQueue as never,
     );

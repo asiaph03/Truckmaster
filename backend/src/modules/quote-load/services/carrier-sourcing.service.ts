@@ -1,10 +1,11 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { Load, Prisma } from '@prisma/client';
+import { Load, MembershipRoleName, Prisma } from '@prisma/client';
 import { Queue } from 'bullmq';
 import { PrismaService } from '../../../common/prisma/prisma.service';
 import { AuditService } from '../../../common/audit/audit.service';
 import { StorageService } from '../../../common/storage/storage.service';
 import { CarrierEligibilityService } from '../../carrier/services/carrier-eligibility.service';
+import { NotificationService } from '../../notification/services/notification.service';
 import {
   EMAIL_QUEUE,
   EmailJobData,
@@ -34,6 +35,23 @@ import { isDocumentConsumable } from '../../document/services/document-consumpti
 
 const RATE_CONFIRMATION_DOCUMENT_TYPE_CODE = 'RATE_CONFIRMATION';
 
+/**
+ * Task #9 — CARRIER_ASSIGNED role fanout. Load.assignedDispatcherId is
+ * frequently still unset at carrier-assignment time (dispatcher
+ * assignment is a fully independent action, no ordering dependency), so
+ * this uses createForRoles (no primary user) rather than the
+ * assignedDispatcherId + ADMIN pattern the operational-alert sweeps use.
+ * Matches load.controller.ts's SOURCING_DISPATCH_ROLES exactly — declared
+ * locally rather than imported, per this codebase's existing
+ * ADMIN_VISIBILITY_ROLES precedent of duplicating small role constants
+ * per file rather than sharing one across modules.
+ */
+const CARRIER_ASSIGNED_NOTIFICATION_ROLES: MembershipRoleName[] = [
+  'ADMIN',
+  'OPERATIONS_MANAGER',
+  'DISPATCHER',
+];
+
 export interface DriverDispatchEmailPreview {
   /** null when no email is on file for the assigned driver — the frontend must then collect a one-time manual override. */
   recipientEmail: string | null;
@@ -50,6 +68,7 @@ export class CarrierSourcingService {
     private readonly audit: AuditService,
     private readonly storage: StorageService,
     private readonly carrierEligibility: CarrierEligibilityService,
+    private readonly notifications: NotificationService,
     @Inject(EMAIL_QUEUE) private readonly emailQueue: Queue,
     @Inject(RATE_CONFIRMATION_QUEUE) private readonly rateConfirmationQueue: Queue,
   ) {}
@@ -242,6 +261,28 @@ export class CarrierSourcingService {
         newValue: { carrierId: dto.carrierId, carrierRate: dto.carrierRate },
         actorUserId: actingUserId,
       });
+
+      const existingNotification = await tx.notification.findFirst({
+        where: {
+          organizationId,
+          type: 'CARRIER_ASSIGNED',
+          relatedEntityType: 'Load',
+          relatedEntityId: loadId,
+        },
+      });
+      if (!existingNotification) {
+        await this.notifications.createForRoles(
+          tx,
+          organizationId,
+          CARRIER_ASSIGNED_NOTIFICATION_ROLES,
+          {
+            type: 'CARRIER_ASSIGNED',
+            message: `Carrier assigned — ${updated.loadNumber}\n${carrier.legalName} at $${dto.carrierRate}`,
+            relatedEntityType: 'Load',
+            relatedEntityId: loadId,
+          },
+        );
+      }
 
       return updated;
     });

@@ -1,6 +1,11 @@
 import { Injectable } from '@nestjs/common';
+import { MembershipRoleName } from '@prisma/client';
 import { PrismaService } from '../../../common/prisma/prisma.service';
 import { AuditService } from '../../../common/audit/audit.service';
+import { NotificationService } from '../../notification/services/notification.service';
+
+/** Task #9 — same shape as the other sweeps' ADMIN_VISIBILITY_ROLES. */
+const ADMIN_VISIBILITY_ROLES: MembershipRoleName[] = ['ADMIN'];
 
 /**
  * Workflow 1 §1.6 — the proactive, org-wide counterpart to
@@ -16,6 +21,7 @@ export class InvitationExpirationSweepService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
+    private readonly notifications: NotificationService,
   ) {}
 
   async run(): Promise<void> {
@@ -44,6 +50,33 @@ export class InvitationExpirationSweepService {
             entityId: membership.id,
             actorType: 'SYSTEM',
           });
+
+          // invitedByUserId is nullable — silent-skip when absent, same
+          // "no fallback broadcast" convention as every other sweep here.
+          if (membership.invitedByUserId) {
+            const existingNotification = await tx.notification.findFirst({
+              where: {
+                organizationId: org.id,
+                type: 'INVITATION_EXPIRED',
+                relatedEntityType: 'OrganizationMembership',
+                relatedEntityId: membership.id,
+              },
+            });
+            if (!existingNotification) {
+              await this.notifications.createForUserAndRoles(
+                tx,
+                org.id,
+                membership.invitedByUserId,
+                ADMIN_VISIBILITY_ROLES,
+                {
+                  type: 'INVITATION_EXPIRED',
+                  message: 'An invitation you sent has expired.',
+                  relatedEntityType: 'OrganizationMembership',
+                  relatedEntityId: membership.id,
+                },
+              );
+            }
+          }
         }
       });
     }

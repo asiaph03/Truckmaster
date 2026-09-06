@@ -1970,8 +1970,7 @@ model CarrierPayment {
 
 /// TECHNICAL_ARCHITECTURE.md §9.6 — the small, explicit allow-list of
 /// concrete V1 notification types. Native enum (not a lookup table) per
-/// §4.4's "closed, locked vocabulary" pattern — exactly 4 types exist,
-/// none org-extensible.
+/// §4.4's "closed, locked vocabulary" pattern — none org-extensible.
 enum NotificationType {
   COMPLIANCE_EXPIRING_30_DAY
   COMPLIANCE_EXPIRING_15_DAY
@@ -1989,6 +1988,27 @@ enum NotificationType {
   /// LoadLatenessSweepService / findLateStop for the single owned
   /// definition of "late."
   LOAD_LATE
+  /// Task #9 — fires synchronously inside CarrierSourcingService.assignCarrier,
+  /// role-fanout only (SOURCING_DISPATCH_ROLES), no primary user, since
+  /// Load.assignedDispatcherId is frequently still unset at this stage.
+  CARRIER_ASSIGNED
+  /// Task #9 — fires synchronously inside LoadService.cancelLoad. Same
+  /// assignedDispatcherId + ADMIN targeting as CHECK_CALL_OVERDUE/LOAD_LATE,
+  /// including the same no-fallback-broadcast behavior when unassigned.
+  LOAD_CANCELLED
+  /// Task #9 — fires synchronously inside DocumentService.applyScanResult
+  /// for both INFECTED and SCAN_FAILED results (one combined type, not
+  /// two — both end in the same quarantine action and same recipient).
+  DOCUMENT_SCAN_QUARANTINED
+  /// Task #9 — fires synchronously inside DocumentService.review only on
+  /// the REJECTED decision branch; APPROVED never creates this.
+  COMPLIANCE_DOCUMENT_REJECTED
+  /// Task #9 — fires inside QuoteExpirationSweepService's existing daily
+  /// sweep, one per newly-expired Quote.
+  QUOTE_EXPIRED
+  /// Task #9 — fires inside InvitationExpirationSweepService's existing
+  /// daily sweep, one per newly-expired invitation.
+  INVITATION_EXPIRED
 }
 
 /// DATABASE_DESIGN.md §25. `relatedEntityId` has no native FK (mirrors

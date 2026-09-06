@@ -72,6 +72,9 @@ function buildService(opts: {
     carrierPayment: {
       findMany: jest.fn().mockResolvedValue([]),
     },
+    notification: {
+      findFirst: jest.fn().mockResolvedValue(null),
+    },
   };
 
   const prisma = {
@@ -91,14 +94,17 @@ function buildService(opts: {
       .mockResolvedValue(opts.rateMatch ?? { rateAgreementId: null, rateSource: 'MANUAL' }),
   };
 
+  const notifications = { createForUserAndRoles: jest.fn().mockResolvedValue(undefined) };
+
   const service = new LoadService(
     prisma as never,
     audit as never,
     sequences as never,
     rateAgreementMatching as never,
+    notifications as never,
   );
 
-  return { service, tx, audit, sequences, rateAgreementMatching };
+  return { service, tx, audit, sequences, rateAgreementMatching, notifications };
 }
 
 describe('LoadService.list — Frontend Phase 3 gap-fix (Dispatch Board Table View)', () => {
@@ -872,6 +878,70 @@ describe('LoadService.cancelLoad — Cancel Load workflow', () => {
     await service.cancelLoad(ORG_ID, 'load-1', CANCEL_DTO, USER_ID);
 
     expect(tx.chargeLineItem.create).not.toHaveBeenCalled();
+  });
+});
+
+describe('LoadService.cancelLoad — LOAD_CANCELLED notification (Task #9)', () => {
+  const CANCEL_DTO = { reason: 'Customer cancelled the order.' };
+
+  it('notifies the assigned dispatcher + ADMIN when a dispatcher is assigned', async () => {
+    const { service, tx, notifications } = buildService({});
+    tx.load.findFirst.mockResolvedValue({
+      id: 'load-1',
+      status: 'BOOKED',
+      assignedDispatcherId: 'dispatcher-1',
+    });
+
+    await service.cancelLoad(ORG_ID, 'load-1', CANCEL_DTO, USER_ID);
+
+    expect(notifications.createForUserAndRoles).toHaveBeenCalledWith(
+      expect.anything(),
+      ORG_ID,
+      'dispatcher-1',
+      ['ADMIN'],
+      expect.objectContaining({
+        type: 'LOAD_CANCELLED',
+        relatedEntityType: 'Load',
+        relatedEntityId: 'load-1',
+      }),
+    );
+  });
+
+  it('silently skips notifying when no dispatcher is assigned (no fallback broadcast)', async () => {
+    const { service, tx, notifications } = buildService({});
+    tx.load.findFirst.mockResolvedValue({ id: 'load-1', status: 'BOOKED' });
+
+    await service.cancelLoad(ORG_ID, 'load-1', CANCEL_DTO, USER_ID);
+
+    expect(notifications.createForUserAndRoles).not.toHaveBeenCalled();
+  });
+
+  it('does not create a duplicate LOAD_CANCELLED notification when one already exists', async () => {
+    const { service, tx, notifications } = buildService({});
+    tx.load.findFirst.mockResolvedValue({
+      id: 'load-1',
+      status: 'BOOKED',
+      assignedDispatcherId: 'dispatcher-1',
+    });
+    tx.notification.findFirst.mockResolvedValue({ id: 'existing-notif' });
+
+    await service.cancelLoad(ORG_ID, 'load-1', CANCEL_DTO, USER_ID);
+
+    expect(notifications.createForUserAndRoles).not.toHaveBeenCalled();
+  });
+
+  it('never notifies when cancellation is rejected (already dispatched/completed/cancelled)', async () => {
+    const { service, tx, notifications } = buildService({});
+    tx.load.findFirst.mockResolvedValue({
+      id: 'load-1',
+      status: 'DISPATCHED',
+      assignedDispatcherId: 'dispatcher-1',
+    });
+
+    await expect(service.cancelLoad(ORG_ID, 'load-1', CANCEL_DTO, USER_ID)).rejects.toThrow(
+      InvalidTransitionError,
+    );
+    expect(notifications.createForUserAndRoles).not.toHaveBeenCalled();
   });
 });
 

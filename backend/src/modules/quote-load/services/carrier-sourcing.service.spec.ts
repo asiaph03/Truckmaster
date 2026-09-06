@@ -18,6 +18,7 @@ function buildService(opts: {
   documentType?: Record<string, unknown> | null;
   driver?: Record<string, unknown> | null;
   rateConfDoc?: Record<string, unknown> | null;
+  existingNotification?: Record<string, unknown> | null;
 }) {
   const tx = {
     load: {
@@ -29,7 +30,11 @@ function buildService(opts: {
       update: jest.fn().mockImplementation(({ data }) => ({ id: LOAD_ID, ...data })),
     },
     carrier: {
-      findFirst: jest.fn().mockResolvedValue('carrier' in opts ? opts.carrier : { id: CARRIER_ID }),
+      findFirst: jest
+        .fn()
+        .mockResolvedValue(
+          'carrier' in opts ? opts.carrier : { id: CARRIER_ID, legalName: 'Best Carrier' },
+        ),
     },
     driver: {
       findFirst: jest.fn().mockResolvedValue('driver' in opts ? opts.driver : null),
@@ -59,6 +64,11 @@ function buildService(opts: {
     chargeLineItem: {
       create: jest.fn().mockImplementation(({ data }) => ({ id: 'charge-1', ...data })),
     },
+    notification: {
+      findFirst: jest
+        .fn()
+        .mockResolvedValue('existingNotification' in opts ? opts.existingNotification : null),
+    },
   };
 
   const prisma = {
@@ -74,17 +84,28 @@ function buildService(opts: {
   };
   const emailQueue = { add: jest.fn().mockResolvedValue(undefined) };
   const rateConfirmationQueue = { add: jest.fn().mockResolvedValue(undefined) };
+  const notifications = { createForRoles: jest.fn().mockResolvedValue(undefined) };
 
   const service = new CarrierSourcingService(
     prisma as never,
     audit as never,
     storage as never,
     carrierEligibility as never,
+    notifications as never,
     emailQueue as never,
     rateConfirmationQueue as never,
   );
 
-  return { service, tx, audit, storage, carrierEligibility, emailQueue, rateConfirmationQueue };
+  return {
+    service,
+    tx,
+    audit,
+    storage,
+    carrierEligibility,
+    notifications,
+    emailQueue,
+    rateConfirmationQueue,
+  };
 }
 
 describe('CarrierSourcingService.beginSourcing — Workflow 5 §5.1', () => {
@@ -289,6 +310,83 @@ describe('CarrierSourcingService.assignCarrier — Workflow 5 §5.3/§5.4', () =
         USER_ID,
       ),
     ).rejects.toThrow(InvalidTransitionError);
+  });
+});
+
+describe('CarrierSourcingService.assignCarrier — CARRIER_ASSIGNED notification (Task #9)', () => {
+  it('notifies SOURCING_DISPATCH_ROLES with no primary user', async () => {
+    const { service, notifications } = buildService({});
+
+    await service.assignCarrier(
+      ORG_ID,
+      LOAD_ID,
+      { carrierId: CARRIER_ID, carrierRate: '2000.00' },
+      USER_ID,
+    );
+
+    expect(notifications.createForRoles).toHaveBeenCalledWith(
+      expect.anything(),
+      ORG_ID,
+      ['ADMIN', 'OPERATIONS_MANAGER', 'DISPATCHER'],
+      expect.objectContaining({
+        type: 'CARRIER_ASSIGNED',
+        relatedEntityType: 'Load',
+        relatedEntityId: LOAD_ID,
+      }),
+    );
+  });
+
+  it('does not create a duplicate CARRIER_ASSIGNED notification when one already exists', async () => {
+    const { service, notifications } = buildService({
+      existingNotification: { id: 'existing-notif' },
+    });
+
+    await service.assignCarrier(
+      ORG_ID,
+      LOAD_ID,
+      { carrierId: CARRIER_ID, carrierRate: '2000.00' },
+      USER_ID,
+    );
+
+    expect(notifications.createForRoles).not.toHaveBeenCalled();
+  });
+
+  it('never notifies when the eligibility gate blocks assignment', async () => {
+    const { service, notifications } = buildService({
+      eligibility: { eligible: false, reasons: ['COI expired'] },
+    });
+
+    await expect(
+      service.assignCarrier(
+        ORG_ID,
+        LOAD_ID,
+        { carrierId: CARRIER_ID, carrierRate: '2000.00' },
+        USER_ID,
+      ),
+    ).rejects.toThrow(EligibilityError);
+
+    expect(notifications.createForRoles).not.toHaveBeenCalled();
+  });
+
+  it('is tenant-scoped — dedup check and notification creation both use the acting organization', async () => {
+    const { service, tx, notifications } = buildService({});
+
+    await service.assignCarrier(
+      ORG_ID,
+      LOAD_ID,
+      { carrierId: CARRIER_ID, carrierRate: '2000.00' },
+      USER_ID,
+    );
+
+    expect(tx.notification.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ organizationId: ORG_ID }) }),
+    );
+    expect(notifications.createForRoles).toHaveBeenCalledWith(
+      expect.anything(),
+      ORG_ID,
+      expect.anything(),
+      expect.anything(),
+    );
   });
 });
 

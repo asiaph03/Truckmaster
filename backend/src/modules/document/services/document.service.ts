@@ -17,6 +17,7 @@ import {
 } from '../../../common/errors/app-error';
 import { CarrierEligibilityService } from '../../carrier/services/carrier-eligibility.service';
 import { LoadPodStatusService } from '../../quote-load/services/load-pod-status.service';
+import { NotificationService } from '../../notification/services/notification.service';
 import { MALWARE_SCAN_JOB_OPTIONS, MALWARE_SCAN_QUEUE } from './malware-scan.constants';
 import { isDocumentConsumable } from './document-consumption';
 import { FINANCIAL_VIEW_ROLES } from '../../../common/authorization/financial-view-roles';
@@ -103,6 +104,9 @@ const RATE_CONFIRMATION_INTAKE_UPLOAD_ROLES: MembershipRoleName[] = [
   'SALES_BOOKING',
 ];
 
+/** Task #9 — same shape as the other sweeps' ADMIN_VISIBILITY_ROLES. */
+const ADMIN_VISIBILITY_ROLES: MembershipRoleName[] = ['ADMIN'];
+
 @Injectable()
 export class DocumentService {
   private readonly logger = new Logger(DocumentService.name);
@@ -113,6 +117,7 @@ export class DocumentService {
     private readonly storage: StorageService,
     private readonly carrierEligibility: CarrierEligibilityService,
     private readonly loadPodStatus: LoadPodStatusService,
+    private readonly notifications: NotificationService,
     @Inject(MALWARE_SCAN_QUEUE) private readonly scanQueue: Queue,
     @Inject(RATE_CONFIRMATION_EXTRACTION_QUEUE) private readonly extractionQueue: Queue,
   ) {}
@@ -633,6 +638,31 @@ export class DocumentService {
         await this.carrierEligibility.recalculate(tx, organizationId, document.entityId);
       }
 
+      if (dto.decision === 'REJECTED') {
+        const existingNotification = await tx.notification.findFirst({
+          where: {
+            organizationId,
+            type: 'COMPLIANCE_DOCUMENT_REJECTED',
+            relatedEntityType: 'Document',
+            relatedEntityId: document.id,
+          },
+        });
+        if (!existingNotification) {
+          await this.notifications.createForUserAndRoles(
+            tx,
+            organizationId,
+            document.uploadedByUserId,
+            ADMIN_VISIBILITY_ROLES,
+            {
+              type: 'COMPLIANCE_DOCUMENT_REJECTED',
+              message: `Document rejected — ${document.fileName}\n${dto.rejectionReason}`,
+              relatedEntityType: 'Document',
+              relatedEntityId: document.id,
+            },
+          );
+        }
+      }
+
       return updated;
     });
   }
@@ -793,6 +823,35 @@ export class DocumentService {
         newValue: { documentId, scanStatus: result.status, provider: result.provider },
         actorType: 'SYSTEM',
       });
+
+      // Task #9 — one combined notification type for both quarantine
+      // outcomes (INFECTED and SCAN_FAILED): both end in the same
+      // quarantine action and the same recipient, so a single type is
+      // simpler than mirroring the two distinct audit action strings.
+      if (result.status === 'INFECTED' || result.status === 'SCAN_FAILED') {
+        const existingNotification = await tx.notification.findFirst({
+          where: {
+            organizationId,
+            type: 'DOCUMENT_SCAN_QUARANTINED',
+            relatedEntityType: 'Document',
+            relatedEntityId: document.id,
+          },
+        });
+        if (!existingNotification) {
+          await this.notifications.createForUserAndRoles(
+            tx,
+            organizationId,
+            document.uploadedByUserId,
+            ADMIN_VISIBILITY_ROLES,
+            {
+              type: 'DOCUMENT_SCAN_QUARANTINED',
+              message: `Document quarantined — ${document.fileName}`,
+              relatedEntityType: 'Document',
+              relatedEntityId: document.id,
+            },
+          );
+        }
+      }
 
       // Workflow 7 §7.2 / TECHNICAL_ARCHITECTURE §6.4 — 🔒 LOCKED (Phase 5
       // sign-off): only a CLEAN scan result can ever make a POD count

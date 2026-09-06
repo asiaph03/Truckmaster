@@ -1,6 +1,11 @@
 import { Injectable } from '@nestjs/common';
+import { MembershipRoleName } from '@prisma/client';
 import { PrismaService } from '../../../common/prisma/prisma.service';
 import { AuditService } from '../../../common/audit/audit.service';
+import { NotificationService } from '../../notification/services/notification.service';
+
+/** Task #9 — same shape as the other sweeps' ADMIN_VISIBILITY_ROLES. */
+const ADMIN_VISIBILITY_ROLES: MembershipRoleName[] = ['ADMIN'];
 
 /**
  * Workflow 4 §4.5 — unlike the invitation-expiration case, no lazy
@@ -14,6 +19,7 @@ export class QuoteExpirationSweepService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
+    private readonly notifications: NotificationService,
   ) {}
 
   async run(): Promise<void> {
@@ -42,6 +48,29 @@ export class QuoteExpirationSweepService {
             entityId: quote.id,
             actorType: 'SYSTEM',
           });
+
+          const existingNotification = await tx.notification.findFirst({
+            where: {
+              organizationId: org.id,
+              type: 'QUOTE_EXPIRED',
+              relatedEntityType: 'Quote',
+              relatedEntityId: quote.id,
+            },
+          });
+          if (!existingNotification) {
+            await this.notifications.createForUserAndRoles(
+              tx,
+              org.id,
+              quote.createdByUserId,
+              ADMIN_VISIBILITY_ROLES,
+              {
+                type: 'QUOTE_EXPIRED',
+                message: `Quote expired — ${quote.quoteNumber}`,
+                relatedEntityType: 'Quote',
+                relatedEntityId: quote.id,
+              },
+            );
+          }
         }
       });
     }

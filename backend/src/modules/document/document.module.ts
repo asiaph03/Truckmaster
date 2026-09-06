@@ -6,6 +6,7 @@ import { MALWARE_SCANNER } from '../../common/malware-scan/malware-scanner.inter
 import { CloudmersiveMalwareScanner } from '../../common/malware-scan/cloudmersive-malware-scanner';
 import { CarrierModule } from '../carrier/carrier.module';
 import { QuoteLoadModule } from '../quote-load/quote-load.module';
+import { NotificationModule } from '../notification/notification.module';
 import { DocumentController } from './controllers/document.controller';
 import { CarrierDocumentsController } from './controllers/carrier-documents.controller';
 import { PodDocumentsController } from './controllers/pod-documents.controller';
@@ -47,7 +48,7 @@ const RATE_CONFIRMATION_EXTRACTION_QUEUE_CONNECTION =
   'RATE_CONFIRMATION_EXTRACTION_QUEUE_CONNECTION';
 
 @Module({
-  imports: [CarrierModule, QuoteLoadModule],
+  imports: [CarrierModule, QuoteLoadModule, NotificationModule],
   controllers: [
     DocumentController,
     CarrierDocumentsController,

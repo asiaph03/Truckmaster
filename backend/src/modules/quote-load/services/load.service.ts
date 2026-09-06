@@ -11,6 +11,7 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../../../common/prisma/prisma.service';
 import { AuditService } from '../../../common/audit/audit.service';
+import { NotificationService } from '../../notification/services/notification.service';
 import { parseBusinessDateTime } from '../../../common/timezone/business-timezone';
 import { OrganizationSequenceService } from '../../identity/services/organization-sequence.service';
 import { RateAgreementMatchingService } from './rate-agreement-matching.service';
@@ -25,6 +26,16 @@ import {
   InvalidTransitionError,
   NotFoundError,
 } from '../../../common/errors/app-error';
+
+/**
+ * Task #9 — LOAD_CANCELLED admin-visibility fanout, same shape as
+ * CheckCallReminderSweepService/LoadLatenessSweepService's own
+ * ADMIN_VISIBILITY_ROLES: Org Admins also see this alert, alongside the
+ * assigned dispatcher, never a replacement for them. Declared locally
+ * per this codebase's existing precedent of duplicating this small
+ * constant per file rather than sharing one across modules.
+ */
+const ADMIN_VISIBILITY_ROLES: MembershipRoleName[] = ['ADMIN'];
 
 export interface ChecklistItem {
   item: string;
@@ -96,6 +107,7 @@ export class LoadService {
     private readonly audit: AuditService,
     private readonly sequences: OrganizationSequenceService,
     private readonly rateAgreementMatching: RateAgreementMatchingService,
+    private readonly notifications: NotificationService,
   ) {}
 
   async findById(
@@ -704,6 +716,34 @@ export class LoadService {
         newValue: { status: 'CANCELLED', reason: dto.reason },
         actorUserId: actingUserId,
       });
+
+      // Task #9 — same assignedDispatcherId + ADMIN targeting, and the
+      // same no-fallback-broadcast-when-unassigned behavior ("Decision
+      // 5"), as CheckCallReminderSweepService/LoadLatenessSweepService.
+      if (load.assignedDispatcherId) {
+        const existingNotification = await tx.notification.findFirst({
+          where: {
+            organizationId,
+            type: 'LOAD_CANCELLED',
+            relatedEntityType: 'Load',
+            relatedEntityId: loadId,
+          },
+        });
+        if (!existingNotification) {
+          await this.notifications.createForUserAndRoles(
+            tx,
+            organizationId,
+            load.assignedDispatcherId,
+            ADMIN_VISIBILITY_ROLES,
+            {
+              type: 'LOAD_CANCELLED',
+              message: `Load cancelled — ${updated.loadNumber}\n${dto.reason}`,
+              relatedEntityType: 'Load',
+              relatedEntityId: loadId,
+            },
+          );
+        }
+      }
 
       return updated;
     });

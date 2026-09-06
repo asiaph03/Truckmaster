@@ -250,3 +250,93 @@ describe('NotificationBell — click behavior (relatedEntityType === "Load")', (
     expect(await screen.findByText('Load Detail Page')).toBeInTheDocument();
   });
 });
+
+describe('NotificationBell — Task #9 notification types', () => {
+  it('renders an unmapped type (e.g. QUOTE_EXPIRED) safely — no icon, no crash', async () => {
+    renderBell(
+      [
+        makeNotification({
+          id: 'n1',
+          type: 'QUOTE_EXPIRED',
+          message: 'Quote expired — QT-000001',
+          relatedEntityType: 'Quote',
+          relatedEntityId: 'quote-1',
+        }),
+      ],
+      1,
+    );
+    await openDropdown();
+
+    const item = (await screen.findByText('Quote expired — QT-000001')).closest(
+      '.notification-bell-item',
+    );
+    expect(item).toBeInTheDocument();
+    expect(item?.querySelector('.notification-bell-icon')).not.toBeInTheDocument();
+  });
+
+  it('a CARRIER_ASSIGNED notification (relatedEntityType: Load) navigates to the Load detail page', async () => {
+    renderBell(
+      [
+        makeNotification({
+          id: 'n1',
+          type: 'CARRIER_ASSIGNED',
+          message: 'Carrier assigned — LOAD-000019\nBest Carrier at $2000.00',
+          relatedEntityType: 'Load',
+          relatedEntityId: 'load-19',
+          read: false,
+        }),
+      ],
+      1,
+    );
+    await openDropdown();
+
+    fireEvent.click(await screen.findByText('Carrier assigned — LOAD-000019'));
+
+    expect(await screen.findByText('Load Detail Page')).toBeInTheDocument();
+  });
+
+  it('a LOAD_CANCELLED notification (relatedEntityType: Load) navigates to the Load detail page', async () => {
+    renderBell(
+      [
+        makeNotification({
+          id: 'n1',
+          type: 'LOAD_CANCELLED',
+          message: 'Load cancelled — LOAD-000019\nCustomer cancelled the order.',
+          relatedEntityType: 'Load',
+          relatedEntityId: 'load-19',
+          read: false,
+        }),
+      ],
+      1,
+    );
+    await openDropdown();
+
+    fireEvent.click(await screen.findByText('Load cancelled — LOAD-000019'));
+
+    expect(await screen.findByText('Load Detail Page')).toBeInTheDocument();
+  });
+
+  it('a DOCUMENT_SCAN_QUARANTINED notification (relatedEntityType: Document) marks read but does not navigate', async () => {
+    renderBell(
+      [
+        makeNotification({
+          id: 'n1',
+          type: 'DOCUMENT_SCAN_QUARANTINED',
+          message: 'Document quarantined — coi.pdf',
+          relatedEntityType: 'Document',
+          relatedEntityId: 'doc-1',
+          read: false,
+        }),
+      ],
+      1,
+    );
+    await openDropdown();
+
+    fireEvent.click(await screen.findByText('Document quarantined — coi.pdf'));
+
+    await waitFor(() => {
+      expect(screen.queryByText('Document quarantined — coi.pdf')).toBeInTheDocument();
+    });
+    expect(screen.queryByText('Load Detail Page')).not.toBeInTheDocument();
+  });
+});

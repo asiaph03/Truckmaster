@@ -7,6 +7,7 @@ import { PDF_GENERATOR } from '../../common/pdf/pdf-generator.interface';
 import { PdfkitPdfGenerator } from '../../common/pdf/pdfkit-pdf-generator';
 import { IdentityModule } from '../identity/identity.module';
 import { CarrierModule } from '../carrier/carrier.module';
+import { NotificationModule } from '../notification/notification.module';
 import { QuoteController } from './controllers/quote.controller';
 import { LoadController } from './controllers/load.controller';
 import { QuoteService } from './services/quote.service';
@@ -49,7 +50,7 @@ import {
 const RATE_CONFIRMATION_QUEUE_CONNECTION = 'RATE_CONFIRMATION_QUEUE_CONNECTION';
 
 @Module({
-  imports: [IdentityModule, CarrierModule, EmailModule],
+  imports: [IdentityModule, CarrierModule, EmailModule, NotificationModule],
   controllers: [QuoteController, LoadController],
   providers: [
     QuoteService,
