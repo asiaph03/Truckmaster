@@ -15,12 +15,6 @@
   gap: var(--space-3);
 }
 
-.top-bar-logo {
-  font-weight: 600;
-  color: var(--brand-600);
-  white-space: nowrap;
-}
-
 .top-bar-right {
   display: flex;
   align-items: center;

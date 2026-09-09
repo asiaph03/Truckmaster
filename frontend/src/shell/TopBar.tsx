@@ -6,16 +6,15 @@ import { EasternClock } from './EasternClock';
 import './TopBar.css';
 
 /**
- * UI_UX_DESIGN.md §5.3.1 — 56px, left→right: logo, org switcher …
- * Eastern Time clock, search, notifications, avatar. The clock is
- * purely additive — Search/notifications/avatar keep their existing
- * order and behavior unchanged.
+ * UI_UX_DESIGN.md §5.3.1 — 56px, left→right: org switcher, Eastern Time
+ * clock, search, notifications, avatar. The text logo previously shown
+ * here was removed in favor of the TruckMaster logo now at the top of
+ * the sidebar, which is the sole application branding element.
  */
 export function TopBar() {
   return (
     <header className="top-bar">
       <div className="top-bar-left">
-        <span className="top-bar-logo">Truck Master TMS</span>
         <OrgSwitcher />
       </div>
       <div className="top-bar-right">

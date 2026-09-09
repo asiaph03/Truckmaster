@@ -42,6 +42,11 @@ export function Sidebar() {
 
   return (
     <aside className={`sidebar ${collapsed ? 'sidebar-collapsed' : ''}`}>
+      {!collapsed ? (
+        <div className="sidebar-logo">
+          <img src="/truckmaster-logo.png" alt="TruckMaster" className="sidebar-logo-img" />
+        </div>
+      ) : null}
       <nav className="sidebar-nav">
         {/* Permission-aware nav — inaccessible items are hidden entirely, never shown-disabled (§5.3.11). */}
         {NAV_ITEMS.filter((item) => canSeeNav(item)).map((item) => {
