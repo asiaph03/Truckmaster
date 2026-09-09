@@ -15,17 +15,26 @@
 .sidebar-logo {
   display: flex;
   align-items: center;
-  /* Horizontal padding matches sidebar-nav's own space-2 padding + each
-     sidebar-item's space-2 inset (8px + 8px = 16px = space-4), so the
-     logo's left edge lines up exactly with the nav icons below it. */
-  padding: var(--space-4);
+  /* Left padding matches sidebar-nav's space-2 padding (8px) + each
+     sidebar-item's own 3px transparent border-left (always present,
+     even inactive) + sidebar-item's space-2 padding (8px) = 19px, so
+     the logo's left edge lines up exactly with the nav icons below it.
+     Right padding stays at space-4 (16px) — no matching reference point
+     needed on that side. Height is pinned to the top bar's own height
+     (Sidebar and TopBar both start at the shell's top edge, per
+     AppShell.tsx), so this block's bottom border lines up exactly with
+     the top bar's row — including the date/clock and search box beside
+     it. */
+  height: var(--shell-topbar-height);
+  padding: 0 var(--space-4) 0 19px;
   border-bottom: 1px solid var(--neutral-200);
+  box-sizing: border-box;
 }
 
 .sidebar-logo-img {
   display: block;
-  width: 100%;
-  height: auto;
+  height: 50px;
+  width: auto;
   max-width: 100%;
 }
 
