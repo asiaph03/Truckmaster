@@ -285,8 +285,8 @@ Malware/virus scanning on upload was never discussed in the PRD. Given carriers 
 - Tenant isolation enforcement as described in §2 (application-layer + RLS defense-in-depth).
 - Automated, regular database backups — exact RPO/RTO targets are a business decision, not an engineering one, and were never discussed.
 
-**Open Decision**
-Backup frequency/retention and disaster-recovery targets (RPO/RTO) need explicit business input before Stage 6 — e.g., "how much data loss is acceptable in a worst case" and "how long can the system be down." Not something this document should assume.
+**Locked (Decision 11)**
+RPO ≤24h, RTO ≤4h, backup retention ≥30 days — see `architecture-decisions.md` Decision 11. Implementation: automated, restore-verified daily PostgreSQL backups (Task #10, verified 2026-09-09) — see `TECHNICAL_ARCHITECTURE.md` §12.1/§12.1.1 for full operational detail. Retention-policy enforcement (S3 lifecycle rule) remains an open follow-up.
 
 ---
 
