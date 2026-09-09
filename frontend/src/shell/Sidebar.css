@@ -15,7 +15,10 @@
 .sidebar-logo {
   display: flex;
   align-items: center;
-  padding: var(--space-4) var(--space-3);
+  /* Horizontal padding matches sidebar-nav's own space-2 padding + each
+     sidebar-item's space-2 inset (8px + 8px = 16px = space-4), so the
+     logo's left edge lines up exactly with the nav icons below it. */
+  padding: var(--space-4);
   border-bottom: 1px solid var(--neutral-200);
 }
 
