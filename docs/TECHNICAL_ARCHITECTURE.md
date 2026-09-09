@@ -633,10 +633,22 @@ Both remain **deferred, not built** — noted here only to confirm the event bac
 
 ### 12.1 Operational Targets 🔒 (Decision 11) — **stated explicitly as internal targets, not a vendor SLA guarantee**
 - **RPO ≤ 24 hours** — automated backups (or continuous WAL archiving) at least daily; a managed PostgreSQL provider with point-in-time recovery comfortably exceeds this.
-- **RTO ≤ 4 hours** — restore/failover tooling and process must be demonstrably capable of completing within this window; requires a documented, periodically-tested restore runbook (Stage 7/deployment deliverable, not written here).
-- **Backup retention ≥ 30 days.**
+- **RTO ≤ 4 hours** — restore/failover tooling and process must be demonstrably capable of completing within this window. **Implemented and verified (Task #10, 2026-09-09)**: see below.
+- **Backup retention ≥ 30 days** — currently satisfied trivially (no automated deletion exists), but no explicit S3 lifecycle/expiration policy has been configured yet. **Open item**, not yet addressed.
 
 These are targets this architecture is designed to support — actual achievement depends on the hosting provider selected in Stage 7/deployment planning, which is why they're not phrased as guarantees here.
+
+#### 12.1.1 Backup & Restore Implementation (Task #10, verified 2026-09-09)
+
+Automated, encrypted PostgreSQL backup with mandatory restore verification, scheduled to run daily and unattended:
+
+- **Code**: `backend/scripts/backup-*.ts` (pg_dump → pg_restore --list validation → AWS KMS envelope encryption (AES-256-GCM) → S3 upload → restore verification against the exact uploaded object → disposable-database sanity checks → cleanup). `assertProductionDatabaseTarget()` is a fail-closed guard restricting the production target to exactly `tms_dev`.
+- **Runtime deployment**: compiled to `C:\TMSBackupRuntime\` (isolated from the application repository — the scheduled service account has no access to the developer's OneDrive-synced working copy).
+- **Execution account**: `Mark\TMSBackupSvc`, a dedicated local Windows account (standard user, not an Administrator), with its own PostgreSQL `pgpass` entries and AWS credential files, scoped to only the uploader (`tms-db-backup-uploader`) and restorer (`tms-db-backup-restorer`) IAM identities.
+- **Scheduling**: Windows Task Scheduler, `\TMS\TMS-ProductionBackup`, daily at 02:00 local time, `RunLevel: Limited` (no elevated privileges), `MultipleInstances: IgnoreNew`, 90-minute execution timeout, up to 2 restarts 15 minutes apart on failure (3 attempts total), requires network availability.
+- **First verified successful execution**: 2026-09-09 21:42, via a controlled manual `Start-ScheduledTask` invocation to confirm the registered task functions correctly end-to-end — `LastTaskResult: 0`. The first automatic 02:00 trigger firing was still pending as of this writing (`NextRunTime: 2026-09-10 02:00:00`). Produced `s3://tms-db-backups-prod-2026/daily/tms_dev-20260909-134205Z.dump.enc`, downloaded and restored into a disposable database (`tms_restore_verify_20260909_134209_c073a07e`), validated 44 tables including all required tables (`_prisma_migrations`, `organization`, `user`, `load`) with non-zero representative row counts, then dropped the disposable database and cleaned up all local staging artifacts. Full log: `C:\TMSBackupsNew\logs\backup-production-20260909-214202.log`.
+- **Observation**: during setup, the task was initially not visible via `Get-ScheduledTask`/COM enumeration or the expected on-disk Task Scheduler store immediately after several `Register-ScheduledTask` attempts, despite Event 140 recording the registration. `TMSBackupSvc` was subsequently granted `SeBatchLogonRight` after Security Event 4625 confirmed the account initially lacked the required batch-logon right. A later direct Task Scheduler COM registration successfully created the task, after which `Get-ScheduledTask` reported it as Ready and a controlled manual `Start-ScheduledTask` execution completed successfully with `LastTaskResult: 0`. The exact cause of the earlier registration/persistence anomaly was not conclusively established and should not be claimed as resolved by a single root cause.
+- **Remaining open items**: S3 lifecycle/retention policy not yet configured (see above); the pre-existing legacy backup pipeline (`C:\TMSBackups\`) remains running in parallel and untouched, pending a multi-day observation period before retirement, per the original migration plan; no failure-alerting/notification mechanism exists yet beyond the log file and Task Scheduler's own history; the automatic 02:00 daily trigger has not yet been observed firing on its own and should be confirmed over the next several days.
 
 ### 12.2 Logging & Monitoring
 - Structured JSON application logs (distinct from the business `AuditLog`, per Architecture §19), tagged with `requestId` (§9.3) for cross-referencing a log line back to its audit trail.
@@ -645,7 +657,7 @@ These are targets this architecture is designed to support — actual achievemen
 - **Job-queue monitoring** — queue depth and failure-rate alerting, called out as important because several locked business behaviors (compliance expiration, quote expiration) silently depend on the scheduler actually running (Architecture §19's specific warning).
 
 ### 12.3 Backups & Restore
-Automated daily-minimum backups meeting §12.1; restore procedure documented and periodically drilled (not a one-time setup) — a Stage 7/operations deliverable.
+Automated daily-minimum backups meeting §12.1 are implemented and restore-verified as part of Task #10 (verified 2026-09-09). The production backup job performs mandatory restore verification against the exact uploaded object and cleans up its disposable verification database. Ongoing operational requirements remain: monitor scheduled runs, periodically review restore verification results, maintain the required retention policy, and retire the legacy backup pipeline only after the planned observation period. See §12.1.1 for the full implementation detail.
 
 ### 12.4 Failure Handling
 - Background jobs (§10) use retry-with-backoff (BullMQ's built-in retry policies) for transient failures (e.g., a scanner provider timeout); a job that exhausts retries lands in a dead-letter state visible to monitoring, not silently dropped.
