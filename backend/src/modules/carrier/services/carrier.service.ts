@@ -509,6 +509,16 @@ export class CarrierService {
       throw new BusinessRuleError('A reason is required.');
     }
 
+    if (toActive && driver.licenseNumber) {
+      await this.assertNoDuplicateLicense(
+        tx,
+        organizationId,
+        carrierId,
+        driver.licenseNumber,
+        driverId,
+      );
+    }
+
     const updated = await tx.driver.update({
       where: { id: driverId },
       data: { active: toActive },

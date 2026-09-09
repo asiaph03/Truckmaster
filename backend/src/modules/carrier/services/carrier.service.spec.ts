@@ -639,6 +639,136 @@ describe('CarrierService', () => {
         );
       });
 
+      it('reactivation succeeds when no other active driver shares the license', async () => {
+        const { service, tx } = buildDriverService({
+          driver: {
+            id: DRIVER_ID,
+            organizationId: ORG_ID,
+            carrierId: CARRIER_ID,
+            active: false,
+            licenseNumber: 'D123',
+          },
+          duplicateDriver: null,
+        });
+
+        await service.reactivateDriver(ORG_ID, CARRIER_ID, DRIVER_ID, REASON_DTO, ACTING_USER);
+
+        expect(tx.driver.update).toHaveBeenCalledWith({
+          where: { id: DRIVER_ID },
+          data: { active: true },
+        });
+      });
+
+      it('rejects reactivation with ConflictError when another ACTIVE driver in the same org/carrier has the same license', async () => {
+        const { service, tx, audit } = buildDriverService({
+          driver: {
+            id: DRIVER_ID,
+            organizationId: ORG_ID,
+            carrierId: CARRIER_ID,
+            active: false,
+            licenseNumber: 'D123',
+          },
+          duplicateDriver: { id: 'other-driver' },
+        });
+
+        await expect(
+          service.reactivateDriver(ORG_ID, CARRIER_ID, DRIVER_ID, REASON_DTO, ACTING_USER),
+        ).rejects.toThrow(ConflictError);
+        expect(tx.driver.update).not.toHaveBeenCalled();
+        expect(audit.record).not.toHaveBeenCalled();
+      });
+
+      it('scopes the reactivation duplicate-license check to organizationId, carrierId, licenseNumber, active:true, excluding the driver being reactivated', async () => {
+        const { service, tx } = buildDriverService({
+          driver: {
+            id: DRIVER_ID,
+            organizationId: ORG_ID,
+            carrierId: CARRIER_ID,
+            active: false,
+            licenseNumber: 'D123',
+          },
+          duplicateDriver: null,
+        });
+
+        await service.reactivateDriver(ORG_ID, CARRIER_ID, DRIVER_ID, REASON_DTO, ACTING_USER);
+
+        expect(tx.driver.findFirst).toHaveBeenCalledWith({
+          where: {
+            organizationId: ORG_ID,
+            carrierId: CARRIER_ID,
+            licenseNumber: 'D123',
+            active: true,
+            id: { not: DRIVER_ID },
+          },
+        });
+      });
+
+      it('reactivation succeeds when another driver holding the same license is itself inactive', async () => {
+        // The duplicate-check query filters to active:true at the DB level;
+        // a mocked null result here models the DB correctly excluding an
+        // inactive driver's license from the match (same reasoning as the
+        // equivalent updateDriver test above).
+        const { service, tx } = buildDriverService({
+          driver: {
+            id: DRIVER_ID,
+            organizationId: ORG_ID,
+            carrierId: CARRIER_ID,
+            active: false,
+            licenseNumber: 'D123',
+          },
+          duplicateDriver: null,
+        });
+
+        await service.reactivateDriver(ORG_ID, CARRIER_ID, DRIVER_ID, REASON_DTO, ACTING_USER);
+
+        expect(tx.driver.update).toHaveBeenCalled();
+      });
+
+      it('reactivates without querying for a duplicate when the driver has no license number on file', async () => {
+        const { service, tx } = buildDriverService({
+          driver: {
+            id: DRIVER_ID,
+            organizationId: ORG_ID,
+            carrierId: CARRIER_ID,
+            active: false,
+            licenseNumber: null,
+          },
+        });
+
+        await service.reactivateDriver(ORG_ID, CARRIER_ID, DRIVER_ID, REASON_DTO, ACTING_USER);
+
+        expect(tx.driver.update).toHaveBeenCalledWith({
+          where: { id: DRIVER_ID },
+          data: { active: true },
+        });
+        // Only the plain row-lookup call, never the licenseNumber-shaped
+        // duplicate-check call.
+        expect(tx.driver.findFirst).toHaveBeenCalledTimes(1);
+        expect(tx.driver.findFirst).not.toHaveBeenCalledWith(
+          expect.objectContaining({ where: expect.objectContaining({ licenseNumber: expect.anything() }) }),
+        );
+      });
+
+      it('deactivation never performs the duplicate-license check, even for a driver with a license number on file', async () => {
+        const { service, tx } = buildDriverService({
+          driver: {
+            id: DRIVER_ID,
+            organizationId: ORG_ID,
+            carrierId: CARRIER_ID,
+            active: true,
+            licenseNumber: 'D123',
+          },
+        });
+
+        await service.deactivateDriver(ORG_ID, CARRIER_ID, DRIVER_ID, REASON_DTO, ACTING_USER);
+
+        expect(tx.driver.update).toHaveBeenCalledWith({
+          where: { id: DRIVER_ID },
+          data: { active: false },
+        });
+        expect(tx.driver.findFirst).toHaveBeenCalledTimes(1);
+      });
+
       it('rejects reactivating an already-active driver', async () => {
         const { service, tx } = buildDriverService({});
 
