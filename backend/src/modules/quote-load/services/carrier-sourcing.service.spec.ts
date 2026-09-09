@@ -63,6 +63,7 @@ function buildService(opts: {
     },
     chargeLineItem: {
       create: jest.fn().mockImplementation(({ data }) => ({ id: 'charge-1', ...data })),
+      deleteMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
     notification: {
       findFirst: jest
@@ -428,6 +429,32 @@ describe('CarrierSourcingService.carrierRejected — Workflow 5 §5.6', () => {
     await expect(
       service.carrierRejected(ORG_ID, LOAD_ID, { reason: 'No equipment' }, USER_ID),
     ).rejects.toThrow(InvalidTransitionError);
+  });
+
+  it('removes the stale ORIGINAL/CARRIER LINEHAUL charge created at assignment time, narrowly scoped', async () => {
+    const { service, tx } = buildService({
+      load: {
+        id: LOAD_ID,
+        status: 'CARRIER_ASSIGNED',
+        assignedCarrierId: CARRIER_ID,
+        carrierRate: { toString: () => '2000.00' },
+      },
+    });
+
+    await service.carrierRejected(ORG_ID, LOAD_ID, { reason: 'No equipment' }, USER_ID);
+
+    expect(tx.chargeTypeDefinition.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ code: 'LINEHAUL' }) }),
+    );
+    expect(tx.chargeLineItem.deleteMany).toHaveBeenCalledWith({
+      where: {
+        organizationId: ORG_ID,
+        loadId: LOAD_ID,
+        side: 'CARRIER',
+        source: 'ORIGINAL',
+        chargeTypeId: 'linehaul-type-1',
+      },
+    });
   });
 });
 

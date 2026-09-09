@@ -620,6 +620,52 @@ describe('Sourcing & Dispatch (e2e)', () => {
         (a: { outcome: string }) => a.outcome === 'REJECTED_AFTER_ASSIGNMENT',
       );
       expect(rejectedAttempts).toHaveLength(2);
+
+      // Production hardening fix — carrierRejected() must remove the stale
+      // ORIGINAL/CARRIER LINEHAUL ChargeLineItem left over from each
+      // rejected assignment, so cycling assign -> reject -> assign ->
+      // reject never accumulates rows. The Load ends this test fully
+      // unassigned (no carrier), so the correct final count is zero.
+      const originalCarrierCharges = loadAfter.body.chargeLineItems.filter(
+        (c: { side: string; source: string }) => c.side === 'CARRIER' && c.source === 'ORIGINAL',
+      );
+      expect(originalCarrierCharges).toHaveLength(0);
+    });
+
+    it('leaves exactly one ORIGINAL/CARRIER charge, matching the surviving carrier, after assign -> reject -> reassign', async () => {
+      const carrierA = await createEligibleCarrier('reassign-cost-a');
+      const carrierB = await createEligibleCarrier('reassign-cost-b');
+      const loadId = await createBookedLoad('reassign-cost');
+      await adminAgent.post(`${API}/loads/${loadId}/begin-sourcing`).expect(200);
+
+      await adminAgent
+        .post(`${API}/loads/${loadId}/assign-carrier`)
+        .send({ carrierId: carrierA, carrierRate: '1500.00' })
+        .expect(200);
+      await adminAgent
+        .post(`${API}/loads/${loadId}/carrier-rejected`)
+        .send({ reason: 'Equipment breakdown' })
+        .expect(200);
+      await adminAgent
+        .post(`${API}/loads/${loadId}/assign-carrier`)
+        .send({ carrierId: carrierB, carrierRate: '1550.00' })
+        .expect(200);
+
+      const loadAfter = await adminAgent.get(`${API}/loads/${loadId}`).expect(200);
+      const originalCarrierCharges = loadAfter.body.chargeLineItems.filter(
+        (c: { side: string; source: string }) => c.side === 'CARRIER' && c.source === 'ORIGINAL',
+      );
+      expect(originalCarrierCharges).toHaveLength(1);
+      // ChargeLineItem.amount serializes via Prisma's Decimal -> JSON,
+      // which strips trailing zeros for a whole-dollar value (matches the
+      // existing convention in financials.e2e-spec.ts:456's '150' assertion).
+      expect(originalCarrierCharges[0].amount).toBe('1550');
+
+      // Carrier payment/remaining-balance math must stay unaffected — it
+      // reads Load.carrierRate directly, never these ChargeLineItem rows.
+      // (Same Decimal -> JSON stripping as above; matches this file's own
+      // existing convention at line 545's '1500' assertion.)
+      expect(loadAfter.body.carrierRate).toBe('1550');
     });
 
     it('requires a non-empty reason', async () => {

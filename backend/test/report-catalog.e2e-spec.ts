@@ -655,6 +655,39 @@ describe('Reports Library (e2e)', () => {
       expect(laneRow.groupLabel).toContain('Chicago');
     });
 
+    it('groupBy=CARRIER cost is not double-counted after a carrier is rejected and the load reassigned', async () => {
+      // Production hardening fix — carrierRejected() must remove the stale
+      // ORIGINAL/CARRIER LINEHAUL charge from the rejected assignment, or
+      // this query (which sums every charge_line_item row with side=CARRIER,
+      // no source filter) would report carrierA's rate + carrierB's rate
+      // instead of just carrierB's.
+      const { loadId } = await createBookedLoad('rm-reject-cycle', undefined, '0.00');
+      const carrierA = await createEligibleCarrier('rm-reject-cycle-a');
+      const carrierB = await createEligibleCarrier('rm-reject-cycle-b');
+
+      await adminAgent.post(`${API}/loads/${loadId}/begin-sourcing`).expect(200);
+      await adminAgent
+        .post(`${API}/loads/${loadId}/assign-carrier`)
+        .send({ carrierId: carrierA, carrierRate: '1500.00' })
+        .expect(200);
+      await adminAgent
+        .post(`${API}/loads/${loadId}/carrier-rejected`)
+        .send({ reason: 'Equipment breakdown' })
+        .expect(200);
+      await adminAgent
+        .post(`${API}/loads/${loadId}/assign-carrier`)
+        .send({ carrierId: carrierB, carrierRate: '1550.00' })
+        .expect(200);
+
+      const res = await accountingAgent
+        .get(`${API}/reports/revenue-margin`)
+        .query({ groupBy: 'CARRIER', carrierId: carrierB, pageSize: 100 })
+        .expect(200);
+      const row = res.body.items.find((r: { groupKey: string }) => r.groupKey === carrierB);
+      expect(row).toBeDefined();
+      expect(row.cost).toBe('1550.00');
+    });
+
     it('compare=true returns a previousPeriod computed from the shifted range', async () => {
       const res = await accountingAgent
         .get(`${API}/reports/revenue-margin`)

@@ -184,6 +184,36 @@ export class CarrierSourcingService {
   }
 
   /**
+   * Companion to createOriginalCarrierLinehaulCharge above — removes the
+   * stale ORIGINAL/CARRIER linehaul charge left behind when an assignment
+   * is rejected, so a later reassignment doesn't leave two such rows on
+   * the same Load. Narrowly scoped to side=CARRIER + source=ORIGINAL +
+   * chargeTypeId=LINEHAUL — the only rows createOriginalCarrierLinehaulCharge
+   * ever creates; addCharge() (the only other ChargeLineItem writer) always
+   * uses source=ADJUSTMENT, so this can never remove a legitimate row.
+   */
+  private async removeOriginalCarrierLinehaulCharge(
+    tx: Prisma.TransactionClient,
+    organizationId: string,
+    loadId: string,
+  ): Promise<void> {
+    const linehaulType = await tx.chargeTypeDefinition.findFirst({
+      where: { code: 'LINEHAUL', OR: [{ organizationId }, { organizationId: null }] },
+    });
+    if (!linehaulType) return; // seed not applied — defensive, mirrors the create-side method
+
+    await tx.chargeLineItem.deleteMany({
+      where: {
+        organizationId,
+        loadId,
+        side: 'CARRIER',
+        source: 'ORIGINAL',
+        chargeTypeId: linehaulType.id,
+      },
+    });
+  }
+
+  /**
    * Workflow 5 §5.3/§5.4 — the hard, non-overridable eligibility gate,
    * re-validated live inside this transaction (never trusted from an
    * earlier read), then assignment itself.
@@ -331,6 +361,8 @@ export class CarrierSourcingService {
         where: { id: loadId },
         data: { status: 'CARRIER_SOURCING', assignedCarrierId: null, carrierRate: null },
       });
+
+      await this.removeOriginalCarrierLinehaulCharge(tx, organizationId, loadId);
 
       await this.audit.record(tx, {
         organizationId,
