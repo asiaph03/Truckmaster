@@ -52,9 +52,9 @@ describe('UserMenu — Platform Super Admin session propagation (no page refresh
     // Before login, the menu item must not exist at all (avatar not even open yet, but the item is absent from the DOM either way).
     expect(screen.queryByText('Platform Organizations')).not.toBeInTheDocument();
 
-    fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'jane@example.com' } });
+    fireEvent.change(screen.getByLabelText('Email Address'), { target: { value: 'jane@example.com' } });
     fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'secret123' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+    fireEvent.click(screen.getByRole('button', { name: /Log In/ }));
 
     await waitFor(() => expect(useSessionStore.getState().status).toBe('authenticated'));
 
@@ -83,9 +83,9 @@ describe('UserMenu — Platform Super Admin session propagation (no page refresh
     );
     renderLoginAndUserMenu();
 
-    fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'sam@example.com' } });
+    fireEvent.change(screen.getByLabelText('Email Address'), { target: { value: 'sam@example.com' } });
     fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'secret123' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+    fireEvent.click(screen.getByRole('button', { name: /Log In/ }));
 
     await waitFor(() => expect(useSessionStore.getState().status).toBe('authenticated'));
 

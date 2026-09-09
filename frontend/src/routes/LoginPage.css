@@ -1,46 +1,190 @@
 .login-page {
   min-height: 100vh;
   display: flex;
+  background: var(--neutral-0);
+}
+
+/* ============================= LEFT: HERO ============================= */
+
+.login-hero {
+  flex: 0 0 56%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: var(--space-8);
+  padding: var(--space-9) var(--space-9) var(--space-7);
+  /* Uploaded reference photo (frontend/public/login-hero-truck.png) with
+     a light, left-weighted scrim — just enough to keep the headline/
+     feature text legible without washing the sky out to pale white; the
+     reference keeps the sky vividly blue even directly behind the text. */
+  background-image: linear-gradient(
+      100deg,
+      rgba(244, 245, 254, 0.55) 0%,
+      rgba(244, 245, 254, 0.42) 25%,
+      rgba(221, 227, 251, 0.2) 45%,
+      rgba(221, 227, 251, 0.05) 60%,
+      rgba(221, 227, 251, 0) 75%
+    ),
+    url('/login-hero-truck.png');
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  position: relative;
+  overflow: hidden;
+}
+
+.login-hero-content {
+  position: relative;
+  z-index: 1;
+  max-width: 560px;
+}
+
+.login-hero-logo {
+  display: block;
+  height: 168px;
+  width: auto;
+  max-width: 100%;
+  /* Tighter than the pre-enlargement margin — the much taller logo
+     needs the space reclaimed elsewhere so the feature row below
+     doesn't shift down into the truck's position in the photo. */
+  margin-bottom: var(--space-3);
+}
+
+.login-hero-headline {
+  margin: 0 0 var(--space-4);
+  font-size: clamp(28px, 3.6vw, 42px);
+  line-height: 1.15;
+  font-weight: 700;
+  color: var(--neutral-900);
+  letter-spacing: -0.01em;
+}
+
+.login-hero-headline-accent {
+  color: var(--brand-600);
+}
+
+.login-hero-subtext {
+  margin: 0 0 var(--space-5);
+  max-width: 460px;
+  font-size: var(--text-body-size);
+  line-height: 1.6;
+  color: var(--neutral-500);
+}
+
+.login-hero-features {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-5);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.login-hero-feature {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  font-size: var(--text-small-size);
+  font-weight: var(--text-body-medium-weight);
+  color: var(--neutral-700);
+  line-height: 1.35;
+}
+
+.login-hero-feature-icon {
+  display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--neutral-50);
+  width: 44px;
+  height: 44px;
+  border-radius: var(--radius-md);
+  background: var(--neutral-0);
+  color: var(--brand-600);
+  box-shadow: var(--shadow-sm);
+}
+
+.login-hero-tagline {
+  position: relative;
+  z-index: 1;
+  margin: 0;
+  font-size: var(--text-caption-size);
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--brand-700);
+  line-height: 1.6;
+}
+
+.login-hero-tagline::before {
+  content: '';
+  display: block;
+  width: 32px;
+  height: 3px;
+  margin-bottom: var(--space-2);
+  background: var(--brand-600);
+  border-radius: 2px;
+}
+
+/* ============================ RIGHT: PANEL ============================ */
+
+.login-panel {
+  flex: 1 1 44%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-6);
+  padding: var(--space-7) var(--space-6);
+  background: var(--brand-50);
+  position: relative;
+  overflow: hidden;
+}
+
+/* Faint TruckMaster brand watermark bleeding off the top-right corner —
+   decorative only (aria-hidden in the markup), reusing the existing
+   sidebar/hero wordmark asset, echoing the reference design's subtle
+   corner mark. */
+.login-panel-watermark {
+  position: absolute;
+  top: -8%;
+  right: -6%;
+  width: 46%;
+  height: auto;
+  opacity: 0.06;
+  transform: rotate(-4deg);
+  pointer-events: none;
+  z-index: 0;
 }
 
 .login-card {
-  width: 360px;
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  max-width: 420px;
   background: var(--neutral-0);
   border: 1px solid var(--neutral-200);
   border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-sm);
-  padding: var(--space-7);
+  box-shadow: var(--shadow-md);
+  padding: var(--space-8) var(--space-7);
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
-}
-
-.login-logo {
-  display: block;
-  width: 100%;
-  max-width: 160px;
-  height: auto;
-  margin: 0 auto;
-  object-fit: contain;
+  gap: var(--space-5);
 }
 
 .login-title {
-  font-size: var(--text-h1-size);
-  line-height: var(--text-h1-line);
-  font-weight: var(--text-h1-weight);
-  color: var(--brand-600);
+  font-size: var(--text-display-size);
+  line-height: var(--text-display-line);
+  font-weight: var(--text-display-weight);
+  color: var(--neutral-900);
   margin: 0;
-  text-align: center;
 }
 
 .login-subtitle {
-  margin: 0;
+  margin: calc(var(--space-2) * -1) 0 0;
   color: var(--neutral-500);
-  font-size: var(--text-small-size);
-  text-align: center;
+  font-size: var(--text-body-size);
 }
 
 .login-field {
@@ -52,19 +196,58 @@
   color: var(--neutral-700);
 }
 
+.login-input-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.login-input-icon {
+  position: absolute;
+  left: var(--space-3);
+  color: var(--neutral-400);
+  pointer-events: none;
+}
+
 .login-field input {
-  height: 36px;
+  width: 100%;
+  height: 44px;
   border: 1px solid var(--neutral-300);
-  border-radius: var(--radius-sm);
-  padding: 0 var(--space-3);
+  border-radius: var(--radius-md);
+  padding: 0 var(--space-3) 0 40px;
   font-size: var(--text-body-size);
   font-family: var(--font-ui);
+  color: var(--neutral-900);
+}
+
+.login-field input::placeholder {
+  color: var(--neutral-400);
 }
 
 .login-field input:focus {
   outline: none;
   border-color: var(--brand-600);
   box-shadow: 0 0 0 2px var(--brand-100);
+}
+
+.login-password-toggle {
+  position: absolute;
+  right: var(--space-2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: transparent;
+  color: var(--neutral-400);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+}
+
+.login-password-toggle:hover {
+  background: var(--neutral-100);
+  color: var(--neutral-700);
 }
 
 .login-field-error {
@@ -79,4 +262,133 @@
   padding: var(--space-2) var(--space-3);
   border-radius: var(--radius-sm);
   font-size: var(--text-small-size);
+}
+
+.login-forgot-row {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: calc(var(--space-3) * -1);
+}
+
+.login-forgot-link {
+  font-size: var(--text-small-size);
+  font-weight: var(--text-body-medium-weight);
+  color: var(--brand-600);
+  text-decoration: none;
+}
+
+.login-forgot-link:hover {
+  text-decoration: underline;
+}
+
+.login-submit {
+  width: 100%;
+}
+
+.login-submit span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  width: 100%;
+}
+
+.login-contact-admin {
+  margin: 0;
+  text-align: center;
+  font-size: var(--text-small-size);
+  color: var(--neutral-500);
+}
+
+.login-contact-admin a {
+  color: var(--brand-600);
+  font-weight: var(--text-body-medium-weight);
+  text-decoration: none;
+}
+
+.login-contact-admin a:hover {
+  text-decoration: underline;
+}
+
+.login-footer {
+  position: relative;
+  z-index: 1;
+  margin: 0;
+  font-size: var(--text-caption-size);
+  color: var(--neutral-400);
+}
+
+/* =============================== TABLET ================================ */
+
+@media (max-width: 1024px) {
+  .login-hero {
+    flex-basis: 50%;
+    padding: var(--space-7);
+  }
+  .login-panel {
+    flex-basis: 50%;
+  }
+  .login-hero-features {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* =============================== MOBILE ================================= */
+
+@media (max-width: 768px) {
+  .login-page {
+    flex-direction: column;
+  }
+
+  .login-hero {
+    flex: none;
+    padding: var(--space-6) var(--space-5);
+    gap: var(--space-6);
+    /* The left-to-right desktop scrim isn't enough here — with the
+       feature row/tagline hidden, almost the entire mobile hero band is
+       text (logo through subtext), so it needs near-uniform, high
+       coverage rather than a fade, or the truck shows through directly
+       behind the copy wherever it happens to fall in the shorter crop. */
+    background-image: linear-gradient(
+        180deg,
+        rgba(244, 245, 254, 0.94) 0%,
+        rgba(244, 245, 254, 0.92) 85%,
+        rgba(221, 227, 251, 0.7) 100%
+      ),
+      url('/login-hero-truck.png');
+  }
+
+  .login-hero-logo {
+    /* Not a literal 3x of the mobile base (40px) — at this aspect ratio
+       that would overflow a 375px viewport. Scaled up as far as fits
+       cleanly within the mobile hero's padding instead. */
+    height: 110px;
+    margin-bottom: var(--space-5);
+  }
+
+  .login-hero-headline {
+    font-size: clamp(24px, 7vw, 30px);
+  }
+
+  .login-hero-subtext {
+    margin-bottom: var(--space-5);
+  }
+
+  /* The feature row and tagline are secondary marketing content — hidden
+     below the fold on mobile so the login form stays reachable without
+     excessive scrolling, per the task's explicit mobile guidance. The
+     headline and logo (primary branding) remain visible. */
+  .login-hero-features,
+  .login-hero-tagline {
+    display: none;
+  }
+
+  .login-panel {
+    flex: none;
+    padding: var(--space-6) var(--space-5);
+  }
+
+  .login-card {
+    padding: var(--space-6) var(--space-5);
+  }
 }
