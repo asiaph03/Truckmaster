@@ -1,6 +1,8 @@
+import { Logger } from '@nestjs/common';
 import { ComplianceExpirationNotificationService } from './compliance-expiration-notification.service';
 
 const ORG_ID = 'org-1';
+const OTHER_ORG_ID = 'org-2';
 
 const EXPIRING_DOC = {
   id: 'doc-1',
@@ -97,5 +99,66 @@ describe('ComplianceExpirationNotificationService — Workflow 3 §3.10', () => 
     await service.run();
 
     expect(notifications.createForRoles).not.toHaveBeenCalled();
+  });
+});
+
+describe('ComplianceExpirationNotificationService — Monitoring Phase 4A-2 (per-record error isolation)', () => {
+  it('a failing document notification does not abort the rest of that org or subsequent orgs, and logs org+entity correlation', async () => {
+    const docFail = { ...EXPIRING_DOC, id: 'doc-fail' };
+    const docOk = { ...EXPIRING_DOC, id: 'doc-ok' };
+    const docOrg2 = { ...EXPIRING_DOC, id: 'doc-org2' };
+
+    const tx = {
+      document: {
+        findMany: jest
+          .fn()
+          .mockImplementation(({ where }: { where: { organizationId: string } }) =>
+            Promise.resolve(where.organizationId === ORG_ID ? [docFail, docOk] : [docOrg2]),
+          ),
+      },
+      carrierInsurance: { findMany: jest.fn().mockResolvedValue([]) },
+      carrier: {
+        findFirst: jest.fn().mockResolvedValue({ id: 'carrier-1', legalName: 'Acme Trucking', assignmentEligible: true }),
+      },
+      notification: {
+        findFirst: jest.fn().mockImplementation(({ where }: { where: { relatedEntityId: string } }) => {
+          if (where.relatedEntityId === 'doc-fail') throw new Error('simulated DB failure');
+          return Promise.resolve(null);
+        }),
+      },
+    };
+    const prisma = {
+      organization: { findMany: jest.fn().mockResolvedValue([{ id: ORG_ID }, { id: OTHER_ORG_ID }]) },
+      withTenantTransaction: jest
+        .fn()
+        .mockImplementation((_orgId: string, fn: (tx: unknown) => unknown) => fn(tx)),
+    };
+    const audit = { record: jest.fn().mockResolvedValue(undefined) };
+    const notifications = { createForRoles: jest.fn().mockResolvedValue(undefined) };
+    const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+
+    const service = new ComplianceExpirationNotificationService(prisma as never, audit as never, notifications as never);
+
+    await expect(service.run()).resolves.toBeUndefined();
+
+    expect(notifications.createForRoles).toHaveBeenCalledWith(
+      expect.anything(),
+      ORG_ID,
+      expect.anything(),
+      expect.objectContaining({ relatedEntityId: 'doc-ok' }),
+    );
+    expect(notifications.createForRoles).toHaveBeenCalledWith(
+      expect.anything(),
+      OTHER_ORG_ID,
+      expect.anything(),
+      expect.objectContaining({ relatedEntityId: 'doc-org2' }),
+    );
+
+    const failureLog = errorSpy.mock.calls.find((c) => String(c[0]).includes('doc-fail'));
+    expect(failureLog).toBeDefined();
+    expect(failureLog![0]).toContain(ORG_ID);
+    expect(failureLog![0]).toContain('doc-fail');
+
+    errorSpy.mockRestore();
   });
 });

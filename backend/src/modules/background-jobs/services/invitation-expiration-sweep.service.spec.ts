@@ -1,6 +1,8 @@
+import { Logger } from '@nestjs/common';
 import { InvitationExpirationSweepService } from './invitation-expiration-sweep.service';
 
 const ORG_ID = 'org-1';
+const OTHER_ORG_ID = 'org-2';
 
 function buildService(
   memberships: Record<string, unknown>[] = [],
@@ -100,5 +102,57 @@ describe('InvitationExpirationSweepService — INVITATION_EXPIRED notification (
     await service.run();
 
     expect(notifications.createForUserAndRoles).not.toHaveBeenCalled();
+  });
+});
+
+describe('InvitationExpirationSweepService — Monitoring Phase 4A-2 (per-record error isolation)', () => {
+  it('a failing membership does not abort the rest of that org or subsequent orgs, and logs org+entity correlation', async () => {
+    const failing = { id: 'membership-fail', status: 'INVITED', invitationExpiresAt: new Date('2020-01-01') };
+    const ok = { id: 'membership-ok', status: 'INVITED', invitationExpiresAt: new Date('2020-01-01') };
+    const org2Record = { id: 'membership-org2', status: 'INVITED', invitationExpiresAt: new Date('2020-01-01') };
+
+    const tx = {
+      organizationMembership: {
+        findMany: jest
+          .fn()
+          .mockImplementation(({ where }: { where: { organizationId: string } }) =>
+            Promise.resolve(where.organizationId === ORG_ID ? [failing, ok] : [org2Record]),
+          ),
+        update: jest.fn().mockImplementation(({ where }: { where: { id: string } }) => {
+          if (where.id === 'membership-fail') throw new Error('simulated DB failure');
+          return { id: where.id, status: 'EXPIRED' };
+        }),
+      },
+      notification: { findFirst: jest.fn().mockResolvedValue(null) },
+    };
+    const prisma = {
+      organization: { findMany: jest.fn().mockResolvedValue([{ id: ORG_ID }, { id: OTHER_ORG_ID }]) },
+      withTenantTransaction: jest
+        .fn()
+        .mockImplementation((_orgId: string, fn: (tx: unknown) => unknown) => fn(tx)),
+    };
+    const audit = { record: jest.fn().mockResolvedValue(undefined) };
+    const notifications = { createForUserAndRoles: jest.fn().mockResolvedValue(undefined) };
+    const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+
+    const service = new InvitationExpirationSweepService(prisma as never, audit as never, notifications as never);
+
+    await expect(service.run()).resolves.toBeUndefined();
+
+    // the other membership in the SAME org still got processed
+    expect(tx.organizationMembership.update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'membership-ok' } }),
+    );
+    // the SUBSEQUENT org still got processed
+    expect(tx.organizationMembership.update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'membership-org2' } }),
+    );
+    // the failure was logged with org + entity correlation
+    const failureLog = errorSpy.mock.calls.find((c) => String(c[0]).includes('membership-fail'));
+    expect(failureLog).toBeDefined();
+    expect(failureLog![0]).toContain(ORG_ID);
+    expect(failureLog![0]).toContain('membership-fail');
+
+    errorSpy.mockRestore();
   });
 });

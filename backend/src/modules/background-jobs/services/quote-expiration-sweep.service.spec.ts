@@ -1,6 +1,8 @@
+import { Logger } from '@nestjs/common';
 import { QuoteExpirationSweepService } from './quote-expiration-sweep.service';
 
 const ORG_ID = 'org-1';
+const OTHER_ORG_ID = 'org-2';
 
 function buildService(
   quotes: Record<string, unknown>[] = [],
@@ -114,5 +116,51 @@ describe('QuoteExpirationSweepService — QUOTE_EXPIRED notification (Task #9)',
       expect.anything(),
       expect.anything(),
     );
+  });
+});
+
+describe('QuoteExpirationSweepService — Monitoring Phase 4A-2 (per-record error isolation)', () => {
+  it('a failing quote does not abort the rest of that org or subsequent orgs, and logs org+entity correlation', async () => {
+    const failing = { id: 'quote-fail', quoteNumber: 'QT-FAIL', status: 'OPEN', expirationDate: new Date('2020-01-01'), createdByUserId: 'user-1' };
+    const ok = { id: 'quote-ok', quoteNumber: 'QT-OK', status: 'OPEN', expirationDate: new Date('2020-01-01'), createdByUserId: 'user-1' };
+    const org2Record = { id: 'quote-org2', quoteNumber: 'QT-ORG2', status: 'OPEN', expirationDate: new Date('2020-01-01'), createdByUserId: 'user-1' };
+
+    const tx = {
+      quote: {
+        findMany: jest
+          .fn()
+          .mockImplementation(({ where }: { where: { organizationId: string } }) =>
+            Promise.resolve(where.organizationId === ORG_ID ? [failing, ok] : [org2Record]),
+          ),
+        update: jest.fn().mockImplementation(({ where }: { where: { id: string } }) => {
+          if (where.id === 'quote-fail') throw new Error('simulated DB failure');
+          return { id: where.id, status: 'LOST' };
+        }),
+      },
+      notification: { findFirst: jest.fn().mockResolvedValue(null) },
+    };
+    const prisma = {
+      organization: { findMany: jest.fn().mockResolvedValue([{ id: ORG_ID }, { id: OTHER_ORG_ID }]) },
+      withTenantTransaction: jest
+        .fn()
+        .mockImplementation((_orgId: string, fn: (tx: unknown) => unknown) => fn(tx)),
+    };
+    const audit = { record: jest.fn().mockResolvedValue(undefined) };
+    const notifications = { createForUserAndRoles: jest.fn().mockResolvedValue(undefined) };
+    const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+
+    const service = new QuoteExpirationSweepService(prisma as never, audit as never, notifications as never);
+
+    await expect(service.run()).resolves.toBeUndefined();
+
+    expect(tx.quote.update).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 'quote-ok' } }));
+    expect(tx.quote.update).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 'quote-org2' } }));
+
+    const failureLog = errorSpy.mock.calls.find((c) => String(c[0]).includes('quote-fail'));
+    expect(failureLog).toBeDefined();
+    expect(failureLog![0]).toContain(ORG_ID);
+    expect(failureLog![0]).toContain('quote-fail');
+
+    errorSpy.mockRestore();
   });
 });

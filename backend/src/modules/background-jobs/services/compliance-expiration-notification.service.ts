@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { MembershipRoleName, NotificationType } from '@prisma/client';
 import { PrismaService } from '../../../common/prisma/prisma.service';
 import { AuditService } from '../../../common/audit/audit.service';
@@ -23,110 +23,167 @@ const NOTIFICATION_ROLES: MembershipRoleName[] = ['OPERATIONS_MANAGER', 'COMPLIA
  */
 @Injectable()
 export class ComplianceExpirationNotificationService {
+  private readonly logger = new Logger(ComplianceExpirationNotificationService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly notifications: NotificationService,
   ) {}
 
+  private async loadExpiringDocs(organizationId: string, windowStart: Date, windowEnd: Date) {
+    return this.prisma.withTenantTransaction(organizationId, (tx) =>
+      tx.document.findMany({
+        where: {
+          organizationId,
+          entityType: 'CARRIER',
+          isCurrentVersion: true,
+          reviewStatus: 'APPROVED',
+          expirationDate: { gte: windowStart, lte: windowEnd },
+          documentType: { code: { in: [...EXPIRABLE_DOCUMENT_CODES] } },
+        },
+        include: { documentType: true },
+      }),
+    );
+  }
+
+  private async loadExpiringInsurance(organizationId: string, windowStart: Date, windowEnd: Date) {
+    return this.prisma.withTenantTransaction(organizationId, (tx) =>
+      tx.carrierInsurance.findMany({
+        where: {
+          organizationId,
+          expirationDate: { gte: windowStart, lte: windowEnd },
+        },
+      }),
+    );
+  }
+
+  /** Monitoring Phase 4A-2 — see InvitationExpirationSweepService.run() for why each org/threshold/record gets its own transaction. */
   async run(): Promise<void> {
     const orgs = await this.prisma.organization.findMany({ select: { id: true } });
 
     for (const org of orgs) {
-      await this.prisma.withTenantTransaction(org.id, async (tx) => {
-        for (const threshold of THRESHOLDS) {
-          const windowStart = new Date();
-          const windowEnd = new Date();
-          windowEnd.setDate(windowEnd.getDate() + threshold.days);
+      for (const threshold of THRESHOLDS) {
+        const windowStart = new Date();
+        const windowEnd = new Date();
+        windowEnd.setDate(windowEnd.getDate() + threshold.days);
 
-          const docs = await tx.document.findMany({
-            where: {
-              organizationId: org.id,
-              entityType: 'CARRIER',
-              isCurrentVersion: true,
-              reviewStatus: 'APPROVED',
-              expirationDate: { gte: windowStart, lte: windowEnd },
-              documentType: { code: { in: [...EXPIRABLE_DOCUMENT_CODES] } },
-            },
-            include: { documentType: true },
-          });
+        let docs: Awaited<ReturnType<typeof this.loadExpiringDocs>>;
+        try {
+          docs = await this.loadExpiringDocs(org.id, windowStart, windowEnd);
+        } catch (error) {
+          this.logger.error(
+            `Compliance expiration notification sweep: failed to load expiring documents for org ${org.id}, threshold ${threshold.days}d: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+            error instanceof Error ? error.stack : undefined,
+          );
+          docs = [];
+        }
 
-          for (const doc of docs) {
-            const alreadySent = await tx.notification.findFirst({
-              where: {
-                organizationId: org.id,
+        for (const doc of docs) {
+          try {
+            await this.prisma.withTenantTransaction(org.id, async (tx) => {
+              const alreadySent = await tx.notification.findFirst({
+                where: {
+                  organizationId: org.id,
+                  type: threshold.type,
+                  relatedEntityType: 'Document',
+                  relatedEntityId: doc.id,
+                },
+              });
+              if (alreadySent) return;
+
+              const carrier = await tx.carrier.findFirst({
+                where: { id: doc.entityId, organizationId: org.id },
+              });
+              if (!carrier) return;
+
+              await this.notifications.createForRoles(tx, org.id, NOTIFICATION_ROLES, {
                 type: threshold.type,
                 relatedEntityType: 'Document',
                 relatedEntityId: doc.id,
-              },
-            });
-            if (alreadySent) continue;
+                message: `${doc.documentType.label} for ${carrier.legalName} expires ${doc.expirationDate!.toISOString().slice(0, 10)} (assignment eligible: ${carrier.assignmentEligible ? 'Yes' : 'No'}).`,
+              });
 
-            const carrier = await tx.carrier.findFirst({
-              where: { id: doc.entityId, organizationId: org.id },
-            });
-            if (!carrier) continue;
-
-            await this.notifications.createForRoles(tx, org.id, NOTIFICATION_ROLES, {
-              type: threshold.type,
-              relatedEntityType: 'Document',
-              relatedEntityId: doc.id,
-              message: `${doc.documentType.label} for ${carrier.legalName} expires ${doc.expirationDate!.toISOString().slice(0, 10)} (assignment eligible: ${carrier.assignmentEligible ? 'Yes' : 'No'}).`,
-            });
-
-            await this.audit.record(tx, {
-              organizationId: org.id,
-              action: 'Expiration Notification Sent',
-              entityType: 'Document',
-              entityId: doc.id,
-              newValue: { thresholdDays: threshold.days, carrierId: carrier.id },
-              actorType: 'SYSTEM',
-            });
-          }
-
-          const insuranceRecords = await tx.carrierInsurance.findMany({
-            where: {
-              organizationId: org.id,
-              expirationDate: { gte: windowStart, lte: windowEnd },
-            },
-          });
-
-          for (const record of insuranceRecords) {
-            const alreadySent = await tx.notification.findFirst({
-              where: {
+              await this.audit.record(tx, {
                 organizationId: org.id,
+                action: 'Expiration Notification Sent',
+                entityType: 'Document',
+                entityId: doc.id,
+                newValue: { thresholdDays: threshold.days, carrierId: carrier.id },
+                actorType: 'SYSTEM',
+              });
+            });
+          } catch (error) {
+            this.logger.error(
+              `Compliance expiration notification sweep: failed for org ${org.id}, document ${doc.id}, threshold ${threshold.days}d: ${
+                error instanceof Error ? error.message : String(error)
+              }`,
+              error instanceof Error ? error.stack : undefined,
+            );
+          }
+        }
+
+        let insuranceRecords: Awaited<ReturnType<typeof this.loadExpiringInsurance>>;
+        try {
+          insuranceRecords = await this.loadExpiringInsurance(org.id, windowStart, windowEnd);
+        } catch (error) {
+          this.logger.error(
+            `Compliance expiration notification sweep: failed to load expiring insurance for org ${org.id}, threshold ${threshold.days}d: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+            error instanceof Error ? error.stack : undefined,
+          );
+          insuranceRecords = [];
+        }
+
+        for (const record of insuranceRecords) {
+          try {
+            await this.prisma.withTenantTransaction(org.id, async (tx) => {
+              const alreadySent = await tx.notification.findFirst({
+                where: {
+                  organizationId: org.id,
+                  type: threshold.type,
+                  relatedEntityType: 'CarrierInsurance',
+                  relatedEntityId: record.id,
+                },
+              });
+              if (alreadySent) return;
+
+              const carrier = await tx.carrier.findFirst({
+                where: { id: record.carrierId, organizationId: org.id },
+              });
+              if (!carrier) return;
+
+              const coverageLabel =
+                record.coverageType === 'AUTO_LIABILITY' ? 'Auto Liability' : 'Cargo';
+              await this.notifications.createForRoles(tx, org.id, NOTIFICATION_ROLES, {
                 type: threshold.type,
                 relatedEntityType: 'CarrierInsurance',
                 relatedEntityId: record.id,
-              },
-            });
-            if (alreadySent) continue;
+                message: `${coverageLabel} insurance for ${carrier.legalName} expires ${record.expirationDate.toISOString().slice(0, 10)} (assignment eligible: ${carrier.assignmentEligible ? 'Yes' : 'No'}).`,
+              });
 
-            const carrier = await tx.carrier.findFirst({
-              where: { id: record.carrierId, organizationId: org.id },
+              await this.audit.record(tx, {
+                organizationId: org.id,
+                action: 'Expiration Notification Sent',
+                entityType: 'CarrierInsurance',
+                entityId: record.id,
+                newValue: { thresholdDays: threshold.days, carrierId: carrier.id },
+                actorType: 'SYSTEM',
+              });
             });
-            if (!carrier) continue;
-
-            const coverageLabel =
-              record.coverageType === 'AUTO_LIABILITY' ? 'Auto Liability' : 'Cargo';
-            await this.notifications.createForRoles(tx, org.id, NOTIFICATION_ROLES, {
-              type: threshold.type,
-              relatedEntityType: 'CarrierInsurance',
-              relatedEntityId: record.id,
-              message: `${coverageLabel} insurance for ${carrier.legalName} expires ${record.expirationDate.toISOString().slice(0, 10)} (assignment eligible: ${carrier.assignmentEligible ? 'Yes' : 'No'}).`,
-            });
-
-            await this.audit.record(tx, {
-              organizationId: org.id,
-              action: 'Expiration Notification Sent',
-              entityType: 'CarrierInsurance',
-              entityId: record.id,
-              newValue: { thresholdDays: threshold.days, carrierId: carrier.id },
-              actorType: 'SYSTEM',
-            });
+          } catch (error) {
+            this.logger.error(
+              `Compliance expiration notification sweep: failed for org ${org.id}, carrierInsurance ${record.id}, threshold ${threshold.days}d: ${
+                error instanceof Error ? error.message : String(error)
+              }`,
+              error instanceof Error ? error.stack : undefined,
+            );
           }
         }
-      });
+      }
     }
   }
 }

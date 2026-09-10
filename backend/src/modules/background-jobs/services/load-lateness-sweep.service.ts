@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { MembershipRoleName } from '@prisma/client';
 import { PrismaService } from '../../../common/prisma/prisma.service';
 import { AuditService } from '../../../common/audit/audit.service';
@@ -50,61 +50,90 @@ function stopTypeLabel(stopType: 'PICKUP' | 'DELIVERY' | 'OTHER'): string {
  */
 @Injectable()
 export class LoadLatenessSweepService {
+  private readonly logger = new Logger(LoadLatenessSweepService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly notifications: NotificationService,
   ) {}
 
+  private async loadOperationalLoads(organizationId: string) {
+    return this.prisma.withTenantTransaction(organizationId, (tx) =>
+      tx.load.findMany({
+        where: { organizationId, status: { in: [...OPERATIONAL_STATUSES] } },
+        include: { stops: true },
+      }),
+    );
+  }
+
+  /** Monitoring Phase 4A-2 — see InvitationExpirationSweepService.run() for why each org/record gets its own transaction. */
   async run(): Promise<void> {
     const orgs = await this.prisma.organization.findMany({ select: { id: true } });
 
     for (const org of orgs) {
-      await this.prisma.withTenantTransaction(org.id, async (tx) => {
-        const loads = await tx.load.findMany({
-          where: { organizationId: org.id, status: { in: [...OPERATIONAL_STATUSES] } },
-          include: { stops: true },
-        });
+      let loads: Awaited<ReturnType<typeof this.loadOperationalLoads>>;
+      try {
+        loads = await this.loadOperationalLoads(org.id);
+      } catch (error) {
+        this.logger.error(
+          `Load lateness sweep: failed to load operational loads for org ${org.id}: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+          error instanceof Error ? error.stack : undefined,
+        );
+        continue;
+      }
 
-        for (const load of loads) {
-          if (!load.assignedDispatcherId) continue;
+      for (const load of loads) {
+        if (!load.assignedDispatcherId) continue;
 
-          const lateStop = findLateStop(load.stops);
-          if (!lateStop) continue;
+        const lateStop = findLateStop(load.stops);
+        if (!lateStop) continue;
 
-          const existing = await tx.notification.findFirst({
-            where: {
+        try {
+          await this.prisma.withTenantTransaction(org.id, async (tx) => {
+            const existing = await tx.notification.findFirst({
+              where: {
+                organizationId: org.id,
+                type: 'LOAD_LATE',
+                relatedEntityType: 'Load',
+                relatedEntityId: load.id,
+                read: false,
+              },
+            });
+            if (existing) return;
+
+            await this.notifications.createForUserAndRoles(
+              tx,
+              org.id,
+              load.assignedDispatcherId!,
+              ADMIN_VISIBILITY_ROLES,
+              {
+                type: 'LOAD_LATE',
+                relatedEntityType: 'Load',
+                relatedEntityId: load.id,
+                message: `Load late — ${load.loadNumber}\n${stopTypeLabel(lateStop.stopType)} appointment: ${formatTimeOnly(lateStop.appointmentDatetime)}`,
+              },
+            );
+
+            await this.audit.record(tx, {
               organizationId: org.id,
-              type: 'LOAD_LATE',
-              relatedEntityType: 'Load',
-              relatedEntityId: load.id,
-              read: false,
-            },
+              action: 'Load Late Notification Sent',
+              entityType: 'Load',
+              entityId: load.id,
+              actorType: 'SYSTEM',
+            });
           });
-          if (existing) continue;
-
-          await this.notifications.createForUserAndRoles(
-            tx,
-            org.id,
-            load.assignedDispatcherId,
-            ADMIN_VISIBILITY_ROLES,
-            {
-              type: 'LOAD_LATE',
-              relatedEntityType: 'Load',
-              relatedEntityId: load.id,
-              message: `Load late — ${load.loadNumber}\n${stopTypeLabel(lateStop.stopType)} appointment: ${formatTimeOnly(lateStop.appointmentDatetime)}`,
-            },
+        } catch (error) {
+          this.logger.error(
+            `Load lateness sweep: failed for org ${org.id}, load ${load.id}: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+            error instanceof Error ? error.stack : undefined,
           );
-
-          await this.audit.record(tx, {
-            organizationId: org.id,
-            action: 'Load Late Notification Sent',
-            entityType: 'Load',
-            entityId: load.id,
-            actorType: 'SYSTEM',
-          });
         }
-      });
+      }
     }
   }
 }

@@ -1,3 +1,4 @@
+import { Logger } from '@nestjs/common';
 import { LoadLatenessSweepService } from './load-lateness-sweep.service';
 
 const ORG_ID = 'org-1';
@@ -220,7 +221,11 @@ describe('LoadLatenessSweepService — the one backend-owned "Load Late" notific
 
     await service.run();
 
-    expect(prisma.withTenantTransaction).toHaveBeenCalledTimes(2);
+    // Monitoring Phase 4A-2 — each org gets 1 read transaction (loading its
+    // operational loads) plus 1 write transaction per late load (here,
+    // exactly 1 load per org) — 2 orgs × (1 read + 1 write) = 4, never a
+    // shared transaction crossing organizations.
+    expect(prisma.withTenantTransaction).toHaveBeenCalledTimes(4);
     expect(notifications.createForUserAndRoles).toHaveBeenCalledTimes(2);
     expect(notifications.createForUserAndRoles).toHaveBeenCalledWith(
       expect.anything(),
@@ -292,5 +297,66 @@ describe('LoadLatenessSweepService — Return Product feature: RETURN stops neve
       ['ADMIN'],
       expect.objectContaining({ message: expect.stringContaining('Delivery appointment') }),
     );
+  });
+});
+
+describe('LoadLatenessSweepService — Monitoring Phase 4A-2 (per-record error isolation)', () => {
+  it('a failing load does not abort the rest of that org or subsequent orgs, and logs org+entity correlation', async () => {
+    const tx = {
+      load: {
+        findMany: jest
+          .fn()
+          .mockImplementation(({ where }: { where: { organizationId: string } }) =>
+            Promise.resolve(
+              where.organizationId === ORG_ID
+                ? [load({ id: 'load-fail' }), load({ id: 'load-ok' })]
+                : [load({ id: 'load-org2' })],
+            ),
+          ),
+      },
+      notification: { findFirst: jest.fn().mockResolvedValue(null) },
+    };
+    const prisma = {
+      organization: { findMany: jest.fn().mockResolvedValue([{ id: ORG_ID }, { id: OTHER_ORG_ID }]) },
+      withTenantTransaction: jest
+        .fn()
+        .mockImplementation((_orgId: string, fn: (tx: unknown) => unknown) => fn(tx)),
+    };
+    const audit = { record: jest.fn().mockResolvedValue(undefined) };
+    const notifications = {
+      createForUserAndRoles: jest
+        .fn()
+        .mockImplementation((_tx: unknown, _orgId: string, _userId: string, _roles: unknown, payload: { relatedEntityId: string }) => {
+          if (payload.relatedEntityId === 'load-fail') throw new Error('simulated notification failure');
+          return Promise.resolve(undefined);
+        }),
+    };
+    const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+
+    const service = new LoadLatenessSweepService(prisma as never, audit as never, notifications as never);
+
+    await expect(service.run()).resolves.toBeUndefined();
+
+    expect(notifications.createForUserAndRoles).toHaveBeenCalledWith(
+      expect.anything(),
+      ORG_ID,
+      'dispatcher-1',
+      ['ADMIN'],
+      expect.objectContaining({ relatedEntityId: 'load-ok' }),
+    );
+    expect(notifications.createForUserAndRoles).toHaveBeenCalledWith(
+      expect.anything(),
+      OTHER_ORG_ID,
+      'dispatcher-1',
+      ['ADMIN'],
+      expect.objectContaining({ relatedEntityId: 'load-org2' }),
+    );
+
+    const failureLog = errorSpy.mock.calls.find((c) => String(c[0]).includes('load-fail'));
+    expect(failureLog).toBeDefined();
+    expect(failureLog![0]).toContain(ORG_ID);
+    expect(failureLog![0]).toContain('load-fail');
+
+    errorSpy.mockRestore();
   });
 });

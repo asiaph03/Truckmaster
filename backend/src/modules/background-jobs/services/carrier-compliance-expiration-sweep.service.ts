@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../../common/prisma/prisma.service';
 import { AuditService } from '../../../common/audit/audit.service';
 import { CarrierEligibilityService } from '../../carrier/services/carrier-eligibility.service';
@@ -32,51 +32,116 @@ export const EXPIRABLE_DOCUMENT_CODES = ['MC_AUTHORITY', 'CARRIER_AGREEMENT'] as
  */
 @Injectable()
 export class CarrierComplianceExpirationSweepService {
+  private readonly logger = new Logger(CarrierComplianceExpirationSweepService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly carrierEligibility: CarrierEligibilityService,
   ) {}
 
+  private async loadStaleDocs(organizationId: string) {
+    return this.prisma.withTenantTransaction(organizationId, (tx) =>
+      tx.document.findMany({
+        where: {
+          organizationId,
+          entityType: 'CARRIER',
+          isCurrentVersion: true,
+          reviewStatus: 'APPROVED',
+          expirationDate: { lt: new Date() },
+          documentType: { code: { in: [...EXPIRABLE_DOCUMENT_CODES] } },
+        },
+      }),
+    );
+  }
+
+  private async loadActiveCarriers(organizationId: string) {
+    return this.prisma.withTenantTransaction(organizationId, (tx) =>
+      tx.carrier.findMany({
+        where: { organizationId, status: 'ACTIVE' },
+        select: { id: true },
+      }),
+    );
+  }
+
+  /**
+   * Monitoring Phase 4A-2 — see InvitationExpirationSweepService.run() for
+   * why each org/record gets its own transaction. The two passes (document
+   * expiry, carrier eligibility recalculation) are now also independent of
+   * each other — previously sharing one per-org transaction meant a
+   * failure in either pass rolled back the other, which was never an
+   * intentional coupling between these two logically separate operations.
+   */
   async run(): Promise<void> {
     const orgs = await this.prisma.organization.findMany({ select: { id: true } });
 
     for (const org of orgs) {
-      await this.prisma.withTenantTransaction(org.id, async (tx) => {
-        const staleDocs = await tx.document.findMany({
-          where: {
-            organizationId: org.id,
-            entityType: 'CARRIER',
-            isCurrentVersion: true,
-            reviewStatus: 'APPROVED',
-            expirationDate: { lt: new Date() },
-            documentType: { code: { in: [...EXPIRABLE_DOCUMENT_CODES] } },
-          },
-        });
+      let staleDocs: Awaited<ReturnType<typeof this.loadStaleDocs>>;
+      try {
+        staleDocs = await this.loadStaleDocs(org.id);
+      } catch (error) {
+        this.logger.error(
+          `Carrier compliance expiration sweep: failed to load stale documents for org ${org.id}: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+          error instanceof Error ? error.stack : undefined,
+        );
+        staleDocs = [];
+      }
 
-        for (const doc of staleDocs) {
-          await tx.document.update({
-            where: { id: doc.id },
-            data: { reviewStatus: 'EXPIRED' },
+      for (const doc of staleDocs) {
+        try {
+          await this.prisma.withTenantTransaction(org.id, async (tx) => {
+            await tx.document.update({
+              where: { id: doc.id },
+              data: { reviewStatus: 'EXPIRED' },
+            });
+
+            await this.audit.record(tx, {
+              organizationId: org.id,
+              action: 'Compliance Item Expired',
+              entityType: 'Document',
+              entityId: doc.id,
+              actorType: 'SYSTEM',
+            });
           });
-
-          await this.audit.record(tx, {
-            organizationId: org.id,
-            action: 'Compliance Item Expired',
-            entityType: 'Document',
-            entityId: doc.id,
-            actorType: 'SYSTEM',
-          });
+        } catch (error) {
+          this.logger.error(
+            `Carrier compliance expiration sweep: failed to expire document for org ${org.id}, document ${doc.id}: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+            error instanceof Error ? error.stack : undefined,
+          );
         }
+      }
 
-        const activeCarriers = await tx.carrier.findMany({
-          where: { organizationId: org.id, status: 'ACTIVE' },
-          select: { id: true },
-        });
-        for (const carrier of activeCarriers) {
-          await this.carrierEligibility.recalculate(tx, org.id, carrier.id);
+      let activeCarriers: Awaited<ReturnType<typeof this.loadActiveCarriers>>;
+      try {
+        activeCarriers = await this.loadActiveCarriers(org.id);
+      } catch (error) {
+        this.logger.error(
+          `Carrier compliance expiration sweep: failed to load active carriers for org ${org.id}: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+          error instanceof Error ? error.stack : undefined,
+        );
+        continue;
+      }
+
+      for (const carrier of activeCarriers) {
+        try {
+          await this.prisma.withTenantTransaction(org.id, (tx) =>
+            this.carrierEligibility.recalculate(tx, org.id, carrier.id),
+          );
+        } catch (error) {
+          this.logger.error(
+            `Carrier compliance expiration sweep: failed to recalculate eligibility for org ${org.id}, carrier ${carrier.id}: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+            error instanceof Error ? error.stack : undefined,
+          );
         }
-      });
+      }
     }
   }
 }

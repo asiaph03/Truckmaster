@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { MembershipRoleName, Prisma } from '@prisma/client';
 import { PrismaService } from '../../../common/prisma/prisma.service';
@@ -59,6 +59,8 @@ function buildDetailLine(driverName: string | null, timeText: string): string {
  */
 @Injectable()
 export class CheckCallReminderSweepService {
+  private readonly logger = new Logger(CheckCallReminderSweepService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
@@ -66,51 +68,79 @@ export class CheckCallReminderSweepService {
     private readonly config: ConfigService<AppConfig>,
   ) {}
 
+  private async loadInTransitLoads(organizationId: string) {
+    return this.prisma.withTenantTransaction(organizationId, (tx) =>
+      tx.load.findMany({
+        where: { organizationId, status: { in: [...IN_TRANSIT_STATUSES] } },
+        include: {
+          dispatchRecord: {
+            include: { sourceDriver: { select: { firstName: true, lastName: true } } },
+          },
+          checkCalls: true,
+        },
+      }),
+    );
+  }
+
+  /** Monitoring Phase 4A-2 — see InvitationExpirationSweepService.run() for why each org/record gets its own transaction. */
   async run(): Promise<void> {
     const reminderHours = this.config.get('checkCallReminderHours', { infer: true })!;
     const thresholdMs = reminderHours * 60 * 60 * 1000;
     const orgs = await this.prisma.organization.findMany({ select: { id: true } });
 
     for (const org of orgs) {
-      await this.prisma.withTenantTransaction(org.id, async (tx) => {
-        const loads = await tx.load.findMany({
-          where: { organizationId: org.id, status: { in: [...IN_TRANSIT_STATUSES] } },
-          include: {
-            dispatchRecord: {
-              include: { sourceDriver: { select: { firstName: true, lastName: true } } },
-            },
-            checkCalls: true,
-          },
-        });
+      let loads: Awaited<ReturnType<typeof this.loadInTransitLoads>>;
+      try {
+        loads = await this.loadInTransitLoads(org.id);
+      } catch (error) {
+        this.logger.error(
+          `Check-call reminder sweep: failed to load in-transit loads for org ${org.id}: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+          error instanceof Error ? error.stack : undefined,
+        );
+        continue;
+      }
 
-        for (const load of loads) {
-          if (!load.assignedDispatcherId) continue;
+      for (const load of loads) {
+        if (!load.assignedDispatcherId) continue;
 
-          const lastCheckCallAt = load.checkCalls.reduce<Date | null>(
-            (latest, cc) => (!latest || cc.occurredAt > latest ? cc.occurredAt : latest),
-            null,
+        const lastCheckCallAt = load.checkCalls.reduce<Date | null>(
+          (latest, cc) => (!latest || cc.occurredAt > latest ? cc.occurredAt : latest),
+          null,
+        );
+        const lastActivityAt = lastCheckCallAt ?? load.dispatchRecord?.dispatchedAt ?? null;
+        if (!lastActivityAt) continue;
+
+        const elapsedMs = Date.now() - lastActivityAt.getTime();
+        const driverName = resolveDriverName(load.dispatchRecord);
+        if (elapsedMs < thresholdMs - DUE_SOON_LEAD_MS) continue;
+
+        try {
+          await this.prisma.withTenantTransaction(org.id, async (tx) => {
+            if (elapsedMs >= thresholdMs) {
+              await this.fireOverdue(
+                tx,
+                org.id,
+                load,
+                driverName,
+                elapsedMs,
+                thresholdMs,
+                reminderHours,
+              );
+            } else {
+              await this.fireDueSoon(tx, org.id, load, driverName, elapsedMs, thresholdMs);
+            }
+          });
+        } catch (error) {
+          this.logger.error(
+            `Check-call reminder sweep: failed for org ${org.id}, load ${load.id}: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+            error instanceof Error ? error.stack : undefined,
           );
-          const lastActivityAt = lastCheckCallAt ?? load.dispatchRecord?.dispatchedAt ?? null;
-          if (!lastActivityAt) continue;
-
-          const elapsedMs = Date.now() - lastActivityAt.getTime();
-          const driverName = resolveDriverName(load.dispatchRecord);
-
-          if (elapsedMs >= thresholdMs) {
-            await this.fireOverdue(
-              tx,
-              org.id,
-              load,
-              driverName,
-              elapsedMs,
-              thresholdMs,
-              reminderHours,
-            );
-          } else if (elapsedMs >= thresholdMs - DUE_SOON_LEAD_MS) {
-            await this.fireDueSoon(tx, org.id, load, driverName, elapsedMs, thresholdMs);
-          }
         }
-      });
+      }
     }
   }
 
