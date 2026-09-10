@@ -1,6 +1,8 @@
+import { Logger } from '@nestjs/common';
 import { EmailSendWorker } from './email-send.worker';
 
 type Processor = (job: {
+  id?: string;
   data: unknown;
   attemptsMade: number;
   opts: { attempts?: number };
@@ -117,6 +119,49 @@ describe('EmailSendWorker', () => {
         }),
       }),
     );
+  });
+
+  // Monitoring Phase 4A-1 — the operational (application) log for a final
+  // email-send failure must never contain the recipient address or
+  // subject line (PII in a shared, unredacted log) — that detail belongs
+  // only in the Audit DB record (recordFailure, asserted above), which
+  // this change does not touch.
+  it('logs the final failure without the recipient address or subject, while still including job ID and organizationId', async () => {
+    const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const sendImpl = jest.fn().mockRejectedValue(new Error('provider unavailable'));
+    const { processor, audit } = buildWorker(sendImpl);
+
+    await processor({
+      id: 'job-123',
+      data: JOB_DATA,
+      attemptsMade: 2,
+      opts: { attempts: 3 },
+    });
+
+    // Find the operational log call (not the generic worker.on('failed') hook, which isn't exercised here).
+    const operationalLogCall = errorSpy.mock.calls.find((call) =>
+      String(call[0]).startsWith('Email job'),
+    );
+    expect(operationalLogCall).toBeDefined();
+    const [message] = operationalLogCall!;
+
+    expect(message).toContain('job-123');
+    expect(message).toContain(JOB_DATA.organizationId);
+    expect(message).not.toContain(JOB_DATA.to);
+    expect(message).not.toContain(JOB_DATA.subject);
+
+    // The Audit DB record must still receive the full recipient/subject — unchanged.
+    expect(audit.record).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        newValue: expect.objectContaining({
+          to: JOB_DATA.to,
+          subject: JOB_DATA.subject,
+        }),
+      }),
+    );
+
+    errorSpy.mockRestore();
   });
 
   describe('attachment resolution', () => {

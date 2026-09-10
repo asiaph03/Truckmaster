@@ -60,8 +60,12 @@ export class EmailSendWorker implements OnModuleInit, OnModuleDestroy {
           // RequestContextStore dependency, safe with no request in flight.
           const maxAttempts = job.opts.attempts ?? 1;
           if (job.attemptsMade + 1 >= maxAttempts) {
+            // Monitoring Phase 4A-1 — deliberately no recipient/subject here
+            // (PII in a shared application log); that detail still lands in
+            // the Audit DB record below (recordFailure), an access-
+            // controlled location, unchanged from before this fix.
             this.logger.error(
-              `Email to ${job.data.to} ("${job.data.subject}") failed after ${maxAttempts} attempts.`,
+              `Email job ${job.id} (org ${job.data.organizationId}) failed after ${maxAttempts} attempts.`,
               error instanceof Error ? error.stack : String(error),
             );
             await this.recordFailure(job.data, error);
