@@ -1,3 +1,4 @@
+import { Logger } from '@nestjs/common';
 import { ImportCommitWorker } from './import-commit.worker';
 import { ConflictError } from '../../../common/errors/app-error';
 
@@ -8,11 +9,13 @@ type Processor = (job: {
 }) => Promise<void>;
 
 let capturedProcessor: Processor | undefined;
+let capturedOn: jest.Mock | undefined;
 
 jest.mock('bullmq', () => ({
   Worker: jest.fn().mockImplementation((_name: string, processor: Processor) => {
     capturedProcessor = processor;
-    return { on: jest.fn(), close: jest.fn() };
+    capturedOn = jest.fn();
+    return { on: capturedOn, close: jest.fn() };
   }),
 }));
 
@@ -258,5 +261,57 @@ describe('ImportCommitWorker', () => {
       where: { id: 'batch-1', organizationId: 'org-1' },
       data: expect.objectContaining({ status: 'FAILED' }),
     });
+  });
+
+  // Monitoring Phase 4A-1 Item 3 — organizationId correlation in operational logs.
+  it('includes organizationId in the job-level final-failure log', async () => {
+    const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    capturedProcessor = undefined;
+    const redis = { duplicate: jest.fn().mockReturnValue({ on: jest.fn(), quit: jest.fn() }) };
+    const audit = { record: jest.fn().mockResolvedValue(undefined) };
+    const tx = { importBatch: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) } };
+    const prisma = {
+      withTenantTransaction: jest
+        .fn()
+        .mockImplementation((_orgId: string, fn: (tx: unknown) => unknown) => {
+          if (fn.toString().includes('updateMany')) return fn(tx);
+          throw new Error('connection lost');
+        }),
+    };
+    const adapters = { get: jest.fn() };
+    const parentResolution = { resolveByLegalName: jest.fn() };
+
+    const worker = new ImportCommitWorker(
+      redis as never,
+      prisma as never,
+      audit as never,
+      adapters as never,
+      parentResolution as never,
+    );
+    worker.onModuleInit();
+    const processor = capturedProcessor!;
+
+    await processor({ data: JOB_DATA, attemptsMade: 2, opts: { attempts: 3 } });
+
+    const call = errorSpy.mock.calls.find((c) => String(c[0]).startsWith('Import batch'));
+    expect(call).toBeDefined();
+    expect(call![0]).toContain(JOB_DATA.organizationId);
+    errorSpy.mockRestore();
+  });
+
+  it("includes organizationId in the generic worker.on('failed') log", async () => {
+    const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    buildWorker({ rows: [] });
+
+    expect(capturedOn).toBeDefined();
+    const failedHandler = capturedOn!.mock.calls.find((c) => c[0] === 'failed')?.[1];
+    expect(failedHandler).toBeDefined();
+
+    failedHandler({ id: 'job-1', data: JOB_DATA }, new Error('boom'));
+
+    const call = errorSpy.mock.calls.find((c) => String(c[0]).startsWith('Import commit job'));
+    expect(call).toBeDefined();
+    expect(call![0]).toContain(JOB_DATA.organizationId);
+    errorSpy.mockRestore();
   });
 });

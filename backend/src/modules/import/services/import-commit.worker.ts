@@ -51,7 +51,7 @@ export class ImportCommitWorker implements OnModuleInit, OnModuleDestroy {
           const maxAttempts = job.opts.attempts ?? 1;
           if (job.attemptsMade + 1 >= maxAttempts) {
             this.logger.error(
-              `Import batch ${job.data.importBatchId} commit failed after ${maxAttempts} attempts — recording FAILED.`,
+              `Import batch ${job.data.importBatchId} (org ${job.data.organizationId}) commit failed after ${maxAttempts} attempts — recording FAILED.`,
               error instanceof Error ? error.stack : String(error),
             );
             await this.markBatchFailed(job.data);
@@ -64,7 +64,10 @@ export class ImportCommitWorker implements OnModuleInit, OnModuleDestroy {
     );
 
     this.worker.on('failed', (job, error) => {
-      this.logger.error(`Import commit job ${job?.id} failed: ${error.message}`, error.stack);
+      this.logger.error(
+        `Import commit job ${job?.id} (org ${job?.data.organizationId}) failed: ${error.message}`,
+        error.stack,
+      );
     });
   }
 

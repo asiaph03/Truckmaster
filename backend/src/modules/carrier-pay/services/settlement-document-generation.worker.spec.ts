@@ -1,3 +1,4 @@
+import { Logger } from '@nestjs/common';
 import { SettlementDocumentGenerationWorker } from './settlement-document-generation.worker';
 
 type Processor = (job: {
@@ -7,11 +8,13 @@ type Processor = (job: {
 }) => Promise<void>;
 
 let capturedProcessor: Processor | undefined;
+let capturedOn: jest.Mock | undefined;
 
 jest.mock('bullmq', () => ({
   Worker: jest.fn().mockImplementation((_name: string, processor: Processor) => {
     capturedProcessor = processor;
-    return { on: jest.fn(), close: jest.fn() };
+    capturedOn = jest.fn();
+    return { on: capturedOn, close: jest.fn() };
   }),
 }));
 
@@ -133,5 +136,36 @@ describe('SettlementDocumentGenerationWorker', () => {
     // in processJob() does. Confirmed by reading
     // settlement-document-generation.worker.ts directly.
     expect(audit.record).not.toHaveBeenCalled();
+  });
+
+  // Monitoring Phase 4A-1 Item 3 — organizationId correlation in operational logs.
+  it('includes organizationId in the final-failure log', async () => {
+    const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const generateImpl = jest.fn().mockRejectedValue(new Error('renderer crashed'));
+    const { processor } = buildWorker(generateImpl);
+
+    await processor({ data: JOB_DATA, attemptsMade: 2, opts: { attempts: 3 } });
+
+    const call = errorSpy.mock.calls.find((c) => String(c[0]).startsWith('Settlement PDF generation'));
+    expect(call).toBeDefined();
+    expect(call![0]).toContain(JOB_DATA.organizationId);
+    errorSpy.mockRestore();
+  });
+
+  it("includes organizationId in the generic worker.on('failed') log", async () => {
+    const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const generateImpl = jest.fn().mockResolvedValue(Buffer.from('pdf-bytes'));
+    buildWorker(generateImpl);
+
+    expect(capturedOn).toBeDefined();
+    const failedHandler = capturedOn!.mock.calls.find((c) => c[0] === 'failed')?.[1];
+    expect(failedHandler).toBeDefined();
+
+    failedHandler({ id: 'job-1', data: JOB_DATA }, new Error('boom'));
+
+    const call = errorSpy.mock.calls.find((c) => String(c[0]).startsWith('Settlement PDF job'));
+    expect(call).toBeDefined();
+    expect(call![0]).toContain(JOB_DATA.organizationId);
+    errorSpy.mockRestore();
   });
 });

@@ -78,7 +78,10 @@ export class EmailSendWorker implements OnModuleInit, OnModuleDestroy {
     );
 
     this.worker.on('failed', (job, error) => {
-      this.logger.error(`Email send job ${job?.id} failed: ${error.message}`, error.stack);
+      this.logger.error(
+        `Email send job ${job?.id} (org ${job?.data.organizationId}) failed: ${error.message}`,
+        error.stack,
+      );
     });
   }
 

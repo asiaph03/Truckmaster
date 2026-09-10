@@ -60,7 +60,7 @@ export class RateConfirmationExtractionWorker implements OnModuleInit, OnModuleD
           const message = error instanceof Error ? error.message : String(error);
           if (job.attemptsMade + 1 >= maxAttempts) {
             this.logger.error(
-              `Rate Confirmation extraction ${job.data.extractionId} failed after ${maxAttempts} attempts.`,
+              `Rate Confirmation extraction ${job.data.extractionId} (org ${job.data.organizationId}) failed after ${maxAttempts} attempts.`,
               error instanceof Error ? error.stack : String(error),
             );
             await this.jobStore.markFailed(job.data.organizationId, job.data.extractionId, message);
@@ -74,7 +74,7 @@ export class RateConfirmationExtractionWorker implements OnModuleInit, OnModuleD
 
     this.worker.on('failed', (job, error) => {
       this.logger.error(
-        `Rate Confirmation extraction job ${job?.id} failed: ${error.message}`,
+        `Rate Confirmation extraction job ${job?.id} (org ${job?.data.organizationId}) failed: ${error.message}`,
         error.stack,
       );
     });
@@ -90,7 +90,7 @@ export class RateConfirmationExtractionWorker implements OnModuleInit, OnModuleD
     // completed and whether it was a normal result or a multi-load
     // rejection (matches MalwareScanWorker's own metadata-only logging).
     this.logger.log(
-      `Rate Confirmation extraction ${data.extractionId} completed (multiLoadDetected=${outcome.multiLoadDetected}).`,
+      `Rate Confirmation extraction ${data.extractionId} (org ${data.organizationId}) completed (multiLoadDetected=${outcome.multiLoadDetected}).`,
     );
 
     if (outcome.multiLoadDetected) {

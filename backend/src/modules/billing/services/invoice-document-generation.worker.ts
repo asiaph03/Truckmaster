@@ -42,7 +42,7 @@ export class InvoiceDocumentGenerationWorker implements OnModuleInit, OnModuleDe
           const maxAttempts = job.opts.attempts ?? 1;
           if (job.attemptsMade + 1 >= maxAttempts) {
             this.logger.error(
-              `Invoice PDF generation for document ${job.data.documentId} failed after ${maxAttempts} attempts — recording FAILED.`,
+              `Invoice PDF generation for document ${job.data.documentId} (org ${job.data.organizationId}) failed after ${maxAttempts} attempts — recording FAILED.`,
               error instanceof Error ? error.stack : String(error),
             );
             await this.markFailed(job.data);
@@ -55,7 +55,10 @@ export class InvoiceDocumentGenerationWorker implements OnModuleInit, OnModuleDe
     );
 
     this.worker.on('failed', (job, error) => {
-      this.logger.error(`Invoice PDF job ${job?.id} failed: ${error.message}`, error.stack);
+      this.logger.error(
+        `Invoice PDF job ${job?.id} (org ${job?.data.organizationId}) failed: ${error.message}`,
+        error.stack,
+      );
     });
   }
 

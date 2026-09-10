@@ -54,7 +54,7 @@ export class RateConfirmationGenerationWorker implements OnModuleInit, OnModuleD
           const maxAttempts = job.opts.attempts ?? 1;
           if (job.attemptsMade + 1 >= maxAttempts) {
             this.logger.error(
-              `Rate Confirmation PDF generation for document ${job.data.documentId} failed after ${maxAttempts} attempts — recording FAILED.`,
+              `Rate Confirmation PDF generation for document ${job.data.documentId} (org ${job.data.organizationId}) failed after ${maxAttempts} attempts — recording FAILED.`,
               error instanceof Error ? error.stack : String(error),
             );
             await this.markFailed(job.data);
@@ -68,7 +68,7 @@ export class RateConfirmationGenerationWorker implements OnModuleInit, OnModuleD
 
     this.worker.on('failed', (job, error) => {
       this.logger.error(
-        `Rate Confirmation PDF job ${job?.id} failed: ${error.message}`,
+        `Rate Confirmation PDF job ${job?.id} (org ${job?.data.organizationId}) failed: ${error.message}`,
         error.stack,
       );
     });

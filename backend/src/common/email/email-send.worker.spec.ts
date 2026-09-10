@@ -9,11 +9,13 @@ type Processor = (job: {
 }) => Promise<void>;
 
 let capturedProcessor: Processor | undefined;
+let capturedOn: jest.Mock | undefined;
 
 jest.mock('bullmq', () => ({
   Worker: jest.fn().mockImplementation((_name: string, processor: Processor) => {
     capturedProcessor = processor;
-    return { on: jest.fn(), close: jest.fn() };
+    capturedOn = jest.fn();
+    return { on: capturedOn, close: jest.fn() };
   }),
 }));
 
@@ -161,6 +163,26 @@ describe('EmailSendWorker', () => {
       }),
     );
 
+    errorSpy.mockRestore();
+  });
+
+  // Monitoring Phase 4A-1 Item 3 — organizationId correlation on the
+  // generic worker.on('failed') hook (the final-failure log above already
+  // includes organizationId, from Item 2 — this covers the other log).
+  it("includes organizationId in the generic worker.on('failed') log", async () => {
+    const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const sendImpl = jest.fn().mockResolvedValue(undefined);
+    buildWorker(sendImpl);
+
+    expect(capturedOn).toBeDefined();
+    const failedHandler = capturedOn!.mock.calls.find((c) => c[0] === 'failed')?.[1];
+    expect(failedHandler).toBeDefined();
+
+    failedHandler({ id: 'job-1', data: JOB_DATA }, new Error('boom'));
+
+    const call = errorSpy.mock.calls.find((c) => String(c[0]).startsWith('Email send job'));
+    expect(call).toBeDefined();
+    expect(call![0]).toContain(JOB_DATA.organizationId);
     errorSpy.mockRestore();
   });
 

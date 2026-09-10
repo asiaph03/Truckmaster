@@ -41,7 +41,7 @@ export class SettlementDocumentGenerationWorker implements OnModuleInit, OnModul
           const maxAttempts = job.opts.attempts ?? 1;
           if (job.attemptsMade + 1 >= maxAttempts) {
             this.logger.error(
-              `Settlement PDF generation for document ${job.data.documentId} failed after ${maxAttempts} attempts — recording FAILED.`,
+              `Settlement PDF generation for document ${job.data.documentId} (org ${job.data.organizationId}) failed after ${maxAttempts} attempts — recording FAILED.`,
               error instanceof Error ? error.stack : String(error),
             );
             await this.markFailed(job.data);
@@ -54,7 +54,10 @@ export class SettlementDocumentGenerationWorker implements OnModuleInit, OnModul
     );
 
     this.worker.on('failed', (job, error) => {
-      this.logger.error(`Settlement PDF job ${job?.id} failed: ${error.message}`, error.stack);
+      this.logger.error(
+        `Settlement PDF job ${job?.id} (org ${job?.data.organizationId}) failed: ${error.message}`,
+        error.stack,
+      );
     });
   }
 
