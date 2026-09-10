@@ -1,5 +1,6 @@
-import { Controller, Get, Inject } from '@nestjs/common';
+import { Controller, Get, HttpStatus, Inject, Res } from '@nestjs/common';
 import { SkipThrottle } from '@nestjs/throttler';
+import type { Response } from 'express';
 import type Redis from 'ioredis';
 import { PrismaService } from '../common/prisma/prisma.service';
 import { REDIS_CLIENT } from '../common/redis/redis.module';
@@ -37,9 +38,12 @@ export class HealthController {
 
   @Public()
   @Get()
-  async check(): Promise<HealthCheckResult> {
+  async check(@Res({ passthrough: true }) res: Response): Promise<HealthCheckResult> {
     const [database, redis] = await Promise.all([this.checkDatabase(), this.checkRedis()]);
     const status = database === 'ok' && redis === 'ok' ? 'ok' : 'degraded';
+    if (status === 'degraded') {
+      res.status(HttpStatus.SERVICE_UNAVAILABLE);
+    }
     return { status, checks: { database, redis } };
   }
 

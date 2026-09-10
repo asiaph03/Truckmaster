@@ -39,7 +39,7 @@ describe('AppModule (e2e)', () => {
       .get('/health')
       .expect(200)
       .expect((res: Response) => {
-        expect(res.body).toHaveProperty('status');
+        expect(res.body.status).toBe('ok');
         expect(res.body.checks).toHaveProperty('database');
         expect(res.body.checks).toHaveProperty('redis');
       });
