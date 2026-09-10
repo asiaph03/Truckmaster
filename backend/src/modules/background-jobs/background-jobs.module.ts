@@ -1,7 +1,7 @@
 import { Inject, Module, OnModuleDestroy } from '@nestjs/common';
 import { Queue } from 'bullmq';
 import Redis from 'ioredis';
-import { REDIS_CLIENT } from '../../common/redis/redis.module';
+import { REDIS_CLIENT, duplicateRedisWithErrorHandler } from '../../common/redis/redis.module';
 import { CarrierModule } from '../carrier/carrier.module';
 import { NotificationModule } from '../notification/notification.module';
 import { InvitationExpirationSweepService } from './services/invitation-expiration-sweep.service';
@@ -36,7 +36,7 @@ const SCHEDULED_JOBS_QUEUE_CONNECTION = 'SCHEDULED_JOBS_QUEUE_CONNECTION';
     ScheduledJobsWorker,
     {
       provide: SCHEDULED_JOBS_QUEUE_CONNECTION,
-      useFactory: (redis: Redis) => redis.duplicate(),
+      useFactory: (redis: Redis) => duplicateRedisWithErrorHandler(redis, 'scheduled-jobs-queue'),
       inject: [REDIS_CLIENT],
     },
     {

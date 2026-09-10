@@ -1,7 +1,7 @@
 import { Inject, Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { Worker } from 'bullmq';
 import Redis from 'ioredis';
-import { REDIS_CLIENT } from '../../../common/redis/redis.module';
+import { REDIS_CLIENT, duplicateRedisWithErrorHandler } from '../../../common/redis/redis.module';
 import { PrismaService } from '../../../common/prisma/prisma.service';
 import { AuditService } from '../../../common/audit/audit.service';
 import { AppError } from '../../../common/errors/app-error';
@@ -41,7 +41,7 @@ export class ImportCommitWorker implements OnModuleInit, OnModuleDestroy {
   ) {}
 
   onModuleInit(): void {
-    this.workerConnection = this.redis.duplicate();
+    this.workerConnection = duplicateRedisWithErrorHandler(this.redis, 'import-commit-worker');
     this.worker = new Worker<ImportCommitJobData>(
       IMPORT_COMMIT_QUEUE_NAME,
       async (job) => {

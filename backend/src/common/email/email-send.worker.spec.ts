@@ -30,7 +30,7 @@ describe('EmailSendWorker', () => {
     options: { document?: Record<string, unknown> | null; getObjectImpl?: jest.Mock } = {},
   ) {
     capturedProcessor = undefined;
-    const redis = { duplicate: jest.fn().mockReturnValue({ quit: jest.fn() }) };
+    const redis = { duplicate: jest.fn().mockReturnValue({ on: jest.fn(), quit: jest.fn() }) };
     const emailSender = { send: sendImpl };
     const audit = { record: jest.fn().mockResolvedValue(undefined) };
     const tx = {

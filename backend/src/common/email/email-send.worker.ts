@@ -1,7 +1,7 @@
 import { Inject, Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { Worker } from 'bullmq';
 import Redis from 'ioredis';
-import { REDIS_CLIENT } from '../redis/redis.module';
+import { REDIS_CLIENT, duplicateRedisWithErrorHandler } from '../redis/redis.module';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { StorageService } from '../storage/storage.service';
@@ -37,7 +37,7 @@ export class EmailSendWorker implements OnModuleInit, OnModuleDestroy {
   ) {}
 
   onModuleInit(): void {
-    this.workerConnection = this.redis.duplicate();
+    this.workerConnection = duplicateRedisWithErrorHandler(this.redis, 'email-send-worker');
     this.worker = new Worker<EmailJobData>(
       EMAIL_QUEUE_NAME,
       async (job) => {

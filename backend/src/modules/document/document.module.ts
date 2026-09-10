@@ -1,7 +1,7 @@
 import { Inject, Module, OnModuleDestroy } from '@nestjs/common';
 import { Queue } from 'bullmq';
 import Redis from 'ioredis';
-import { REDIS_CLIENT } from '../../common/redis/redis.module';
+import { REDIS_CLIENT, duplicateRedisWithErrorHandler } from '../../common/redis/redis.module';
 import { MALWARE_SCANNER } from '../../common/malware-scan/malware-scanner.interface';
 import { CloudmersiveMalwareScanner } from '../../common/malware-scan/cloudmersive-malware-scanner';
 import { CarrierModule } from '../carrier/carrier.module';
@@ -64,7 +64,7 @@ const RATE_CONFIRMATION_EXTRACTION_QUEUE_CONNECTION =
     { provide: MALWARE_SCANNER, useClass: CloudmersiveMalwareScanner },
     {
       provide: MALWARE_SCAN_QUEUE_CONNECTION,
-      useFactory: (redis: Redis) => redis.duplicate(),
+      useFactory: (redis: Redis) => duplicateRedisWithErrorHandler(redis, 'malware-scan-queue'),
       inject: [REDIS_CLIENT],
     },
     {
@@ -74,7 +74,7 @@ const RATE_CONFIRMATION_EXTRACTION_QUEUE_CONNECTION =
     },
     {
       provide: RATE_CONFIRMATION_EXTRACTION_QUEUE_CONNECTION,
-      useFactory: (redis: Redis) => redis.duplicate(),
+      useFactory: (redis: Redis) => duplicateRedisWithErrorHandler(redis, 'rate-confirmation-extraction-queue'),
       inject: [REDIS_CLIENT],
     },
     {

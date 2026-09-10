@@ -1,7 +1,7 @@
 import { Inject, Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { Worker } from 'bullmq';
 import Redis from 'ioredis';
-import { REDIS_CLIENT } from '../../../common/redis/redis.module';
+import { REDIS_CLIENT, duplicateRedisWithErrorHandler } from '../../../common/redis/redis.module';
 import { PrismaService } from '../../../common/prisma/prisma.service';
 import { AuditService } from '../../../common/audit/audit.service';
 import { StorageService } from '../../../common/storage/storage.service';
@@ -30,7 +30,7 @@ export class InvoiceDocumentGenerationWorker implements OnModuleInit, OnModuleDe
   ) {}
 
   onModuleInit(): void {
-    this.workerConnection = this.redis.duplicate();
+    this.workerConnection = duplicateRedisWithErrorHandler(this.redis, 'invoice-pdf-worker');
     this.worker = new Worker<InvoiceJobData>(
       INVOICE_QUEUE_NAME,
       async (job) => {

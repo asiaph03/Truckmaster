@@ -30,7 +30,7 @@ describe('RateConfirmationGenerationWorker', () => {
 
   function buildWorker(generateImpl: jest.Mock) {
     capturedProcessor = undefined;
-    const redis = { duplicate: jest.fn().mockReturnValue({ quit: jest.fn() }) };
+    const redis = { duplicate: jest.fn().mockReturnValue({ on: jest.fn(), quit: jest.fn() }) };
     const pdfGenerator = { generateRateConfirmation: generateImpl };
     const audit = { record: jest.fn().mockResolvedValue(undefined) };
     const storage = { putObject: jest.fn().mockResolvedValue(undefined) };

@@ -1,7 +1,7 @@
 import { Inject, Module, OnModuleDestroy } from '@nestjs/common';
 import { Queue } from 'bullmq';
 import Redis from 'ioredis';
-import { REDIS_CLIENT } from '../../common/redis/redis.module';
+import { REDIS_CLIENT, duplicateRedisWithErrorHandler } from '../../common/redis/redis.module';
 import { SpreadsheetService } from '../../common/spreadsheet/spreadsheet.service';
 import { CustomerModule } from '../customer/customer.module';
 import { CarrierModule } from '../carrier/carrier.module';
@@ -49,7 +49,7 @@ const IMPORT_COMMIT_QUEUE_CONNECTION = 'IMPORT_COMMIT_QUEUE_CONNECTION';
     TrailerImportAdapter,
     {
       provide: IMPORT_COMMIT_QUEUE_CONNECTION,
-      useFactory: (redis: Redis) => redis.duplicate(),
+      useFactory: (redis: Redis) => duplicateRedisWithErrorHandler(redis, 'import-commit-queue'),
       inject: [REDIS_CLIENT],
     },
     {

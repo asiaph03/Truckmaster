@@ -3,7 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { Queue } from 'bullmq';
 import Redis from 'ioredis';
 import { AppConfig } from '../../config/configuration';
-import { REDIS_CLIENT } from '../redis/redis.module';
+import { REDIS_CLIENT, duplicateRedisWithErrorHandler } from '../redis/redis.module';
 import { EMAIL_SENDER, IEmailSender } from './email-sender.interface';
 import { PostmarkEmailSender } from './postmark-email-sender';
 import { NoopEmailSender } from './noop-email-sender';
@@ -60,7 +60,7 @@ const EMAIL_QUEUE_CONNECTION = 'EMAIL_QUEUE_CONNECTION';
     },
     {
       provide: EMAIL_QUEUE_CONNECTION,
-      useFactory: (redis: Redis) => redis.duplicate(),
+      useFactory: (redis: Redis) => duplicateRedisWithErrorHandler(redis, 'email-send-queue'),
       inject: [REDIS_CLIENT],
     },
     {

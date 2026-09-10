@@ -1,7 +1,7 @@
 import { Inject, Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { Queue, Worker } from 'bullmq';
 import Redis from 'ioredis';
-import { REDIS_CLIENT } from '../../../common/redis/redis.module';
+import { REDIS_CLIENT, duplicateRedisWithErrorHandler } from '../../../common/redis/redis.module';
 import { InvitationExpirationSweepService } from './invitation-expiration-sweep.service';
 import { QuoteExpirationSweepService } from './quote-expiration-sweep.service';
 import { CarrierComplianceExpirationSweepService } from './carrier-compliance-expiration-sweep.service';
@@ -46,7 +46,7 @@ export class ScheduledJobsWorker implements OnModuleInit, OnModuleDestroy {
   ) {}
 
   async onModuleInit(): Promise<void> {
-    this.workerConnection = this.redis.duplicate();
+    this.workerConnection = duplicateRedisWithErrorHandler(this.redis, 'scheduled-jobs-worker');
     this.worker = new Worker(SCHEDULED_JOBS_QUEUE_NAME, async (job) => this.processJob(job.name), {
       connection: this.workerConnection,
     });

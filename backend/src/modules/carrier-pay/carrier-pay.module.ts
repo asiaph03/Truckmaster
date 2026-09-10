@@ -1,7 +1,7 @@
 import { Inject, Module, OnModuleDestroy } from '@nestjs/common';
 import { Queue } from 'bullmq';
 import Redis from 'ioredis';
-import { REDIS_CLIENT } from '../../common/redis/redis.module';
+import { REDIS_CLIENT, duplicateRedisWithErrorHandler } from '../../common/redis/redis.module';
 import { PDF_GENERATOR } from '../../common/pdf/pdf-generator.interface';
 import { PdfkitPdfGenerator } from '../../common/pdf/pdfkit-pdf-generator';
 import { IdentityModule } from '../identity/identity.module';
@@ -22,7 +22,7 @@ const SETTLEMENT_QUEUE_CONNECTION = 'SETTLEMENT_QUEUE_CONNECTION';
     { provide: PDF_GENERATOR, useClass: PdfkitPdfGenerator },
     {
       provide: SETTLEMENT_QUEUE_CONNECTION,
-      useFactory: (redis: Redis) => redis.duplicate(),
+      useFactory: (redis: Redis) => duplicateRedisWithErrorHandler(redis, 'settlement-pdf-queue'),
       inject: [REDIS_CLIENT],
     },
     {

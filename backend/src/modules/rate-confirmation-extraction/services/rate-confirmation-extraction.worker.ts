@@ -1,7 +1,7 @@
 import { Inject, Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { Worker } from 'bullmq';
 import Redis from 'ioredis';
-import { REDIS_CLIENT } from '../../../common/redis/redis.module';
+import { REDIS_CLIENT, duplicateRedisWithErrorHandler } from '../../../common/redis/redis.module';
 import { StorageService } from '../../../common/storage/storage.service';
 import {
   RATE_CONFIRMATION_EXTRACTOR,
@@ -43,7 +43,7 @@ export class RateConfirmationExtractionWorker implements OnModuleInit, OnModuleD
   ) {}
 
   onModuleInit(): void {
-    this.workerConnection = this.redis.duplicate();
+    this.workerConnection = duplicateRedisWithErrorHandler(this.redis, 'rate-confirmation-extraction-worker');
     this.worker = new Worker<RateConfirmationExtractionJobData>(
       RATE_CONFIRMATION_EXTRACTION_QUEUE_NAME,
       async (job) => {
