@@ -164,3 +164,138 @@ describe('QuoteExpirationSweepService — Monitoring Phase 4A-2 (per-record erro
     errorSpy.mockRestore();
   });
 });
+
+describe('QuoteExpirationSweepService — Monitoring Phase 4A-10 (run summary)', () => {
+  it('a zero-record run reports orgsScanned but zero for every other counter, via Logger.log', async () => {
+    const { service } = buildService([]);
+    const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+
+    await service.run();
+
+    expect(logSpy).toHaveBeenCalledWith(
+      'Quote expiration sweep summary: orgsScanned=1 recordsMatched=0 recordsSucceeded=0 recordsFailed=0',
+    );
+    logSpy.mockRestore();
+  });
+
+  it('an all-success run reports matched === succeeded, via Logger.log', async () => {
+    const { service } = buildService([
+      { id: 'quote-1', status: 'OPEN', expirationDate: new Date('2020-01-01') },
+      { id: 'quote-2', status: 'OPEN', expirationDate: new Date('2020-01-01') },
+    ]);
+    const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+
+    await service.run();
+
+    expect(logSpy).toHaveBeenCalledWith(
+      'Quote expiration sweep summary: orgsScanned=1 recordsMatched=2 recordsSucceeded=2 recordsFailed=0',
+    );
+    logSpy.mockRestore();
+  });
+
+  it('a mixed success/failure run across multiple orgs reports exact counts and escalates to Logger.warn', async () => {
+    const ok1 = { id: 'quote-ok1', status: 'OPEN', expirationDate: new Date('2020-01-01') };
+    const fail1 = { id: 'quote-fail1', status: 'OPEN', expirationDate: new Date('2020-01-01') };
+    const ok2 = { id: 'quote-ok2', status: 'OPEN', expirationDate: new Date('2020-01-01') };
+
+    const tx = {
+      quote: {
+        findMany: jest
+          .fn()
+          .mockImplementation(({ where }: { where: { organizationId: string } }) =>
+            Promise.resolve(where.organizationId === ORG_ID ? [ok1, fail1] : [ok2]),
+          ),
+        update: jest.fn().mockImplementation(({ where }: { where: { id: string } }) => {
+          if (where.id === 'quote-fail1') throw new Error('simulated DB failure');
+          return { id: where.id, status: 'LOST' };
+        }),
+      },
+      notification: { findFirst: jest.fn().mockResolvedValue(null) },
+    };
+    const prisma = {
+      organization: { findMany: jest.fn().mockResolvedValue([{ id: ORG_ID }, { id: OTHER_ORG_ID }]) },
+      withTenantTransaction: jest
+        .fn()
+        .mockImplementation((_orgId: string, fn: (tx: unknown) => unknown) => fn(tx)),
+    };
+    const audit = { record: jest.fn().mockResolvedValue(undefined) };
+    const notifications = { createForUserAndRoles: jest.fn().mockResolvedValue(undefined) };
+    const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+
+    const service = new QuoteExpirationSweepService(prisma as never, audit as never, notifications as never);
+
+    await service.run();
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      'Quote expiration sweep summary: orgsScanned=2 recordsMatched=3 recordsSucceeded=2 recordsFailed=1',
+    );
+
+    warnSpy.mockRestore();
+    jest.restoreAllMocks();
+  });
+
+  it('a successful transaction increments recordsSucceeded and never recordsFailed for the same record', async () => {
+    const { service } = buildService([
+      { id: 'quote-1', status: 'OPEN', expirationDate: new Date('2020-01-01') },
+    ]);
+    const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+
+    await service.run();
+
+    const [message] = logSpy.mock.calls.find((c) => String(c[0]).includes('sweep summary'))!;
+    expect(message).toContain('recordsSucceeded=1');
+    expect(message).toContain('recordsFailed=0');
+    logSpy.mockRestore();
+  });
+
+  it('an organization-level query failure counts toward orgsScanned, contributes 0 to recordsMatched, and does not increment recordsFailed', async () => {
+    const prisma = {
+      organization: { findMany: jest.fn().mockResolvedValue([{ id: ORG_ID }]) },
+      withTenantTransaction: jest.fn().mockRejectedValue(new Error('org query failed')),
+    };
+    const audit = { record: jest.fn().mockResolvedValue(undefined) };
+    const notifications = { createForUserAndRoles: jest.fn().mockResolvedValue(undefined) };
+    const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+    jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+
+    const service = new QuoteExpirationSweepService(prisma as never, audit as never, notifications as never);
+
+    await service.run();
+
+    expect(logSpy).toHaveBeenCalledWith(
+      'Quote expiration sweep summary: orgsScanned=1 recordsMatched=0 recordsSucceeded=0 recordsFailed=0',
+    );
+    logSpy.mockRestore();
+    jest.restoreAllMocks();
+  });
+
+  it('matched count equals the existing candidate query result length', async () => {
+    const { service } = buildService([
+      { id: 'q1', status: 'OPEN', expirationDate: new Date('2020-01-01') },
+      { id: 'q2', status: 'OPEN', expirationDate: new Date('2020-01-01') },
+      { id: 'q3', status: 'OPEN', expirationDate: new Date('2020-01-01') },
+    ]);
+    const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+
+    await service.run();
+
+    const [message] = logSpy.mock.calls.find((c) => String(c[0]).includes('sweep summary'))!;
+    expect(message).toContain('recordsMatched=3');
+    logSpy.mockRestore();
+  });
+
+  it('security/PII — the summary log contains only aggregate counts, never entity ids or PII', async () => {
+    const { service } = buildService([
+      { id: 'quote-1', status: 'OPEN', expirationDate: new Date('2020-01-01') },
+    ]);
+    const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+
+    await service.run();
+
+    const [message] = logSpy.mock.calls.find((c) => String(c[0]).includes('sweep summary'))!;
+    expect(message).not.toContain('quote-1');
+    expect(message).toMatch(/^Quote expiration sweep summary: orgsScanned=\d+ recordsMatched=\d+ recordsSucceeded=\d+ recordsFailed=\d+$/);
+    logSpy.mockRestore();
+  });
+});

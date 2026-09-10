@@ -52,7 +52,19 @@ export class InvitationExpirationSweepService {
   async run(): Promise<void> {
     const orgs = await this.prisma.organization.findMany({ select: { id: true } });
 
+    // Monitoring Phase 4A-10 — local to this run() invocation only (never
+    // an instance field), so each execution has its own isolated counters.
+    // Safe by construction: all 6 sweeps share one BullMQ worker at
+    // concurrency 1, so no two run() calls (this sweep or any other) ever
+    // execute concurrently.
+    let orgsScanned = 0;
+    let recordsMatched = 0;
+    let recordsSucceeded = 0;
+    let recordsFailed = 0;
+
     for (const org of orgs) {
+      orgsScanned++;
+
       let stale: Awaited<ReturnType<typeof this.loadStaleMemberships>>;
       try {
         stale = await this.loadStaleMemberships(org.id);
@@ -65,6 +77,8 @@ export class InvitationExpirationSweepService {
         );
         continue;
       }
+
+      recordsMatched += stale.length;
 
       for (const membership of stale) {
         try {
@@ -109,7 +123,9 @@ export class InvitationExpirationSweepService {
               }
             }
           });
+          recordsSucceeded++;
         } catch (error) {
+          recordsFailed++;
           this.logger.error(
             `Invitation expiration sweep: failed for org ${org.id}, membership ${membership.id}: ${
               error instanceof Error ? error.message : String(error)
@@ -118,6 +134,13 @@ export class InvitationExpirationSweepService {
           );
         }
       }
+    }
+
+    const summary = `Invitation expiration sweep summary: orgsScanned=${orgsScanned} recordsMatched=${recordsMatched} recordsSucceeded=${recordsSucceeded} recordsFailed=${recordsFailed}`;
+    if (recordsFailed > 0) {
+      this.logger.warn(summary);
+    } else {
+      this.logger.log(summary);
     }
   }
 }

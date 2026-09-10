@@ -88,7 +88,23 @@ export class CheckCallReminderSweepService {
     const thresholdMs = reminderHours * 60 * 60 * 1000;
     const orgs = await this.prisma.organization.findMany({ select: { id: true } });
 
+    // Monitoring Phase 4A-10 — local to this run() invocation only, see
+    // InvitationExpirationSweepService.run() for the full concurrency
+    // reasoning. recordsMatched counts every load the query returns;
+    // recordsSucceeded/recordsFailed count only loads that pass the
+    // existing pre-transaction eligibility gates below (assigned
+    // dispatcher, known last-activity time, within the reminder window)
+    // and actually reach a transaction attempt — so
+    // recordsSucceeded + recordsFailed may legitimately be less than
+    // recordsMatched, and that gap is exactly explained by those gates.
+    let orgsScanned = 0;
+    let recordsMatched = 0;
+    let recordsSucceeded = 0;
+    let recordsFailed = 0;
+
     for (const org of orgs) {
+      orgsScanned++;
+
       let loads: Awaited<ReturnType<typeof this.loadInTransitLoads>>;
       try {
         loads = await this.loadInTransitLoads(org.id);
@@ -101,6 +117,8 @@ export class CheckCallReminderSweepService {
         );
         continue;
       }
+
+      recordsMatched += loads.length;
 
       for (const load of loads) {
         if (!load.assignedDispatcherId) continue;
@@ -132,7 +150,9 @@ export class CheckCallReminderSweepService {
               await this.fireDueSoon(tx, org.id, load, driverName, elapsedMs, thresholdMs);
             }
           });
+          recordsSucceeded++;
         } catch (error) {
+          recordsFailed++;
           this.logger.error(
             `Check-call reminder sweep: failed for org ${org.id}, load ${load.id}: ${
               error instanceof Error ? error.message : String(error)
@@ -141,6 +161,13 @@ export class CheckCallReminderSweepService {
           );
         }
       }
+    }
+
+    const summary = `Check-call reminder sweep summary: orgsScanned=${orgsScanned} recordsMatched=${recordsMatched} recordsSucceeded=${recordsSucceeded} recordsFailed=${recordsFailed}`;
+    if (recordsFailed > 0) {
+      this.logger.warn(summary);
+    } else {
+      this.logger.log(summary);
     }
   }
 

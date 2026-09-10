@@ -622,3 +622,157 @@ describe('CheckCallReminderSweepService — Monitoring Phase 4A-2 (per-record er
     errorSpy.mockRestore();
   });
 });
+
+describe('CheckCallReminderSweepService — Monitoring Phase 4A-10 (run summary)', () => {
+  it('a zero-record run reports orgsScanned but zero for every other counter, via Logger.log', async () => {
+    const { service } = buildService({ loads: [] });
+    const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+
+    await service.run();
+
+    expect(logSpy).toHaveBeenCalledWith(
+      'Check-call reminder sweep summary: orgsScanned=1 recordsMatched=0 recordsSucceeded=0 recordsFailed=0',
+    );
+    logSpy.mockRestore();
+  });
+
+  it('recordsMatched includes every query-returned load, but pre-transaction continue conditions (no dispatcher, well within interval) do not increment succeeded/failed — succeeded + failed can be less than matched', async () => {
+    const { service } = buildService({
+      loads: [
+        // 1. Overdue and eligible — reaches the transaction, succeeds.
+        {
+          id: 'load-overdue',
+          loadNumber: 'LOAD-1',
+          assignedDispatcherId: 'dispatcher-1',
+          dispatchRecord: { dispatchedAt: FIVE_HOURS_AGO, driverName: 'Driver', sourceDriver: null },
+          checkCalls: [],
+        },
+        // 2. No assigned dispatcher — matched by the query, never attempted.
+        {
+          id: 'load-no-dispatcher',
+          loadNumber: 'LOAD-2',
+          assignedDispatcherId: null,
+          dispatchRecord: { dispatchedAt: FIVE_HOURS_AGO, driverName: 'Driver', sourceDriver: null },
+          checkCalls: [],
+        },
+        // 3. Well within the interval — matched by the query, never attempted.
+        {
+          id: 'load-within-interval',
+          loadNumber: 'LOAD-3',
+          assignedDispatcherId: 'dispatcher-1',
+          dispatchRecord: { dispatchedAt: ONE_HOUR_AGO, driverName: 'Driver', sourceDriver: null },
+          checkCalls: [],
+        },
+      ],
+    });
+    const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+
+    await service.run();
+
+    expect(logSpy).toHaveBeenCalledWith(
+      'Check-call reminder sweep summary: orgsScanned=1 recordsMatched=3 recordsSucceeded=1 recordsFailed=0',
+    );
+    logSpy.mockRestore();
+  });
+
+  it('a mixed success/failure run across multiple orgs reports exact counts and escalates to Logger.warn', async () => {
+    const overdueLoad = (id: string) => ({
+      id,
+      loadNumber: `LOAD-${id}`,
+      assignedDispatcherId: 'dispatcher-1',
+      dispatchRecord: { dispatchedAt: FIVE_HOURS_AGO, driverName: 'Manual Driver', sourceDriver: null },
+      checkCalls: [],
+    });
+
+    const tx = {
+      load: {
+        findMany: jest
+          .fn()
+          .mockImplementation(({ where }: { where: { organizationId: string } }) =>
+            Promise.resolve(
+              where.organizationId === ORG_ID
+                ? [overdueLoad('load-fail'), overdueLoad('load-ok')]
+                : [overdueLoad('load-org2')],
+            ),
+          ),
+      },
+      notification: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+      },
+    };
+    const prisma = {
+      organization: { findMany: jest.fn().mockResolvedValue([{ id: ORG_ID }, { id: OTHER_ORG_ID }]) },
+      withTenantTransaction: jest
+        .fn()
+        .mockImplementation((_orgId: string, fn: (tx: unknown) => unknown) => fn(tx)),
+    };
+    const audit = { record: jest.fn().mockResolvedValue(undefined) };
+    const notifications = {
+      createForUserAndRoles: jest
+        .fn()
+        .mockImplementation((_tx: unknown, _orgId: string, _userId: string, _roles: unknown, payload: { relatedEntityId: string }) => {
+          if (payload.relatedEntityId === 'load-fail') throw new Error('simulated notification failure');
+          return Promise.resolve(undefined);
+        }),
+    };
+    const config = { get: jest.fn().mockReturnValue(4) };
+    const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+
+    const service = new CheckCallReminderSweepService(prisma as never, audit as never, notifications as never, config as never);
+
+    await service.run();
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      'Check-call reminder sweep summary: orgsScanned=2 recordsMatched=3 recordsSucceeded=2 recordsFailed=1',
+    );
+    warnSpy.mockRestore();
+    jest.restoreAllMocks();
+  });
+
+  it('an organization-level query failure counts toward orgsScanned, contributes 0 to recordsMatched, and does not increment recordsFailed', async () => {
+    const prisma = {
+      organization: { findMany: jest.fn().mockResolvedValue([{ id: ORG_ID }]) },
+      withTenantTransaction: jest.fn().mockRejectedValue(new Error('org query failed')),
+    };
+    const audit = { record: jest.fn().mockResolvedValue(undefined) };
+    const notifications = { createForUserAndRoles: jest.fn().mockResolvedValue(undefined) };
+    const config = { get: jest.fn().mockReturnValue(4) };
+    const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+    jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+
+    const service = new CheckCallReminderSweepService(prisma as never, audit as never, notifications as never, config as never);
+
+    await service.run();
+
+    expect(logSpy).toHaveBeenCalledWith(
+      'Check-call reminder sweep summary: orgsScanned=1 recordsMatched=0 recordsSucceeded=0 recordsFailed=0',
+    );
+    logSpy.mockRestore();
+    jest.restoreAllMocks();
+  });
+
+  it('security/PII — the summary log contains only aggregate counts, never load ids or driver names', async () => {
+    const { service } = buildService({
+      loads: [
+        {
+          id: 'load-1',
+          loadNumber: 'LOAD-000001',
+          assignedDispatcherId: 'dispatcher-1',
+          dispatchRecord: { dispatchedAt: FIVE_HOURS_AGO, driverName: 'Jane Smith', sourceDriver: null },
+          checkCalls: [],
+        },
+      ],
+    });
+    const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+
+    await service.run();
+
+    const [message] = logSpy.mock.calls.find((c) => String(c[0]).includes('sweep summary'))!;
+    expect(message).not.toContain('load-1');
+    expect(message).not.toContain('Jane');
+    expect(message).toMatch(/^Check-call reminder sweep summary: orgsScanned=\d+ recordsMatched=\d+ recordsSucceeded=\d+ recordsFailed=\d+$/);
+    logSpy.mockRestore();
+  });
+});

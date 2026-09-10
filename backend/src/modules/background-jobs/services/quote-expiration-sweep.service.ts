@@ -40,7 +40,17 @@ export class QuoteExpirationSweepService {
   async run(): Promise<void> {
     const orgs = await this.prisma.organization.findMany({ select: { id: true } });
 
+    // Monitoring Phase 4A-10 — local to this run() invocation only, see
+    // InvitationExpirationSweepService.run() for the full concurrency
+    // reasoning (all 6 sweeps share one worker at concurrency 1).
+    let orgsScanned = 0;
+    let recordsMatched = 0;
+    let recordsSucceeded = 0;
+    let recordsFailed = 0;
+
     for (const org of orgs) {
+      orgsScanned++;
+
       let stale: Awaited<ReturnType<typeof this.loadStaleQuotes>>;
       try {
         stale = await this.loadStaleQuotes(org.id);
@@ -53,6 +63,8 @@ export class QuoteExpirationSweepService {
         );
         continue;
       }
+
+      recordsMatched += stale.length;
 
       for (const quote of stale) {
         try {
@@ -93,7 +105,9 @@ export class QuoteExpirationSweepService {
               );
             }
           });
+          recordsSucceeded++;
         } catch (error) {
+          recordsFailed++;
           this.logger.error(
             `Quote expiration sweep: failed for org ${org.id}, quote ${quote.id}: ${
               error instanceof Error ? error.message : String(error)
@@ -102,6 +116,13 @@ export class QuoteExpirationSweepService {
           );
         }
       }
+    }
+
+    const summary = `Quote expiration sweep summary: orgsScanned=${orgsScanned} recordsMatched=${recordsMatched} recordsSucceeded=${recordsSucceeded} recordsFailed=${recordsFailed}`;
+    if (recordsFailed > 0) {
+      this.logger.warn(summary);
+    } else {
+      this.logger.log(summary);
     }
   }
 }

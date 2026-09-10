@@ -156,3 +156,142 @@ describe('InvitationExpirationSweepService — Monitoring Phase 4A-2 (per-record
     errorSpy.mockRestore();
   });
 });
+
+describe('InvitationExpirationSweepService — Monitoring Phase 4A-10 (run summary)', () => {
+  it('a zero-record run reports orgsScanned but zero for every other counter, via Logger.log', async () => {
+    const { service } = buildService([]);
+    const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+
+    await service.run();
+
+    expect(logSpy).toHaveBeenCalledWith(
+      'Invitation expiration sweep summary: orgsScanned=1 recordsMatched=0 recordsSucceeded=0 recordsFailed=0',
+    );
+    logSpy.mockRestore();
+  });
+
+  it('an all-success run reports matched === succeeded, via Logger.log', async () => {
+    const { service } = buildService([
+      { id: 'membership-1', status: 'INVITED', invitationExpiresAt: new Date('2020-01-01') },
+      { id: 'membership-2', status: 'INVITED', invitationExpiresAt: new Date('2020-01-01') },
+    ]);
+    const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+
+    await service.run();
+
+    expect(logSpy).toHaveBeenCalledWith(
+      'Invitation expiration sweep summary: orgsScanned=1 recordsMatched=2 recordsSucceeded=2 recordsFailed=0',
+    );
+    logSpy.mockRestore();
+  });
+
+  it('a mixed success/failure run across multiple orgs reports exact counts and escalates to Logger.warn', async () => {
+    const ok1 = { id: 'membership-ok1', status: 'INVITED', invitationExpiresAt: new Date('2020-01-01') };
+    const fail1 = { id: 'membership-fail1', status: 'INVITED', invitationExpiresAt: new Date('2020-01-01') };
+    const ok2 = { id: 'membership-ok2', status: 'INVITED', invitationExpiresAt: new Date('2020-01-01') };
+
+    const tx = {
+      organizationMembership: {
+        findMany: jest
+          .fn()
+          .mockImplementation(({ where }: { where: { organizationId: string } }) =>
+            Promise.resolve(where.organizationId === ORG_ID ? [ok1, fail1] : [ok2]),
+          ),
+        update: jest.fn().mockImplementation(({ where }: { where: { id: string } }) => {
+          if (where.id === 'membership-fail1') throw new Error('simulated DB failure');
+          return { id: where.id, status: 'EXPIRED' };
+        }),
+      },
+      notification: { findFirst: jest.fn().mockResolvedValue(null) },
+    };
+    const prisma = {
+      organization: { findMany: jest.fn().mockResolvedValue([{ id: ORG_ID }, { id: OTHER_ORG_ID }]) },
+      withTenantTransaction: jest
+        .fn()
+        .mockImplementation((_orgId: string, fn: (tx: unknown) => unknown) => fn(tx)),
+    };
+    const audit = { record: jest.fn().mockResolvedValue(undefined) };
+    const notifications = { createForUserAndRoles: jest.fn().mockResolvedValue(undefined) };
+    const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+    const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+
+    const service = new InvitationExpirationSweepService(prisma as never, audit as never, notifications as never);
+
+    await service.run();
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      'Invitation expiration sweep summary: orgsScanned=2 recordsMatched=3 recordsSucceeded=2 recordsFailed=1',
+    );
+    expect(logSpy).not.toHaveBeenCalledWith(expect.stringContaining('sweep summary'));
+
+    logSpy.mockRestore();
+    warnSpy.mockRestore();
+    jest.restoreAllMocks();
+  });
+
+  it('a successful transaction increments recordsSucceeded and never recordsFailed for the same record', async () => {
+    const { service } = buildService([
+      { id: 'membership-1', status: 'INVITED', invitationExpiresAt: new Date('2020-01-01') },
+    ]);
+    const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+
+    await service.run();
+
+    const [message] = logSpy.mock.calls.find((c) => String(c[0]).includes('sweep summary'))!;
+    expect(message).toContain('recordsSucceeded=1');
+    expect(message).toContain('recordsFailed=0');
+    logSpy.mockRestore();
+  });
+
+  it('an organization-level query failure counts toward orgsScanned, contributes 0 to recordsMatched, and does not increment recordsFailed', async () => {
+    const prisma = {
+      organization: { findMany: jest.fn().mockResolvedValue([{ id: ORG_ID }]) },
+      withTenantTransaction: jest.fn().mockRejectedValue(new Error('org query failed')),
+    };
+    const audit = { record: jest.fn().mockResolvedValue(undefined) };
+    const notifications = { createForUserAndRoles: jest.fn().mockResolvedValue(undefined) };
+    const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+    jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+
+    const service = new InvitationExpirationSweepService(prisma as never, audit as never, notifications as never);
+
+    await service.run();
+
+    expect(logSpy).toHaveBeenCalledWith(
+      'Invitation expiration sweep summary: orgsScanned=1 recordsMatched=0 recordsSucceeded=0 recordsFailed=0',
+    );
+    logSpy.mockRestore();
+    jest.restoreAllMocks();
+  });
+
+  it('matched count equals the existing candidate query result length', async () => {
+    const { service } = buildService([
+      { id: 'm1', status: 'INVITED', invitationExpiresAt: new Date('2020-01-01') },
+      { id: 'm2', status: 'INVITED', invitationExpiresAt: new Date('2020-01-01') },
+      { id: 'm3', status: 'INVITED', invitationExpiresAt: new Date('2020-01-01') },
+    ]);
+    const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+
+    await service.run();
+
+    const [message] = logSpy.mock.calls.find((c) => String(c[0]).includes('sweep summary'))!;
+    expect(message).toContain('recordsMatched=3');
+    logSpy.mockRestore();
+  });
+
+  it('security/PII — the summary log contains only aggregate counts, never entity ids, emails, or PII', async () => {
+    const { service } = buildService([
+      { id: 'membership-1', status: 'INVITED', invitationExpiresAt: new Date('2020-01-01') },
+    ]);
+    const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+
+    await service.run();
+
+    const [message] = logSpy.mock.calls.find((c) => String(c[0]).includes('sweep summary'))!;
+    expect(message).not.toContain('membership-1');
+    expect(message).not.toMatch(/@/);
+    expect(message).toMatch(/^Invitation expiration sweep summary: orgsScanned=\d+ recordsMatched=\d+ recordsSucceeded=\d+ recordsFailed=\d+$/);
+    logSpy.mockRestore();
+  });
+});

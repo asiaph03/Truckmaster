@@ -75,7 +75,24 @@ export class CarrierComplianceExpirationSweepService {
   async run(): Promise<void> {
     const orgs = await this.prisma.organization.findMany({ select: { id: true } });
 
+    // Monitoring Phase 4A-10 — local to this run() invocation only, see
+    // InvitationExpirationSweepService.run() for the full concurrency
+    // reasoning. This sweep deliberately does NOT use the generic
+    // 4-field shape: it runs two independent passes over two different
+    // record types (documents, then carriers), so document and carrier
+    // outcomes are tracked and reported separately rather than conflated
+    // into one ambiguous "recordsMatched" number.
+    let orgsScanned = 0;
+    let documentsMatched = 0;
+    let documentsSucceeded = 0;
+    let documentsFailed = 0;
+    let carriersMatched = 0;
+    let carriersSucceeded = 0;
+    let carriersFailed = 0;
+
     for (const org of orgs) {
+      orgsScanned++;
+
       let staleDocs: Awaited<ReturnType<typeof this.loadStaleDocs>>;
       try {
         staleDocs = await this.loadStaleDocs(org.id);
@@ -88,6 +105,8 @@ export class CarrierComplianceExpirationSweepService {
         );
         staleDocs = [];
       }
+
+      documentsMatched += staleDocs.length;
 
       for (const doc of staleDocs) {
         try {
@@ -105,7 +124,9 @@ export class CarrierComplianceExpirationSweepService {
               actorType: 'SYSTEM',
             });
           });
+          documentsSucceeded++;
         } catch (error) {
+          documentsFailed++;
           this.logger.error(
             `Carrier compliance expiration sweep: failed to expire document for org ${org.id}, document ${doc.id}: ${
               error instanceof Error ? error.message : String(error)
@@ -128,12 +149,16 @@ export class CarrierComplianceExpirationSweepService {
         continue;
       }
 
+      carriersMatched += activeCarriers.length;
+
       for (const carrier of activeCarriers) {
         try {
           await this.prisma.withTenantTransaction(org.id, (tx) =>
             this.carrierEligibility.recalculate(tx, org.id, carrier.id),
           );
+          carriersSucceeded++;
         } catch (error) {
+          carriersFailed++;
           this.logger.error(
             `Carrier compliance expiration sweep: failed to recalculate eligibility for org ${org.id}, carrier ${carrier.id}: ${
               error instanceof Error ? error.message : String(error)
@@ -142,6 +167,16 @@ export class CarrierComplianceExpirationSweepService {
           );
         }
       }
+    }
+
+    const summary =
+      `Carrier compliance expiration sweep summary: orgsScanned=${orgsScanned} ` +
+      `documentsMatched=${documentsMatched} documentsSucceeded=${documentsSucceeded} documentsFailed=${documentsFailed} ` +
+      `carriersMatched=${carriersMatched} carriersSucceeded=${carriersSucceeded} carriersFailed=${carriersFailed}`;
+    if (documentsFailed > 0 || carriersFailed > 0) {
+      this.logger.warn(summary);
+    } else {
+      this.logger.log(summary);
     }
   }
 }

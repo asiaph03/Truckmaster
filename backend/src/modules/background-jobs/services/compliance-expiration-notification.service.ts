@@ -62,7 +62,20 @@ export class ComplianceExpirationNotificationService {
   async run(): Promise<void> {
     const orgs = await this.prisma.organization.findMany({ select: { id: true } });
 
+    // Monitoring Phase 4A-10 — local to this run() invocation only, see
+    // InvitationExpirationSweepService.run() for the full concurrency
+    // reasoning. Declared outside both the org and threshold loops so
+    // recordsMatched/Succeeded/Failed aggregate across all 3 thresholds
+    // and both record types (documents, insurance) for the whole run —
+    // never reset per threshold.
+    let orgsScanned = 0;
+    let recordsMatched = 0;
+    let recordsSucceeded = 0;
+    let recordsFailed = 0;
+
     for (const org of orgs) {
+      orgsScanned++;
+
       for (const threshold of THRESHOLDS) {
         const windowStart = new Date();
         const windowEnd = new Date();
@@ -80,6 +93,8 @@ export class ComplianceExpirationNotificationService {
           );
           docs = [];
         }
+
+        recordsMatched += docs.length;
 
         for (const doc of docs) {
           try {
@@ -115,7 +130,9 @@ export class ComplianceExpirationNotificationService {
                 actorType: 'SYSTEM',
               });
             });
+            recordsSucceeded++;
           } catch (error) {
+            recordsFailed++;
             this.logger.error(
               `Compliance expiration notification sweep: failed for org ${org.id}, document ${doc.id}, threshold ${threshold.days}d: ${
                 error instanceof Error ? error.message : String(error)
@@ -137,6 +154,8 @@ export class ComplianceExpirationNotificationService {
           );
           insuranceRecords = [];
         }
+
+        recordsMatched += insuranceRecords.length;
 
         for (const record of insuranceRecords) {
           try {
@@ -174,7 +193,9 @@ export class ComplianceExpirationNotificationService {
                 actorType: 'SYSTEM',
               });
             });
+            recordsSucceeded++;
           } catch (error) {
+            recordsFailed++;
             this.logger.error(
               `Compliance expiration notification sweep: failed for org ${org.id}, carrierInsurance ${record.id}, threshold ${threshold.days}d: ${
                 error instanceof Error ? error.message : String(error)
@@ -184,6 +205,13 @@ export class ComplianceExpirationNotificationService {
           }
         }
       }
+    }
+
+    const summary = `Compliance expiration notification sweep summary: orgsScanned=${orgsScanned} recordsMatched=${recordsMatched} recordsSucceeded=${recordsSucceeded} recordsFailed=${recordsFailed}`;
+    if (recordsFailed > 0) {
+      this.logger.warn(summary);
+    } else {
+      this.logger.log(summary);
     }
   }
 }

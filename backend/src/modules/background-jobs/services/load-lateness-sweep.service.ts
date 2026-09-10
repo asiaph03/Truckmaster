@@ -71,7 +71,22 @@ export class LoadLatenessSweepService {
   async run(): Promise<void> {
     const orgs = await this.prisma.organization.findMany({ select: { id: true } });
 
+    // Monitoring Phase 4A-10 — local to this run() invocation only, see
+    // InvitationExpirationSweepService.run() for the full concurrency
+    // reasoning. recordsMatched counts every load the query returns;
+    // recordsSucceeded/recordsFailed count only loads that pass the
+    // existing pre-transaction eligibility gates below (assigned
+    // dispatcher, an actual late stop) and reach a transaction attempt —
+    // see CheckCallReminderSweepService.run() for the same matched-vs-
+    // attempted distinction.
+    let orgsScanned = 0;
+    let recordsMatched = 0;
+    let recordsSucceeded = 0;
+    let recordsFailed = 0;
+
     for (const org of orgs) {
+      orgsScanned++;
+
       let loads: Awaited<ReturnType<typeof this.loadOperationalLoads>>;
       try {
         loads = await this.loadOperationalLoads(org.id);
@@ -84,6 +99,8 @@ export class LoadLatenessSweepService {
         );
         continue;
       }
+
+      recordsMatched += loads.length;
 
       for (const load of loads) {
         if (!load.assignedDispatcherId) continue;
@@ -125,7 +142,9 @@ export class LoadLatenessSweepService {
               actorType: 'SYSTEM',
             });
           });
+          recordsSucceeded++;
         } catch (error) {
+          recordsFailed++;
           this.logger.error(
             `Load lateness sweep: failed for org ${org.id}, load ${load.id}: ${
               error instanceof Error ? error.message : String(error)
@@ -134,6 +153,13 @@ export class LoadLatenessSweepService {
           );
         }
       }
+    }
+
+    const summary = `Load lateness sweep summary: orgsScanned=${orgsScanned} recordsMatched=${recordsMatched} recordsSucceeded=${recordsSucceeded} recordsFailed=${recordsFailed}`;
+    if (recordsFailed > 0) {
+      this.logger.warn(summary);
+    } else {
+      this.logger.log(summary);
     }
   }
 }
