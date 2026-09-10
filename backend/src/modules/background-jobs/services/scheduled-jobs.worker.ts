@@ -2,6 +2,7 @@ import { Inject, Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nest
 import { Queue, Worker } from 'bullmq';
 import Redis from 'ioredis';
 import { REDIS_CLIENT, duplicateRedisWithErrorHandler } from '../../../common/redis/redis.module';
+import { WorkerHeartbeatService } from '../../../common/worker-health/worker-heartbeat.service';
 import { InvitationExpirationSweepService } from './invitation-expiration-sweep.service';
 import { QuoteExpirationSweepService } from './quote-expiration-sweep.service';
 import { CarrierComplianceExpirationSweepService } from './carrier-compliance-expiration-sweep.service';
@@ -43,6 +44,7 @@ export class ScheduledJobsWorker implements OnModuleInit, OnModuleDestroy {
     private readonly complianceExpirationNotification: ComplianceExpirationNotificationService,
     private readonly checkCallReminderSweep: CheckCallReminderSweepService,
     private readonly loadLatenessSweep: LoadLatenessSweepService,
+    private readonly heartbeat: WorkerHeartbeatService,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -56,7 +58,18 @@ export class ScheduledJobsWorker implements OnModuleInit, OnModuleDestroy {
         `Scheduled job ${job?.name} (${job?.id}) failed: ${error.message}`,
         error.stack,
       );
+      this.heartbeat.recordActivity('scheduled-jobs-worker', 'failed');
     });
+    this.worker.on('active', () => this.heartbeat.recordActivity('scheduled-jobs-worker', 'active'));
+    this.worker.on('completed', () =>
+      this.heartbeat.recordActivity('scheduled-jobs-worker', 'completed'),
+    );
+    this.worker.on('error', (error) => {
+      this.logger.error(`Scheduled jobs worker connection error: ${error.message}`, error.stack);
+      this.heartbeat.recordError('scheduled-jobs-worker', 'error');
+    });
+
+    this.heartbeat.register('scheduled-jobs-worker', () => this.worker!.isRunning());
 
     await this.registerRepeatableJobs();
   }
@@ -126,6 +139,7 @@ export class ScheduledJobsWorker implements OnModuleInit, OnModuleDestroy {
   }
 
   async onModuleDestroy(): Promise<void> {
+    this.heartbeat.unregister('scheduled-jobs-worker');
     await this.worker?.close();
     await this.workerConnection?.quit();
   }

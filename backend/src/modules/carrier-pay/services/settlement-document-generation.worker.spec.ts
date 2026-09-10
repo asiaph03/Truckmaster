@@ -54,17 +54,24 @@ describe('SettlementDocumentGenerationWorker', () => {
         .mockImplementation((_orgId: string, fn: (tx: unknown) => unknown) => fn(tx)),
     };
 
+    const heartbeat = {
+      register: jest.fn(),
+      unregister: jest.fn(),
+      recordActivity: jest.fn(),
+      recordError: jest.fn(),
+    };
     const worker = new SettlementDocumentGenerationWorker(
       redis as never,
       pdfGenerator as never,
       prisma as never,
       audit as never,
       storage as never,
+      heartbeat as never,
     );
     worker.onModuleInit();
     if (!capturedProcessor) throw new Error('Worker processor was not captured');
     const processor: Processor = capturedProcessor;
-    return { processor, pdfGenerator, audit, storage, tx };
+    return { processor, pdfGenerator, audit, storage, tx, heartbeat, worker };
   }
 
   it('generates the PDF, uploads it, marks the document COMPLETE, and audits on a successful first attempt', async () => {
@@ -167,5 +174,51 @@ describe('SettlementDocumentGenerationWorker', () => {
     expect(call).toBeDefined();
     expect(call![0]).toContain(JOB_DATA.organizationId);
     errorSpy.mockRestore();
+  });
+
+  describe('Monitoring Phase 4A-3 (worker heartbeat wiring)', () => {
+    it('registers itself with WorkerHeartbeatService on init', () => {
+      const { heartbeat } = buildWorker(jest.fn().mockResolvedValue(Buffer.from('pdf-bytes')));
+
+      expect(heartbeat.register).toHaveBeenCalledWith('settlement-pdf-worker', expect.any(Function));
+    });
+
+    it("an 'active' event reports activity", () => {
+      const { heartbeat } = buildWorker(jest.fn().mockResolvedValue(Buffer.from('pdf-bytes')));
+      const activeHandler = capturedOn!.mock.calls.find((c) => c[0] === 'active')?.[1];
+      expect(activeHandler).toBeDefined();
+
+      activeHandler();
+
+      expect(heartbeat.recordActivity).toHaveBeenCalledWith('settlement-pdf-worker', 'active');
+    });
+
+    it("a 'completed' event reports activity", () => {
+      const { heartbeat } = buildWorker(jest.fn().mockResolvedValue(Buffer.from('pdf-bytes')));
+      const completedHandler = capturedOn!.mock.calls.find((c) => c[0] === 'completed')?.[1];
+      expect(completedHandler).toBeDefined();
+
+      completedHandler();
+
+      expect(heartbeat.recordActivity).toHaveBeenCalledWith('settlement-pdf-worker', 'completed');
+    });
+
+    it("a Worker-level 'error' event reports recordError", () => {
+      const { heartbeat } = buildWorker(jest.fn().mockResolvedValue(Buffer.from('pdf-bytes')));
+      const errorHandler = capturedOn!.mock.calls.find((c) => c[0] === 'error')?.[1];
+      expect(errorHandler).toBeDefined();
+
+      errorHandler(new Error('connection lost'));
+
+      expect(heartbeat.recordError).toHaveBeenCalledWith('settlement-pdf-worker', 'error');
+    });
+
+    it('unregisters from WorkerHeartbeatService on shutdown', async () => {
+      const { worker, heartbeat } = buildWorker(jest.fn().mockResolvedValue(Buffer.from('pdf-bytes')));
+
+      await worker.onModuleDestroy();
+
+      expect(heartbeat.unregister).toHaveBeenCalledWith('settlement-pdf-worker');
+    });
   });
 });

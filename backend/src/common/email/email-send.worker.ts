@@ -2,6 +2,7 @@ import { Inject, Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nest
 import { Worker } from 'bullmq';
 import Redis from 'ioredis';
 import { REDIS_CLIENT, duplicateRedisWithErrorHandler } from '../redis/redis.module';
+import { WorkerHeartbeatService } from '../worker-health/worker-heartbeat.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { StorageService } from '../storage/storage.service';
@@ -34,6 +35,7 @@ export class EmailSendWorker implements OnModuleInit, OnModuleDestroy {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly storage: StorageService,
+    private readonly heartbeat: WorkerHeartbeatService,
   ) {}
 
   onModuleInit(): void {
@@ -82,7 +84,16 @@ export class EmailSendWorker implements OnModuleInit, OnModuleDestroy {
         `Email send job ${job?.id} (org ${job?.data.organizationId}) failed: ${error.message}`,
         error.stack,
       );
+      this.heartbeat.recordActivity('email-send-worker', 'failed');
     });
+    this.worker.on('active', () => this.heartbeat.recordActivity('email-send-worker', 'active'));
+    this.worker.on('completed', () => this.heartbeat.recordActivity('email-send-worker', 'completed'));
+    this.worker.on('error', (error) => {
+      this.logger.error(`Email send worker connection error: ${error.message}`, error.stack);
+      this.heartbeat.recordError('email-send-worker', 'error');
+    });
+
+    this.heartbeat.register('email-send-worker', () => this.worker!.isRunning());
   }
 
   /**
@@ -133,6 +144,7 @@ export class EmailSendWorker implements OnModuleInit, OnModuleDestroy {
   }
 
   async onModuleDestroy(): Promise<void> {
+    this.heartbeat.unregister('email-send-worker');
     await this.worker?.close();
     await this.workerConnection?.quit();
   }

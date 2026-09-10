@@ -75,17 +75,24 @@ describe('ImportCommitWorker', () => {
       resolveByLegalName: opts.resolveParentImpl ?? jest.fn().mockResolvedValue({ id: 'parent-1' }),
     };
 
+    const heartbeat = {
+      register: jest.fn(),
+      unregister: jest.fn(),
+      recordActivity: jest.fn(),
+      recordError: jest.fn(),
+    };
     const worker = new ImportCommitWorker(
       redis as never,
       prisma as never,
       audit as never,
       adapters as never,
       parentResolution as never,
+      heartbeat as never,
     );
     worker.onModuleInit();
     if (!capturedProcessor) throw new Error('Worker processor was not captured');
     const processor: Processor = capturedProcessor;
-    return { processor, tx, audit, adapter, parentResolution };
+    return { processor, tx, audit, adapter, parentResolution, heartbeat, worker };
   }
 
   it('commits every eligible VALID row and marks it IMPORTED', async () => {
@@ -238,6 +245,12 @@ describe('ImportCommitWorker', () => {
     };
     const adapters = { get: jest.fn() };
     const parentResolution = { resolveByLegalName: jest.fn() };
+    const heartbeat = {
+      register: jest.fn(),
+      unregister: jest.fn(),
+      recordActivity: jest.fn(),
+      recordError: jest.fn(),
+    };
 
     const worker = new ImportCommitWorker(
       redis as never,
@@ -245,6 +258,7 @@ describe('ImportCommitWorker', () => {
       audit as never,
       adapters as never,
       parentResolution as never,
+      heartbeat as never,
     );
     worker.onModuleInit();
     const processor = capturedProcessor!;
@@ -280,6 +294,12 @@ describe('ImportCommitWorker', () => {
     };
     const adapters = { get: jest.fn() };
     const parentResolution = { resolveByLegalName: jest.fn() };
+    const heartbeat = {
+      register: jest.fn(),
+      unregister: jest.fn(),
+      recordActivity: jest.fn(),
+      recordError: jest.fn(),
+    };
 
     const worker = new ImportCommitWorker(
       redis as never,
@@ -287,6 +307,7 @@ describe('ImportCommitWorker', () => {
       audit as never,
       adapters as never,
       parentResolution as never,
+      heartbeat as never,
     );
     worker.onModuleInit();
     const processor = capturedProcessor!;
@@ -313,5 +334,51 @@ describe('ImportCommitWorker', () => {
     expect(call).toBeDefined();
     expect(call![0]).toContain(JOB_DATA.organizationId);
     errorSpy.mockRestore();
+  });
+
+  describe('Monitoring Phase 4A-3 (worker heartbeat wiring)', () => {
+    it('registers itself with WorkerHeartbeatService on init', () => {
+      const { heartbeat } = buildWorker({ rows: [] });
+
+      expect(heartbeat.register).toHaveBeenCalledWith('import-commit-worker', expect.any(Function));
+    });
+
+    it("an 'active' event reports activity", () => {
+      const { heartbeat } = buildWorker({ rows: [] });
+      const activeHandler = capturedOn!.mock.calls.find((c) => c[0] === 'active')?.[1];
+      expect(activeHandler).toBeDefined();
+
+      activeHandler();
+
+      expect(heartbeat.recordActivity).toHaveBeenCalledWith('import-commit-worker', 'active');
+    });
+
+    it("a 'completed' event reports activity", () => {
+      const { heartbeat } = buildWorker({ rows: [] });
+      const completedHandler = capturedOn!.mock.calls.find((c) => c[0] === 'completed')?.[1];
+      expect(completedHandler).toBeDefined();
+
+      completedHandler();
+
+      expect(heartbeat.recordActivity).toHaveBeenCalledWith('import-commit-worker', 'completed');
+    });
+
+    it("a Worker-level 'error' event reports recordError", () => {
+      const { heartbeat } = buildWorker({ rows: [] });
+      const errorHandler = capturedOn!.mock.calls.find((c) => c[0] === 'error')?.[1];
+      expect(errorHandler).toBeDefined();
+
+      errorHandler(new Error('connection lost'));
+
+      expect(heartbeat.recordError).toHaveBeenCalledWith('import-commit-worker', 'error');
+    });
+
+    it('unregisters from WorkerHeartbeatService on shutdown', async () => {
+      const { worker, heartbeat } = buildWorker({ rows: [] });
+
+      await worker.onModuleDestroy();
+
+      expect(heartbeat.unregister).toHaveBeenCalledWith('import-commit-worker');
+    });
   });
 });

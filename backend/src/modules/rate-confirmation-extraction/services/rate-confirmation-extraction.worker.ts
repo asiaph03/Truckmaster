@@ -2,6 +2,7 @@ import { Inject, Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nest
 import { Worker } from 'bullmq';
 import Redis from 'ioredis';
 import { REDIS_CLIENT, duplicateRedisWithErrorHandler } from '../../../common/redis/redis.module';
+import { WorkerHeartbeatService } from '../../../common/worker-health/worker-heartbeat.service';
 import { StorageService } from '../../../common/storage/storage.service';
 import {
   RATE_CONFIRMATION_EXTRACTOR,
@@ -40,6 +41,7 @@ export class RateConfirmationExtractionWorker implements OnModuleInit, OnModuleD
     @Inject(RATE_CONFIRMATION_EXTRACTOR) private readonly extractor: IRateConfirmationExtractor,
     private readonly storage: StorageService,
     private readonly jobStore: RateConfirmationExtractionJobStore,
+    private readonly heartbeat: WorkerHeartbeatService,
   ) {}
 
   onModuleInit(): void {
@@ -77,7 +79,23 @@ export class RateConfirmationExtractionWorker implements OnModuleInit, OnModuleD
         `Rate Confirmation extraction job ${job?.id} (org ${job?.data.organizationId}) failed: ${error.message}`,
         error.stack,
       );
+      this.heartbeat.recordActivity('rate-confirmation-extraction-worker', 'failed');
     });
+    this.worker.on('active', () =>
+      this.heartbeat.recordActivity('rate-confirmation-extraction-worker', 'active'),
+    );
+    this.worker.on('completed', () =>
+      this.heartbeat.recordActivity('rate-confirmation-extraction-worker', 'completed'),
+    );
+    this.worker.on('error', (error) => {
+      this.logger.error(
+        `Rate Confirmation extraction worker connection error: ${error.message}`,
+        error.stack,
+      );
+      this.heartbeat.recordError('rate-confirmation-extraction-worker', 'error');
+    });
+
+    this.heartbeat.register('rate-confirmation-extraction-worker', () => this.worker!.isRunning());
   }
 
   private async processJob(data: RateConfirmationExtractionJobData): Promise<void> {
@@ -106,6 +124,7 @@ export class RateConfirmationExtractionWorker implements OnModuleInit, OnModuleD
   }
 
   async onModuleDestroy(): Promise<void> {
+    this.heartbeat.unregister('rate-confirmation-extraction-worker');
     await this.worker?.close();
     await this.workerConnection?.quit();
   }

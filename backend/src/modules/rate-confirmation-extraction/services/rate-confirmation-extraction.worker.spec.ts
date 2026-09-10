@@ -46,16 +46,23 @@ describe('RateConfirmationExtractionWorker', () => {
       markFailed: jest.fn().mockResolvedValue(undefined),
     };
 
+    const heartbeat = {
+      register: jest.fn(),
+      unregister: jest.fn(),
+      recordActivity: jest.fn(),
+      recordError: jest.fn(),
+    };
     const worker = new RateConfirmationExtractionWorker(
       redis as never,
       extractor as never,
       storage as never,
       jobStore as never,
+      heartbeat as never,
     );
     worker.onModuleInit();
     if (!capturedProcessor) throw new Error('Worker processor was not captured');
     const processor: Processor = capturedProcessor;
-    return { processor, extractor, storage, jobStore };
+    return { processor, extractor, storage, jobStore, heartbeat, worker };
   }
 
   it('marks in-progress, extracts, and marks complete on a successful first attempt', async () => {
@@ -165,5 +172,54 @@ describe('RateConfirmationExtractionWorker', () => {
     expect(call).toBeDefined();
     expect(call![0]).toContain(JOB_DATA.organizationId);
     errorSpy.mockRestore();
+  });
+
+  describe('Monitoring Phase 4A-3 (worker heartbeat wiring)', () => {
+    it('registers itself with WorkerHeartbeatService on init', () => {
+      const { heartbeat } = buildWorker(jest.fn().mockResolvedValue({ multiLoadDetected: false, data: {} }));
+
+      expect(heartbeat.register).toHaveBeenCalledWith(
+        'rate-confirmation-extraction-worker',
+        expect.any(Function),
+      );
+    });
+
+    it("an 'active' event reports activity", () => {
+      const { heartbeat } = buildWorker(jest.fn().mockResolvedValue({ multiLoadDetected: false, data: {} }));
+      const activeHandler = capturedOn!.mock.calls.find((c) => c[0] === 'active')?.[1];
+      expect(activeHandler).toBeDefined();
+
+      activeHandler();
+
+      expect(heartbeat.recordActivity).toHaveBeenCalledWith('rate-confirmation-extraction-worker', 'active');
+    });
+
+    it("a 'completed' event reports activity", () => {
+      const { heartbeat } = buildWorker(jest.fn().mockResolvedValue({ multiLoadDetected: false, data: {} }));
+      const completedHandler = capturedOn!.mock.calls.find((c) => c[0] === 'completed')?.[1];
+      expect(completedHandler).toBeDefined();
+
+      completedHandler();
+
+      expect(heartbeat.recordActivity).toHaveBeenCalledWith('rate-confirmation-extraction-worker', 'completed');
+    });
+
+    it("a Worker-level 'error' event reports recordError", () => {
+      const { heartbeat } = buildWorker(jest.fn().mockResolvedValue({ multiLoadDetected: false, data: {} }));
+      const errorHandler = capturedOn!.mock.calls.find((c) => c[0] === 'error')?.[1];
+      expect(errorHandler).toBeDefined();
+
+      errorHandler(new Error('connection lost'));
+
+      expect(heartbeat.recordError).toHaveBeenCalledWith('rate-confirmation-extraction-worker', 'error');
+    });
+
+    it('unregisters from WorkerHeartbeatService on shutdown', async () => {
+      const { worker, heartbeat } = buildWorker(jest.fn().mockResolvedValue({ multiLoadDetected: false, data: {} }));
+
+      await worker.onModuleDestroy();
+
+      expect(heartbeat.unregister).toHaveBeenCalledWith('rate-confirmation-extraction-worker');
+    });
   });
 });

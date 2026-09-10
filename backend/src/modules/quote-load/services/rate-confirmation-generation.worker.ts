@@ -2,6 +2,7 @@ import { Inject, Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nest
 import { Worker } from 'bullmq';
 import Redis from 'ioredis';
 import { REDIS_CLIENT, duplicateRedisWithErrorHandler } from '../../../common/redis/redis.module';
+import { WorkerHeartbeatService } from '../../../common/worker-health/worker-heartbeat.service';
 import { PrismaService } from '../../../common/prisma/prisma.service';
 import { AuditService } from '../../../common/audit/audit.service';
 import { StorageService } from '../../../common/storage/storage.service';
@@ -34,6 +35,7 @@ export class RateConfirmationGenerationWorker implements OnModuleInit, OnModuleD
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly storage: StorageService,
+    private readonly heartbeat: WorkerHeartbeatService,
   ) {}
 
   onModuleInit(): void {
@@ -71,7 +73,23 @@ export class RateConfirmationGenerationWorker implements OnModuleInit, OnModuleD
         `Rate Confirmation PDF job ${job?.id} (org ${job?.data.organizationId}) failed: ${error.message}`,
         error.stack,
       );
+      this.heartbeat.recordActivity('rate-confirmation-pdf-worker', 'failed');
     });
+    this.worker.on('active', () =>
+      this.heartbeat.recordActivity('rate-confirmation-pdf-worker', 'active'),
+    );
+    this.worker.on('completed', () =>
+      this.heartbeat.recordActivity('rate-confirmation-pdf-worker', 'completed'),
+    );
+    this.worker.on('error', (error) => {
+      this.logger.error(
+        `Rate Confirmation PDF worker connection error: ${error.message}`,
+        error.stack,
+      );
+      this.heartbeat.recordError('rate-confirmation-pdf-worker', 'error');
+    });
+
+    this.heartbeat.register('rate-confirmation-pdf-worker', () => this.worker!.isRunning());
   }
 
   private async markFailed(data: RateConfirmationJobData): Promise<void> {
@@ -129,6 +147,7 @@ export class RateConfirmationGenerationWorker implements OnModuleInit, OnModuleD
   }
 
   async onModuleDestroy(): Promise<void> {
+    this.heartbeat.unregister('rate-confirmation-pdf-worker');
     await this.worker?.close();
     await this.workerConnection?.quit();
   }

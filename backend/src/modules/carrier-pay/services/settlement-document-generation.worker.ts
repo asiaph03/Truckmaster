@@ -2,6 +2,7 @@ import { Inject, Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nest
 import { Worker } from 'bullmq';
 import Redis from 'ioredis';
 import { REDIS_CLIENT, duplicateRedisWithErrorHandler } from '../../../common/redis/redis.module';
+import { WorkerHeartbeatService } from '../../../common/worker-health/worker-heartbeat.service';
 import { PrismaService } from '../../../common/prisma/prisma.service';
 import { AuditService } from '../../../common/audit/audit.service';
 import { StorageService } from '../../../common/storage/storage.service';
@@ -26,6 +27,7 @@ export class SettlementDocumentGenerationWorker implements OnModuleInit, OnModul
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly storage: StorageService,
+    private readonly heartbeat: WorkerHeartbeatService,
   ) {}
 
   onModuleInit(): void {
@@ -58,7 +60,18 @@ export class SettlementDocumentGenerationWorker implements OnModuleInit, OnModul
         `Settlement PDF job ${job?.id} (org ${job?.data.organizationId}) failed: ${error.message}`,
         error.stack,
       );
+      this.heartbeat.recordActivity('settlement-pdf-worker', 'failed');
     });
+    this.worker.on('active', () => this.heartbeat.recordActivity('settlement-pdf-worker', 'active'));
+    this.worker.on('completed', () =>
+      this.heartbeat.recordActivity('settlement-pdf-worker', 'completed'),
+    );
+    this.worker.on('error', (error) => {
+      this.logger.error(`Settlement PDF worker connection error: ${error.message}`, error.stack);
+      this.heartbeat.recordError('settlement-pdf-worker', 'error');
+    });
+
+    this.heartbeat.register('settlement-pdf-worker', () => this.worker!.isRunning());
   }
 
   private async markFailed(data: SettlementJobData): Promise<void> {
@@ -112,6 +125,7 @@ export class SettlementDocumentGenerationWorker implements OnModuleInit, OnModul
   }
 
   async onModuleDestroy(): Promise<void> {
+    this.heartbeat.unregister('settlement-pdf-worker');
     await this.worker?.close();
     await this.workerConnection?.quit();
   }

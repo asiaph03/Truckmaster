@@ -2,6 +2,7 @@ import { Inject, Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nest
 import { Worker } from 'bullmq';
 import Redis from 'ioredis';
 import { REDIS_CLIENT, duplicateRedisWithErrorHandler } from '../../../common/redis/redis.module';
+import { WorkerHeartbeatService } from '../../../common/worker-health/worker-heartbeat.service';
 import { PrismaService } from '../../../common/prisma/prisma.service';
 import { AuditService } from '../../../common/audit/audit.service';
 import { AppError } from '../../../common/errors/app-error';
@@ -38,6 +39,7 @@ export class ImportCommitWorker implements OnModuleInit, OnModuleDestroy {
     private readonly audit: AuditService,
     private readonly adapters: ImportAdapterRegistry,
     private readonly parentResolution: ParentResolutionService,
+    private readonly heartbeat: WorkerHeartbeatService,
   ) {}
 
   onModuleInit(): void {
@@ -68,7 +70,18 @@ export class ImportCommitWorker implements OnModuleInit, OnModuleDestroy {
         `Import commit job ${job?.id} (org ${job?.data.organizationId}) failed: ${error.message}`,
         error.stack,
       );
+      this.heartbeat.recordActivity('import-commit-worker', 'failed');
     });
+    this.worker.on('active', () => this.heartbeat.recordActivity('import-commit-worker', 'active'));
+    this.worker.on('completed', () =>
+      this.heartbeat.recordActivity('import-commit-worker', 'completed'),
+    );
+    this.worker.on('error', (error) => {
+      this.logger.error(`Import commit worker connection error: ${error.message}`, error.stack);
+      this.heartbeat.recordError('import-commit-worker', 'error');
+    });
+
+    this.heartbeat.register('import-commit-worker', () => this.worker!.isRunning());
   }
 
   private async markBatchFailed(data: ImportCommitJobData): Promise<void> {
@@ -214,6 +227,7 @@ export class ImportCommitWorker implements OnModuleInit, OnModuleDestroy {
   }
 
   async onModuleDestroy(): Promise<void> {
+    this.heartbeat.unregister('import-commit-worker');
     await this.worker?.close();
     await this.workerConnection?.quit();
   }
