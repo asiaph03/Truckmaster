@@ -59,18 +59,27 @@ export class AppExceptionFilter implements ExceptionFilter {
     }
 
     let requestId: string | undefined;
+    let organizationId: string | undefined;
+    let userId: string | undefined;
     try {
-      requestId = RequestContextStore.current().requestId;
+      const reqCtx = RequestContextStore.current();
+      requestId = reqCtx.requestId;
+      organizationId = reqCtx.organizationId;
+      userId = reqCtx.userId;
     } catch {
       // Filter can run before context middleware in edge cases (e.g. a
-      // malformed request Express rejects early) — requestId is best-effort.
+      // malformed request Express rejects early) — context is best-effort.
     }
 
     if (status >= 500) {
-      this.logger.error(
-        `[${requestId ?? 'no-request-id'}] ${request.method} ${request.url} — ${message}`,
-        exception instanceof Error ? exception.stack : undefined,
-      );
+      // Monitoring Phase 4A-7 — org/user correlation mirrors
+      // HttpAccessLoggingMiddleware's own org=/user= convention, so a 5xx
+      // is triageable from this single log line instead of needing to
+      // cross-reference the separate HttpAccess line via requestId.
+      const parts = [`[${requestId ?? 'no-request-id'}]`, request.method, request.url, '—', message];
+      if (organizationId) parts.push(`org=${organizationId}`);
+      if (userId) parts.push(`user=${userId}`);
+      this.logger.error(parts.join(' '), exception instanceof Error ? exception.stack : undefined);
     }
 
     response.status(status).json({
