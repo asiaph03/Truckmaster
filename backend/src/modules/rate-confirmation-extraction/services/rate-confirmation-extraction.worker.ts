@@ -101,6 +101,12 @@ export class RateConfirmationExtractionWorker implements OnModuleInit, OnModuleD
       );
       this.heartbeat.recordError('rate-confirmation-extraction-worker', 'error');
     });
+    // Monitoring Phase 4A-5 — purely observational; deliberately does NOT
+    // touch WorkerHeartbeatService (see malware-scan.worker.ts for the
+    // full rationale). No organizationId available from this event.
+    this.worker.on('stalled', (jobId, prev) => {
+      this.logger.warn(`Rate Confirmation extraction job ${jobId} stalled (was ${prev}).`);
+    });
 
     this.heartbeat.register('rate-confirmation-extraction-worker', () => this.worker!.isRunning());
   }

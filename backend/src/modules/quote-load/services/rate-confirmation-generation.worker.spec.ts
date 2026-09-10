@@ -327,3 +327,68 @@ describe('RateConfirmationGenerationWorker — Monitoring Phase 4A-4 (job durati
     errorSpy.mockRestore();
   });
 });
+
+describe('RateConfirmationGenerationWorker — Monitoring Phase 4A-5 (stalled-event observability)', () => {
+  function buildWorker() {
+    capturedProcessor = undefined;
+    const redis = { duplicate: jest.fn().mockReturnValue({ on: jest.fn(), quit: jest.fn() }) };
+    const pdfGenerator = { generateRateConfirmation: jest.fn() };
+    const audit = { record: jest.fn() };
+    const storage = { putObject: jest.fn() };
+    const prisma = { withTenantTransaction: jest.fn() };
+    const heartbeat = {
+      register: jest.fn(),
+      unregister: jest.fn(),
+      recordActivity: jest.fn(),
+      recordError: jest.fn(),
+    };
+
+    new RateConfirmationGenerationWorker(
+      redis as never,
+      pdfGenerator as never,
+      prisma as never,
+      audit as never,
+      storage as never,
+      heartbeat as never,
+    ).onModuleInit();
+    if (!capturedProcessor) throw new Error('Worker processor was not captured');
+    return { heartbeat };
+  }
+
+  it("a 'stalled' event logs a warning with the worker label, jobId, and prev state", () => {
+    const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    buildWorker();
+    const stalledHandler = capturedOn!.mock.calls.find((c) => c[0] === 'stalled')?.[1];
+    expect(stalledHandler).toBeDefined();
+
+    stalledHandler('job-42', 'active');
+
+    expect(warnSpy).toHaveBeenCalledWith('Rate Confirmation PDF job job-42 stalled (was active).');
+    warnSpy.mockRestore();
+  });
+
+  it('does not touch WorkerHeartbeatService in any way', () => {
+    const { heartbeat } = buildWorker();
+    const stalledHandler = capturedOn!.mock.calls.find((c) => c[0] === 'stalled')?.[1];
+
+    stalledHandler('job-42', 'active');
+
+    expect(heartbeat.recordActivity).not.toHaveBeenCalled();
+    expect(heartbeat.recordError).not.toHaveBeenCalled();
+    expect(heartbeat.register).toHaveBeenCalledTimes(1);
+    expect(heartbeat.unregister).not.toHaveBeenCalled();
+  });
+
+  it('security/PII — the stalled log contains only jobId and prev, never organizationId or job data', () => {
+    const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    buildWorker();
+    const stalledHandler = capturedOn!.mock.calls.find((c) => c[0] === 'stalled')?.[1];
+
+    stalledHandler('job-42', 'active');
+
+    const [message] = warnSpy.mock.calls[0];
+    expect(message).toBe('Rate Confirmation PDF job job-42 stalled (was active).');
+    expect(message).not.toMatch(/org[a-zA-Z]*=/i);
+    warnSpy.mockRestore();
+  });
+});

@@ -82,6 +82,13 @@ export class ScheduledJobsWorker implements OnModuleInit, OnModuleDestroy {
       this.logger.error(`Scheduled jobs worker connection error: ${error.message}`, error.stack);
       this.heartbeat.recordError('scheduled-jobs-worker', 'error');
     });
+    // Monitoring Phase 4A-5 — purely observational; deliberately does NOT
+    // touch WorkerHeartbeatService (see malware-scan.worker.ts for the
+    // full rationale). No organizationId available from this event (and
+    // this queue's job payload is always {} anyway).
+    this.worker.on('stalled', (jobId, prev) => {
+      this.logger.warn(`Scheduled job ${jobId} stalled (was ${prev}).`);
+    });
 
     this.heartbeat.register('scheduled-jobs-worker', () => this.worker!.isRunning());
 

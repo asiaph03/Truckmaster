@@ -102,6 +102,12 @@ export class EmailSendWorker implements OnModuleInit, OnModuleDestroy {
       this.logger.error(`Email send worker connection error: ${error.message}`, error.stack);
       this.heartbeat.recordError('email-send-worker', 'error');
     });
+    // Monitoring Phase 4A-5 — purely observational; deliberately does NOT
+    // touch WorkerHeartbeatService (see malware-scan.worker.ts for the
+    // full rationale). No organizationId available from this event.
+    this.worker.on('stalled', (jobId, prev) => {
+      this.logger.warn(`Email job ${jobId} stalled (was ${prev}).`);
+    });
 
     this.heartbeat.register('email-send-worker', () => this.worker!.isRunning());
   }

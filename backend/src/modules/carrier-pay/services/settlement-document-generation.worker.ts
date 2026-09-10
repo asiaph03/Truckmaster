@@ -77,6 +77,12 @@ export class SettlementDocumentGenerationWorker implements OnModuleInit, OnModul
       this.logger.error(`Settlement PDF worker connection error: ${error.message}`, error.stack);
       this.heartbeat.recordError('settlement-pdf-worker', 'error');
     });
+    // Monitoring Phase 4A-5 — purely observational; deliberately does NOT
+    // touch WorkerHeartbeatService (see malware-scan.worker.ts for the
+    // full rationale). No organizationId available from this event.
+    this.worker.on('stalled', (jobId, prev) => {
+      this.logger.warn(`Settlement PDF job ${jobId} stalled (was ${prev}).`);
+    });
 
     this.heartbeat.register('settlement-pdf-worker', () => this.worker!.isRunning());
   }
