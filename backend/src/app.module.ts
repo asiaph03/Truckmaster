@@ -9,6 +9,7 @@ import { RedisModule } from './common/redis/redis.module';
 import { StorageModule } from './common/storage/storage.module';
 import { AuditModule } from './common/audit/audit.module';
 import { RequestContextMiddleware } from './common/tenant-context/request-context.middleware';
+import { HttpAccessLoggingMiddleware } from './common/tenant-context/http-access-logging.middleware';
 import { AppExceptionFilter } from './common/filters/app-exception.filter';
 import { HealthModule } from './health/health.module';
 import { IdentityModule } from './modules/identity/identity.module';
@@ -142,6 +143,6 @@ import { ImportModule } from './modules/import/import.module';
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {
-    consumer.apply(RequestContextMiddleware).forRoutes('*');
+    consumer.apply(RequestContextMiddleware, HttpAccessLoggingMiddleware).forRoutes('*');
   }
 }
