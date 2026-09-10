@@ -1,5 +1,5 @@
 import { Inject, Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
-import { Queue, Worker } from 'bullmq';
+import { JobsOptions, Queue, Worker } from 'bullmq';
 import Redis from 'ioredis';
 import { REDIS_CLIENT, duplicateRedisWithErrorHandler } from '../../../common/redis/redis.module';
 import { WorkerHeartbeatService } from '../../../common/worker-health/worker-heartbeat.service';
@@ -16,6 +16,20 @@ import {
   SCHEDULED_JOBS_QUEUE,
   SCHEDULED_JOBS_QUEUE_NAME,
 } from './background-jobs.constants';
+
+/**
+ * Monitoring Phase 4A-6 — retention only; no change to repeat cadence, job
+ * names, or dedupe behavior. Completed: ~1 day / 200 entries, matching this
+ * queue's own ~196/day volume (2 sweeps every 15 min + 4 daily), with zero
+ * business value in keeping more (payload is always {}, no code depends on
+ * it). Failed: 7 days / 500 entries — this queue has no attempts/backoff,
+ * so 'failed' is always the terminal signal for a sweep, worth a real
+ * postmortem window in case of a spike.
+ */
+export const SCHEDULED_JOBS_RETENTION: Pick<JobsOptions, 'removeOnComplete' | 'removeOnFail'> = {
+  removeOnComplete: { count: 200, age: 86400 },
+  removeOnFail: { count: 500, age: 604800 },
+};
 
 /**
  * Owns the single shared `scheduled-jobs` queue/worker pair and registers
@@ -99,12 +113,20 @@ export class ScheduledJobsWorker implements OnModuleInit, OnModuleDestroy {
     await this.queue.add(
       JOB_NAMES.INVITATION_EXPIRATION_SWEEP,
       {},
-      { repeat: { pattern: DAILY_SWEEP_CRON }, jobId: JOB_NAMES.INVITATION_EXPIRATION_SWEEP },
+      {
+        repeat: { pattern: DAILY_SWEEP_CRON },
+        jobId: JOB_NAMES.INVITATION_EXPIRATION_SWEEP,
+        ...SCHEDULED_JOBS_RETENTION,
+      },
     );
     await this.queue.add(
       JOB_NAMES.QUOTE_EXPIRATION_SWEEP,
       {},
-      { repeat: { pattern: DAILY_SWEEP_CRON }, jobId: JOB_NAMES.QUOTE_EXPIRATION_SWEEP },
+      {
+        repeat: { pattern: DAILY_SWEEP_CRON },
+        jobId: JOB_NAMES.QUOTE_EXPIRATION_SWEEP,
+        ...SCHEDULED_JOBS_RETENTION,
+      },
     );
     await this.queue.add(
       JOB_NAMES.CARRIER_COMPLIANCE_EXPIRATION_SWEEP,
@@ -112,6 +134,7 @@ export class ScheduledJobsWorker implements OnModuleInit, OnModuleDestroy {
       {
         repeat: { pattern: DAILY_SWEEP_CRON },
         jobId: JOB_NAMES.CARRIER_COMPLIANCE_EXPIRATION_SWEEP,
+        ...SCHEDULED_JOBS_RETENTION,
       },
     );
     await this.queue.add(
@@ -120,6 +143,7 @@ export class ScheduledJobsWorker implements OnModuleInit, OnModuleDestroy {
       {
         repeat: { pattern: DAILY_SWEEP_CRON },
         jobId: JOB_NAMES.COMPLIANCE_EXPIRATION_NOTIFICATIONS,
+        ...SCHEDULED_JOBS_RETENTION,
       },
     );
     await this.queue.add(
@@ -128,6 +152,7 @@ export class ScheduledJobsWorker implements OnModuleInit, OnModuleDestroy {
       {
         repeat: { every: OPERATIONAL_SWEEP_INTERVAL_MS },
         jobId: JOB_NAMES.CHECK_CALL_REMINDER_SWEEP,
+        ...SCHEDULED_JOBS_RETENTION,
       },
     );
     await this.queue.add(
@@ -136,6 +161,7 @@ export class ScheduledJobsWorker implements OnModuleInit, OnModuleDestroy {
       {
         repeat: { every: OPERATIONAL_SWEEP_INTERVAL_MS },
         jobId: JOB_NAMES.LOAD_LATENESS_SWEEP,
+        ...SCHEDULED_JOBS_RETENTION,
       },
     );
   }

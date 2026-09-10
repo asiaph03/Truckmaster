@@ -2,6 +2,7 @@ import { Inject, Module, OnModuleDestroy } from '@nestjs/common';
 import { Queue } from 'bullmq';
 import Redis from 'ioredis';
 import { REDIS_CLIENT, duplicateRedisWithErrorHandler } from '../../common/redis/redis.module';
+import { QueueRegistryService } from '../../common/queue-health/queue-registry.service';
 import { CarrierModule } from '../carrier/carrier.module';
 import { NotificationModule } from '../notification/notification.module';
 import { InvitationExpirationSweepService } from './services/invitation-expiration-sweep.service';
@@ -41,8 +42,12 @@ const SCHEDULED_JOBS_QUEUE_CONNECTION = 'SCHEDULED_JOBS_QUEUE_CONNECTION';
     },
     {
       provide: SCHEDULED_JOBS_QUEUE,
-      useFactory: (connection: Redis) => new Queue(SCHEDULED_JOBS_QUEUE_NAME, { connection }),
-      inject: [SCHEDULED_JOBS_QUEUE_CONNECTION],
+      useFactory: (connection: Redis, queueRegistry: QueueRegistryService) => {
+        const queue = new Queue(SCHEDULED_JOBS_QUEUE_NAME, { connection });
+        queueRegistry.register(SCHEDULED_JOBS_QUEUE_NAME, queue);
+        return queue;
+      },
+      inject: [SCHEDULED_JOBS_QUEUE_CONNECTION, QueueRegistryService],
     },
   ],
 })

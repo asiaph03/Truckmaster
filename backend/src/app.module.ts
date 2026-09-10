@@ -7,6 +7,7 @@ import { CsrfGuard } from './common/security/csrf.guard';
 import { PrismaModule } from './common/prisma/prisma.module';
 import { RedisModule } from './common/redis/redis.module';
 import { WorkerHealthModule } from './common/worker-health/worker-health.module';
+import { QueueRegistryModule } from './common/queue-health/queue-registry.module';
 import { StorageModule } from './common/storage/storage.module';
 import { AuditModule } from './common/audit/audit.module';
 import { RequestContextMiddleware } from './common/tenant-context/request-context.middleware';
@@ -107,6 +108,7 @@ import { ImportModule } from './modules/import/import.module';
     PrismaModule,
     RedisModule,
     WorkerHealthModule,
+    QueueRegistryModule,
     StorageModule,
     AuditModule,
     HealthModule,

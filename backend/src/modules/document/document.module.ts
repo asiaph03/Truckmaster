@@ -2,6 +2,7 @@ import { Inject, Module, OnModuleDestroy } from '@nestjs/common';
 import { Queue } from 'bullmq';
 import Redis from 'ioredis';
 import { REDIS_CLIENT, duplicateRedisWithErrorHandler } from '../../common/redis/redis.module';
+import { QueueRegistryService } from '../../common/queue-health/queue-registry.service';
 import { MALWARE_SCANNER } from '../../common/malware-scan/malware-scanner.interface';
 import { CloudmersiveMalwareScanner } from '../../common/malware-scan/cloudmersive-malware-scanner';
 import { CarrierModule } from '../carrier/carrier.module';
@@ -69,8 +70,12 @@ const RATE_CONFIRMATION_EXTRACTION_QUEUE_CONNECTION =
     },
     {
       provide: MALWARE_SCAN_QUEUE,
-      useFactory: (connection: Redis) => new Queue(MALWARE_SCAN_QUEUE_NAME, { connection }),
-      inject: [MALWARE_SCAN_QUEUE_CONNECTION],
+      useFactory: (connection: Redis, queueRegistry: QueueRegistryService) => {
+        const queue = new Queue(MALWARE_SCAN_QUEUE_NAME, { connection });
+        queueRegistry.register(MALWARE_SCAN_QUEUE_NAME, queue);
+        return queue;
+      },
+      inject: [MALWARE_SCAN_QUEUE_CONNECTION, QueueRegistryService],
     },
     {
       provide: RATE_CONFIRMATION_EXTRACTION_QUEUE_CONNECTION,
@@ -79,9 +84,12 @@ const RATE_CONFIRMATION_EXTRACTION_QUEUE_CONNECTION =
     },
     {
       provide: RATE_CONFIRMATION_EXTRACTION_QUEUE,
-      useFactory: (connection: Redis) =>
-        new Queue(RATE_CONFIRMATION_EXTRACTION_QUEUE_NAME, { connection }),
-      inject: [RATE_CONFIRMATION_EXTRACTION_QUEUE_CONNECTION],
+      useFactory: (connection: Redis, queueRegistry: QueueRegistryService) => {
+        const queue = new Queue(RATE_CONFIRMATION_EXTRACTION_QUEUE_NAME, { connection });
+        queueRegistry.register(RATE_CONFIRMATION_EXTRACTION_QUEUE_NAME, queue);
+        return queue;
+      },
+      inject: [RATE_CONFIRMATION_EXTRACTION_QUEUE_CONNECTION, QueueRegistryService],
     },
   ],
   exports: [DocumentService, RATE_CONFIRMATION_EXTRACTION_QUEUE],

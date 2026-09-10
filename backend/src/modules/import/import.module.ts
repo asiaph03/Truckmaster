@@ -2,6 +2,7 @@ import { Inject, Module, OnModuleDestroy } from '@nestjs/common';
 import { Queue } from 'bullmq';
 import Redis from 'ioredis';
 import { REDIS_CLIENT, duplicateRedisWithErrorHandler } from '../../common/redis/redis.module';
+import { QueueRegistryService } from '../../common/queue-health/queue-registry.service';
 import { SpreadsheetService } from '../../common/spreadsheet/spreadsheet.service';
 import { CustomerModule } from '../customer/customer.module';
 import { CarrierModule } from '../carrier/carrier.module';
@@ -54,8 +55,12 @@ const IMPORT_COMMIT_QUEUE_CONNECTION = 'IMPORT_COMMIT_QUEUE_CONNECTION';
     },
     {
       provide: IMPORT_COMMIT_QUEUE,
-      useFactory: (connection: Redis) => new Queue(IMPORT_COMMIT_QUEUE_NAME, { connection }),
-      inject: [IMPORT_COMMIT_QUEUE_CONNECTION],
+      useFactory: (connection: Redis, queueRegistry: QueueRegistryService) => {
+        const queue = new Queue(IMPORT_COMMIT_QUEUE_NAME, { connection });
+        queueRegistry.register(IMPORT_COMMIT_QUEUE_NAME, queue);
+        return queue;
+      },
+      inject: [IMPORT_COMMIT_QUEUE_CONNECTION, QueueRegistryService],
     },
   ],
 })

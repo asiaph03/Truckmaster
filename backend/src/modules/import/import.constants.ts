@@ -18,10 +18,20 @@ export interface ImportCommitJobData {
   organizationId: string;
 }
 
-/** Mirrors RATE_CONFIRMATION_JOB_OPTIONS's approved retry policy — transient/infra failures only (approved Decision 6/queue). */
+/**
+ * Mirrors RATE_CONFIRMATION_JOB_OPTIONS's approved retry policy —
+ * transient/infra failures only (approved Decision 6/queue).
+ *
+ * Monitoring Phase 4A-6 — retention only; no change to attempts/backoff.
+ * Completed: 7 days / 1000 entries. Failed: 30 days / 2000 entries — see
+ * MALWARE_SCAN_JOB_OPTIONS for the full reasoning shared by every
+ * event-driven queue.
+ */
 export const IMPORT_COMMIT_JOB_OPTIONS: JobsOptions = {
   attempts: 3,
   backoff: { type: 'exponential', delay: 2000 },
+  removeOnComplete: { count: 1000, age: 604800 },
+  removeOnFail: { count: 2000, age: 2592000 },
 };
 
 /** Same role set as CustomerController's EDIT_ROLES — no new permission key (approved Decision 10). */

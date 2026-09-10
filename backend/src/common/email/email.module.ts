@@ -4,6 +4,7 @@ import { Queue } from 'bullmq';
 import Redis from 'ioredis';
 import { AppConfig } from '../../config/configuration';
 import { REDIS_CLIENT, duplicateRedisWithErrorHandler } from '../redis/redis.module';
+import { QueueRegistryService } from '../queue-health/queue-registry.service';
 import { EMAIL_SENDER, IEmailSender } from './email-sender.interface';
 import { PostmarkEmailSender } from './postmark-email-sender';
 import { NoopEmailSender } from './noop-email-sender';
@@ -65,8 +66,12 @@ const EMAIL_QUEUE_CONNECTION = 'EMAIL_QUEUE_CONNECTION';
     },
     {
       provide: EMAIL_QUEUE,
-      useFactory: (connection: Redis) => new Queue(EMAIL_QUEUE_NAME, { connection }),
-      inject: [EMAIL_QUEUE_CONNECTION],
+      useFactory: (connection: Redis, queueRegistry: QueueRegistryService) => {
+        const queue = new Queue(EMAIL_QUEUE_NAME, { connection });
+        queueRegistry.register(EMAIL_QUEUE_NAME, queue);
+        return queue;
+      },
+      inject: [EMAIL_QUEUE_CONNECTION, QueueRegistryService],
     },
   ],
   exports: [EMAIL_QUEUE],

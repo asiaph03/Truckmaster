@@ -2,6 +2,7 @@ import { Inject, Module, OnModuleDestroy } from '@nestjs/common';
 import { Queue } from 'bullmq';
 import Redis from 'ioredis';
 import { REDIS_CLIENT, duplicateRedisWithErrorHandler } from '../../common/redis/redis.module';
+import { QueueRegistryService } from '../../common/queue-health/queue-registry.service';
 import { PDF_GENERATOR } from '../../common/pdf/pdf-generator.interface';
 import { PdfkitPdfGenerator } from '../../common/pdf/pdfkit-pdf-generator';
 import { IdentityModule } from '../identity/identity.module';
@@ -27,8 +28,12 @@ const SETTLEMENT_QUEUE_CONNECTION = 'SETTLEMENT_QUEUE_CONNECTION';
     },
     {
       provide: SETTLEMENT_QUEUE,
-      useFactory: (connection: Redis) => new Queue(SETTLEMENT_QUEUE_NAME, { connection }),
-      inject: [SETTLEMENT_QUEUE_CONNECTION],
+      useFactory: (connection: Redis, queueRegistry: QueueRegistryService) => {
+        const queue = new Queue(SETTLEMENT_QUEUE_NAME, { connection });
+        queueRegistry.register(SETTLEMENT_QUEUE_NAME, queue);
+        return queue;
+      },
+      inject: [SETTLEMENT_QUEUE_CONNECTION, QueueRegistryService],
     },
   ],
 })
