@@ -2,9 +2,11 @@ import { Logger } from '@nestjs/common';
 import { RateConfirmationExtractionWorker } from './rate-confirmation-extraction.worker';
 
 type Processor = (job: {
+  id?: string;
   data: unknown;
   attemptsMade: number;
   opts: { attempts?: number };
+  processedOn?: number;
 }) => Promise<void>;
 
 let capturedProcessor: Processor | undefined;
@@ -199,7 +201,11 @@ describe('RateConfirmationExtractionWorker', () => {
       const completedHandler = capturedOn!.mock.calls.find((c) => c[0] === 'completed')?.[1];
       expect(completedHandler).toBeDefined();
 
-      completedHandler();
+      completedHandler({
+        id: 'job-1',
+        data: { extractionId: 'extraction-1', organizationId: 'org-1' },
+        processedOn: Date.now() - 50,
+      });
 
       expect(heartbeat.recordActivity).toHaveBeenCalledWith('rate-confirmation-extraction-worker', 'completed');
     });
@@ -221,5 +227,88 @@ describe('RateConfirmationExtractionWorker', () => {
 
       expect(heartbeat.unregister).toHaveBeenCalledWith('rate-confirmation-extraction-worker');
     });
+  });
+});
+
+describe('RateConfirmationExtractionWorker — Monitoring Phase 4A-4 (job duration logging)', () => {
+  const JOB_DATA = {
+    extractionId: 'extraction-1',
+    documentId: 'doc-1',
+    organizationId: 'org-1',
+    storageKey: 'org_org-1/documents/doc-1',
+  };
+
+  function buildWorker(extractImpl: jest.Mock) {
+    capturedProcessor = undefined;
+    const redis = { duplicate: jest.fn().mockReturnValue({ on: jest.fn(), quit: jest.fn() }) };
+    const extractor = { extract: extractImpl };
+    const storage = { getObject: jest.fn().mockResolvedValue(Buffer.from('pdf-bytes')) };
+    const jobStore = {
+      markInProgress: jest.fn().mockResolvedValue(undefined),
+      markComplete: jest.fn().mockResolvedValue(undefined),
+      markFailed: jest.fn().mockResolvedValue(undefined),
+    };
+    const heartbeat = {
+      register: jest.fn(),
+      unregister: jest.fn(),
+      recordActivity: jest.fn(),
+      recordError: jest.fn(),
+    };
+
+    new RateConfirmationExtractionWorker(
+      redis as never,
+      extractor as never,
+      storage as never,
+      jobStore as never,
+      heartbeat as never,
+    ).onModuleInit();
+    if (!capturedProcessor) throw new Error('Worker processor was not captured');
+    const processor: Processor = capturedProcessor;
+    return { processor };
+  }
+
+  it("a 'completed' event logs a duration derived from job.processedOn", () => {
+    const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+    buildWorker(jest.fn());
+    const completedHandler = capturedOn!.mock.calls.find((c) => c[0] === 'completed')?.[1];
+
+    completedHandler({ id: 'job-1', data: JOB_DATA, processedOn: Date.now() - 250 });
+
+    const call = logSpy.mock.calls.find((c) => String(c[0]).startsWith('Rate Confirmation extraction job'));
+    expect(call).toBeDefined();
+    expect(call![0]).toMatch(/completed in \d+ms\./);
+    logSpy.mockRestore();
+  });
+
+  it('does not crash and omits the duration when job.processedOn is missing (unexpected event sequence)', () => {
+    const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+    buildWorker(jest.fn());
+    const completedHandler = capturedOn!.mock.calls.find((c) => c[0] === 'completed')?.[1];
+
+    expect(() =>
+      completedHandler({ id: 'job-1', data: JOB_DATA, processedOn: undefined }),
+    ).not.toThrow();
+
+    const call = logSpy.mock.calls.find((c) => String(c[0]).startsWith('Rate Confirmation extraction job'));
+    expect(call![0]).toBe(`Rate Confirmation extraction job job-1 (org ${JOB_DATA.organizationId}) completed.`);
+    logSpy.mockRestore();
+  });
+
+  it('includes duration in the final-attempt failure log', async () => {
+    const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const { processor } = buildWorker(jest.fn().mockRejectedValue(new Error('extraction service unavailable')));
+
+    await processor({
+      id: 'job-1',
+      data: JOB_DATA,
+      attemptsMade: 2,
+      opts: { attempts: 3 },
+      processedOn: Date.now() - 400,
+    });
+
+    const call = errorSpy.mock.calls.find((c) => String(c[0]).startsWith('Rate Confirmation extraction extraction-1'));
+    expect(call).toBeDefined();
+    expect(call![0]).toMatch(/failed after 3 attempts \(\d+ms\)\./);
+    errorSpy.mockRestore();
   });
 });

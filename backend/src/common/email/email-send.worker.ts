@@ -66,8 +66,12 @@ export class EmailSendWorker implements OnModuleInit, OnModuleDestroy {
             // (PII in a shared application log); that detail still lands in
             // the Audit DB record below (recordFailure), an access-
             // controlled location, unchanged from before this fix.
+            // Monitoring Phase 4A-4 — job.processedOn is BullMQ's own
+            // timestamp for when the job became active; no timing state of
+            // our own to maintain. Optional per BullMQ's types.
+            const durationMs = job.processedOn ? Date.now() - job.processedOn : undefined;
             this.logger.error(
-              `Email job ${job.id} (org ${job.data.organizationId}) failed after ${maxAttempts} attempts.`,
+              `Email job ${job.id} (org ${job.data.organizationId}) failed after ${maxAttempts} attempts${durationMs !== undefined ? ` (${durationMs}ms)` : ''}.`,
               error instanceof Error ? error.stack : String(error),
             );
             await this.recordFailure(job.data, error);
@@ -87,7 +91,13 @@ export class EmailSendWorker implements OnModuleInit, OnModuleDestroy {
       this.heartbeat.recordActivity('email-send-worker', 'failed');
     });
     this.worker.on('active', () => this.heartbeat.recordActivity('email-send-worker', 'active'));
-    this.worker.on('completed', () => this.heartbeat.recordActivity('email-send-worker', 'completed'));
+    this.worker.on('completed', (job) => {
+      const durationMs = job.processedOn ? Date.now() - job.processedOn : undefined;
+      this.logger.log(
+        `Email job ${job.id} (org ${job.data.organizationId}) completed${durationMs !== undefined ? ` in ${durationMs}ms` : ''}.`,
+      );
+      this.heartbeat.recordActivity('email-send-worker', 'completed');
+    });
     this.worker.on('error', (error) => {
       this.logger.error(`Email send worker connection error: ${error.message}`, error.stack);
       this.heartbeat.recordError('email-send-worker', 'error');

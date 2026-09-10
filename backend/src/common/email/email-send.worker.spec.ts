@@ -6,6 +6,7 @@ type Processor = (job: {
   data: unknown;
   attemptsMade: number;
   opts: { attempts?: number };
+  processedOn?: number;
 }) => Promise<void>;
 
 let capturedProcessor: Processor | undefined;
@@ -290,7 +291,7 @@ describe('EmailSendWorker', () => {
       const completedHandler = capturedOn!.mock.calls.find((c) => c[0] === 'completed')?.[1];
       expect(completedHandler).toBeDefined();
 
-      completedHandler();
+      completedHandler({ id: 'job-1', data: JOB_DATA, processedOn: Date.now() - 50 });
 
       expect(heartbeat.recordActivity).toHaveBeenCalledWith('email-send-worker', 'completed');
     });
@@ -312,5 +313,94 @@ describe('EmailSendWorker', () => {
 
       expect(heartbeat.unregister).toHaveBeenCalledWith('email-send-worker');
     });
+  });
+});
+
+describe('EmailSendWorker — Monitoring Phase 4A-4 (job duration logging)', () => {
+  const JOB_DATA = {
+    to: 'user@test.test',
+    subject: 'Test Subject',
+    body: 'Test body',
+    organizationId: 'org-1',
+    entityType: 'OrganizationMembership',
+    entityId: 'membership-1',
+  };
+
+  function buildWorker(sendImpl: jest.Mock) {
+    capturedProcessor = undefined;
+    const redis = { duplicate: jest.fn().mockReturnValue({ on: jest.fn(), quit: jest.fn() }) };
+    const emailSender = { send: sendImpl };
+    const audit = { record: jest.fn().mockResolvedValue(undefined) };
+    const prisma = {
+      withTenantTransaction: jest
+        .fn()
+        .mockImplementation((_orgId: string, fn: (tx: unknown) => unknown) => fn({})),
+    };
+    const storage = { getObject: jest.fn() };
+    const heartbeat = {
+      register: jest.fn(),
+      unregister: jest.fn(),
+      recordActivity: jest.fn(),
+      recordError: jest.fn(),
+    };
+
+    new EmailSendWorker(
+      redis as never,
+      emailSender as never,
+      prisma as never,
+      audit as never,
+      storage as never,
+      heartbeat as never,
+    ).onModuleInit();
+    if (!capturedProcessor) throw new Error('Worker processor was not captured');
+    const processor: Processor = capturedProcessor;
+    return { processor };
+  }
+
+  it("a 'completed' event logs a duration derived from job.processedOn", () => {
+    const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+    buildWorker(jest.fn());
+    const completedHandler = capturedOn!.mock.calls.find((c) => c[0] === 'completed')?.[1];
+
+    completedHandler({ id: 'job-1', data: JOB_DATA, processedOn: Date.now() - 250 });
+
+    const call = logSpy.mock.calls.find((c) => String(c[0]).startsWith('Email job'));
+    expect(call).toBeDefined();
+    expect(call![0]).toMatch(/completed in \d+ms\./);
+    logSpy.mockRestore();
+  });
+
+  it('does not crash and omits the duration when job.processedOn is missing (unexpected event sequence)', () => {
+    const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+    buildWorker(jest.fn());
+    const completedHandler = capturedOn!.mock.calls.find((c) => c[0] === 'completed')?.[1];
+
+    expect(() =>
+      completedHandler({ id: 'job-1', data: JOB_DATA, processedOn: undefined }),
+    ).not.toThrow();
+
+    const call = logSpy.mock.calls.find((c) => String(c[0]).startsWith('Email job'));
+    expect(call![0]).toBe(`Email job job-1 (org ${JOB_DATA.organizationId}) completed.`);
+    logSpy.mockRestore();
+  });
+
+  it('includes duration in the final-attempt failure log, still without recipient/subject', async () => {
+    const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const { processor } = buildWorker(jest.fn().mockRejectedValue(new Error('provider unavailable')));
+
+    await processor({
+      id: 'job-1',
+      data: JOB_DATA,
+      attemptsMade: 2,
+      opts: { attempts: 3 },
+      processedOn: Date.now() - 400,
+    });
+
+    const call = errorSpy.mock.calls.find((c) => String(c[0]).startsWith('Email job'));
+    expect(call).toBeDefined();
+    expect(call![0]).toMatch(/failed after 3 attempts \(\d+ms\)\./);
+    expect(call![0]).not.toContain(JOB_DATA.to);
+    expect(call![0]).not.toContain(JOB_DATA.subject);
+    errorSpy.mockRestore();
   });
 });

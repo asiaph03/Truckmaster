@@ -54,16 +54,30 @@ export class ScheduledJobsWorker implements OnModuleInit, OnModuleDestroy {
     });
 
     this.worker.on('failed', (job, error) => {
+      // Monitoring Phase 4A-4 — this queue has no attempts/backoff
+      // configured (see registerRepeatableJobs below), so this generic
+      // hook IS the terminal/final-attempt failure signal for a sweep —
+      // there is no separate per-processor try/catch to attach duration
+      // to, unlike the other 7 workers. job.processedOn is BullMQ's own
+      // timestamp for when the job became active.
+      const durationMs = job?.processedOn ? Date.now() - job.processedOn : undefined;
       this.logger.error(
-        `Scheduled job ${job?.name} (${job?.id}) failed: ${error.message}`,
+        `Scheduled job ${job?.name} (${job?.id}) failed${durationMs !== undefined ? ` (${durationMs}ms)` : ''}: ${error.message}`,
         error.stack,
       );
       this.heartbeat.recordActivity('scheduled-jobs-worker', 'failed');
     });
     this.worker.on('active', () => this.heartbeat.recordActivity('scheduled-jobs-worker', 'active'));
-    this.worker.on('completed', () =>
-      this.heartbeat.recordActivity('scheduled-jobs-worker', 'completed'),
-    );
+    this.worker.on('completed', (job) => {
+      // No organizationId here by design — this queue's job payload is
+      // always {} (a sweep spans every organization), matching every
+      // other log line for this worker.
+      const durationMs = job.processedOn ? Date.now() - job.processedOn : undefined;
+      this.logger.log(
+        `Scheduled job ${job.name} (${job.id}) completed${durationMs !== undefined ? ` in ${durationMs}ms` : ''}.`,
+      );
+      this.heartbeat.recordActivity('scheduled-jobs-worker', 'completed');
+    });
     this.worker.on('error', (error) => {
       this.logger.error(`Scheduled jobs worker connection error: ${error.message}`, error.stack);
       this.heartbeat.recordError('scheduled-jobs-worker', 'error');

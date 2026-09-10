@@ -3,9 +3,11 @@ import { ImportCommitWorker } from './import-commit.worker';
 import { ConflictError } from '../../../common/errors/app-error';
 
 type Processor = (job: {
+  id?: string;
   data: unknown;
   attemptsMade: number;
   opts: { attempts?: number };
+  processedOn?: number;
 }) => Promise<void>;
 
 let capturedProcessor: Processor | undefined;
@@ -358,7 +360,7 @@ describe('ImportCommitWorker', () => {
       const completedHandler = capturedOn!.mock.calls.find((c) => c[0] === 'completed')?.[1];
       expect(completedHandler).toBeDefined();
 
-      completedHandler();
+      completedHandler({ id: 'job-1', data: JOB_DATA, processedOn: Date.now() - 50 });
 
       expect(heartbeat.recordActivity).toHaveBeenCalledWith('import-commit-worker', 'completed');
     });
@@ -380,5 +382,120 @@ describe('ImportCommitWorker', () => {
 
       expect(heartbeat.unregister).toHaveBeenCalledWith('import-commit-worker');
     });
+  });
+});
+
+describe('ImportCommitWorker — Monitoring Phase 4A-4 (job duration logging)', () => {
+  const JOB_DATA = { importBatchId: 'batch-1', organizationId: 'org-1' };
+
+  it("a 'completed' event logs a duration derived from job.processedOn", () => {
+    const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+    capturedProcessor = undefined;
+    const redis = { duplicate: jest.fn().mockReturnValue({ on: jest.fn(), quit: jest.fn() }) };
+    const audit = { record: jest.fn().mockResolvedValue(undefined) };
+    const prisma = { withTenantTransaction: jest.fn() };
+    const adapters = { get: jest.fn() };
+    const parentResolution = { resolveByLegalName: jest.fn() };
+    const heartbeat = {
+      register: jest.fn(),
+      unregister: jest.fn(),
+      recordActivity: jest.fn(),
+      recordError: jest.fn(),
+    };
+    new ImportCommitWorker(
+      redis as never,
+      prisma as never,
+      audit as never,
+      adapters as never,
+      parentResolution as never,
+      heartbeat as never,
+    ).onModuleInit();
+    const completedHandler = capturedOn!.mock.calls.find((c) => c[0] === 'completed')?.[1];
+
+    completedHandler({ id: 'job-1', data: JOB_DATA, processedOn: Date.now() - 250 });
+
+    const call = logSpy.mock.calls.find((c) => String(c[0]).startsWith('Import commit job'));
+    expect(call).toBeDefined();
+    expect(call![0]).toMatch(/completed in \d+ms\./);
+    logSpy.mockRestore();
+  });
+
+  it('does not crash and omits the duration when job.processedOn is missing (unexpected event sequence)', () => {
+    const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+    capturedProcessor = undefined;
+    const redis = { duplicate: jest.fn().mockReturnValue({ on: jest.fn(), quit: jest.fn() }) };
+    const audit = { record: jest.fn().mockResolvedValue(undefined) };
+    const prisma = { withTenantTransaction: jest.fn() };
+    const adapters = { get: jest.fn() };
+    const parentResolution = { resolveByLegalName: jest.fn() };
+    const heartbeat = {
+      register: jest.fn(),
+      unregister: jest.fn(),
+      recordActivity: jest.fn(),
+      recordError: jest.fn(),
+    };
+    new ImportCommitWorker(
+      redis as never,
+      prisma as never,
+      audit as never,
+      adapters as never,
+      parentResolution as never,
+      heartbeat as never,
+    ).onModuleInit();
+    const completedHandler = capturedOn!.mock.calls.find((c) => c[0] === 'completed')?.[1];
+
+    expect(() =>
+      completedHandler({ id: 'job-1', data: JOB_DATA, processedOn: undefined }),
+    ).not.toThrow();
+
+    const call = logSpy.mock.calls.find((c) => String(c[0]).startsWith('Import commit job'));
+    expect(call![0]).toBe(`Import commit job job-1 (org ${JOB_DATA.organizationId}) completed.`);
+    logSpy.mockRestore();
+  });
+
+  it('includes duration in the job-level final-failure log', async () => {
+    const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    capturedProcessor = undefined;
+    const redis = { duplicate: jest.fn().mockReturnValue({ on: jest.fn(), quit: jest.fn() }) };
+    const audit = { record: jest.fn().mockResolvedValue(undefined) };
+    const tx = { importBatch: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) } };
+    const prisma = {
+      withTenantTransaction: jest
+        .fn()
+        .mockImplementation((_orgId: string, fn: (tx: unknown) => unknown) => {
+          if (fn.toString().includes('updateMany')) return fn(tx);
+          throw new Error('connection lost');
+        }),
+    };
+    const adapters = { get: jest.fn() };
+    const parentResolution = { resolveByLegalName: jest.fn() };
+    const heartbeat = {
+      register: jest.fn(),
+      unregister: jest.fn(),
+      recordActivity: jest.fn(),
+      recordError: jest.fn(),
+    };
+    new ImportCommitWorker(
+      redis as never,
+      prisma as never,
+      audit as never,
+      adapters as never,
+      parentResolution as never,
+      heartbeat as never,
+    ).onModuleInit();
+    const processor = capturedProcessor!;
+
+    await processor({
+      id: 'job-1',
+      data: JOB_DATA,
+      attemptsMade: 2,
+      opts: { attempts: 3 },
+      processedOn: Date.now() - 400,
+    });
+
+    const call = errorSpy.mock.calls.find((c) => String(c[0]).startsWith('Import batch'));
+    expect(call).toBeDefined();
+    expect(call![0]).toMatch(/failed after 3 attempts \(\d+ms\) — recording FAILED\./);
+    errorSpy.mockRestore();
   });
 });

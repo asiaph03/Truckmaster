@@ -2,9 +2,11 @@ import { Logger } from '@nestjs/common';
 import { RateConfirmationGenerationWorker } from './rate-confirmation-generation.worker';
 
 type Processor = (job: {
+  id?: string;
   data: unknown;
   attemptsMade: number;
   opts: { attempts?: number };
+  processedOn?: number;
 }) => Promise<void>;
 
 let capturedProcessor: Processor | undefined;
@@ -203,7 +205,7 @@ describe('RateConfirmationGenerationWorker', () => {
       const completedHandler = capturedOn!.mock.calls.find((c) => c[0] === 'completed')?.[1];
       expect(completedHandler).toBeDefined();
 
-      completedHandler();
+      completedHandler({ id: 'job-1', data: JOB_DATA, processedOn: Date.now() - 50 });
 
       expect(heartbeat.recordActivity).toHaveBeenCalledWith('rate-confirmation-pdf-worker', 'completed');
     });
@@ -225,5 +227,103 @@ describe('RateConfirmationGenerationWorker', () => {
 
       expect(heartbeat.unregister).toHaveBeenCalledWith('rate-confirmation-pdf-worker');
     });
+  });
+});
+
+describe('RateConfirmationGenerationWorker — Monitoring Phase 4A-4 (job duration logging)', () => {
+  const JOB_DATA = { documentId: 'doc-1', organizationId: 'org-1', loadId: 'load-1' };
+  const DOCUMENT = { id: 'doc-1', fileStorageKey: 'org_org-1/documents/doc-1' };
+  const LOAD = {
+    id: 'load-1',
+    loadNumber: 'L-1001',
+    equipmentType: 'DRY_VAN',
+    carrierRate: '1500.00',
+    assignedCarrier: { legalName: 'Acme Carrier LLC' },
+    customer: { legalName: 'Acme Shipper LLC' },
+    stops: [{ sequence: 1, stopType: 'PICKUP', city: 'Dallas', state: 'TX' }],
+  };
+
+  function buildWorker(generateImpl: jest.Mock) {
+    capturedProcessor = undefined;
+    const redis = { duplicate: jest.fn().mockReturnValue({ on: jest.fn(), quit: jest.fn() }) };
+    const pdfGenerator = { generateRateConfirmation: generateImpl };
+    const audit = { record: jest.fn().mockResolvedValue(undefined) };
+    const storage = { putObject: jest.fn().mockResolvedValue(undefined) };
+    const tx = {
+      document: {
+        findFirst: jest.fn().mockResolvedValue(DOCUMENT),
+        update: jest.fn().mockResolvedValue({}),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+      load: { findFirst: jest.fn().mockResolvedValue(LOAD) },
+    };
+    const prisma = {
+      withTenantTransaction: jest
+        .fn()
+        .mockImplementation((_orgId: string, fn: (tx: unknown) => unknown) => fn(tx)),
+    };
+    const heartbeat = {
+      register: jest.fn(),
+      unregister: jest.fn(),
+      recordActivity: jest.fn(),
+      recordError: jest.fn(),
+    };
+
+    new RateConfirmationGenerationWorker(
+      redis as never,
+      pdfGenerator as never,
+      prisma as never,
+      audit as never,
+      storage as never,
+      heartbeat as never,
+    ).onModuleInit();
+    if (!capturedProcessor) throw new Error('Worker processor was not captured');
+    const processor: Processor = capturedProcessor;
+    return { processor };
+  }
+
+  it("a 'completed' event logs a duration derived from job.processedOn", () => {
+    const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+    buildWorker(jest.fn());
+    const completedHandler = capturedOn!.mock.calls.find((c) => c[0] === 'completed')?.[1];
+
+    completedHandler({ id: 'job-1', data: JOB_DATA, processedOn: Date.now() - 250 });
+
+    const call = logSpy.mock.calls.find((c) => String(c[0]).startsWith('Rate Confirmation PDF job'));
+    expect(call).toBeDefined();
+    expect(call![0]).toMatch(/completed in \d+ms\./);
+    logSpy.mockRestore();
+  });
+
+  it('does not crash and omits the duration when job.processedOn is missing (unexpected event sequence)', () => {
+    const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+    buildWorker(jest.fn());
+    const completedHandler = capturedOn!.mock.calls.find((c) => c[0] === 'completed')?.[1];
+
+    expect(() =>
+      completedHandler({ id: 'job-1', data: JOB_DATA, processedOn: undefined }),
+    ).not.toThrow();
+
+    const call = logSpy.mock.calls.find((c) => String(c[0]).startsWith('Rate Confirmation PDF job'));
+    expect(call![0]).toBe(`Rate Confirmation PDF job job-1 (org ${JOB_DATA.organizationId}) completed.`);
+    logSpy.mockRestore();
+  });
+
+  it('includes duration in the final-attempt failure log', async () => {
+    const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const { processor } = buildWorker(jest.fn().mockRejectedValue(new Error('renderer crashed')));
+
+    await processor({
+      id: 'job-1',
+      data: JOB_DATA,
+      attemptsMade: 2,
+      opts: { attempts: 3 },
+      processedOn: Date.now() - 400,
+    });
+
+    const call = errorSpy.mock.calls.find((c) => String(c[0]).startsWith('Rate Confirmation PDF generation'));
+    expect(call).toBeDefined();
+    expect(call![0]).toMatch(/failed after 3 attempts \(\d+ms\) — recording FAILED\./);
+    errorSpy.mockRestore();
   });
 });

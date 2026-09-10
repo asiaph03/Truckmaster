@@ -42,8 +42,11 @@ export class SettlementDocumentGenerationWorker implements OnModuleInit, OnModul
           // MalwareScanWorker/RateConfirmationGenerationWorker.
           const maxAttempts = job.opts.attempts ?? 1;
           if (job.attemptsMade + 1 >= maxAttempts) {
+            // Monitoring Phase 4A-4 — job.processedOn is BullMQ's own
+            // timestamp for when the job became active.
+            const durationMs = job.processedOn ? Date.now() - job.processedOn : undefined;
             this.logger.error(
-              `Settlement PDF generation for document ${job.data.documentId} (org ${job.data.organizationId}) failed after ${maxAttempts} attempts — recording FAILED.`,
+              `Settlement PDF generation for document ${job.data.documentId} (org ${job.data.organizationId}) failed after ${maxAttempts} attempts${durationMs !== undefined ? ` (${durationMs}ms)` : ''} — recording FAILED.`,
               error instanceof Error ? error.stack : String(error),
             );
             await this.markFailed(job.data);
@@ -63,9 +66,13 @@ export class SettlementDocumentGenerationWorker implements OnModuleInit, OnModul
       this.heartbeat.recordActivity('settlement-pdf-worker', 'failed');
     });
     this.worker.on('active', () => this.heartbeat.recordActivity('settlement-pdf-worker', 'active'));
-    this.worker.on('completed', () =>
-      this.heartbeat.recordActivity('settlement-pdf-worker', 'completed'),
-    );
+    this.worker.on('completed', (job) => {
+      const durationMs = job.processedOn ? Date.now() - job.processedOn : undefined;
+      this.logger.log(
+        `Settlement PDF job ${job.id} (org ${job.data.organizationId}) completed${durationMs !== undefined ? ` in ${durationMs}ms` : ''}.`,
+      );
+      this.heartbeat.recordActivity('settlement-pdf-worker', 'completed');
+    });
     this.worker.on('error', (error) => {
       this.logger.error(`Settlement PDF worker connection error: ${error.message}`, error.stack);
       this.heartbeat.recordError('settlement-pdf-worker', 'error');

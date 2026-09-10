@@ -1,3 +1,4 @@
+import { Logger } from '@nestjs/common';
 import { ScheduledJobsWorker } from './scheduled-jobs.worker';
 
 type Processor = (jobName: string) => Promise<void>;
@@ -73,7 +74,7 @@ describe('ScheduledJobsWorker — Monitoring Phase 4A-3 (worker heartbeat wiring
     const completedHandler = capturedOn!.mock.calls.find((c) => c[0] === 'completed')?.[1];
     expect(completedHandler).toBeDefined();
 
-    completedHandler();
+    completedHandler({ name: 'invitation-expiration-sweep', id: 'job-1', processedOn: Date.now() - 50 });
 
     expect(heartbeat.recordActivity).toHaveBeenCalledWith('scheduled-jobs-worker', 'completed');
   });
@@ -107,5 +108,92 @@ describe('ScheduledJobsWorker — Monitoring Phase 4A-3 (worker heartbeat wiring
     await worker.onModuleDestroy();
 
     expect(heartbeat.unregister).toHaveBeenCalledWith('scheduled-jobs-worker');
+  });
+});
+
+describe('ScheduledJobsWorker — Monitoring Phase 4A-4 (job duration logging)', () => {
+  function buildWorker() {
+    capturedProcessor = undefined;
+    const redis = { duplicate: jest.fn().mockReturnValue({ on: jest.fn(), quit: jest.fn() }) };
+    const queue = { add: jest.fn().mockResolvedValue({}) };
+    const sweep = () => ({ run: jest.fn().mockResolvedValue(undefined) });
+    const heartbeat = {
+      register: jest.fn(),
+      unregister: jest.fn(),
+      recordActivity: jest.fn(),
+      recordError: jest.fn(),
+    };
+
+    return new ScheduledJobsWorker(
+      redis as never,
+      queue as never,
+      sweep() as never,
+      sweep() as never,
+      sweep() as never,
+      sweep() as never,
+      sweep() as never,
+      sweep() as never,
+      heartbeat as never,
+    );
+  }
+
+  it("a 'completed' event logs a duration derived from job.processedOn — no organizationId, matching this queue's payload convention", async () => {
+    const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+    const worker = buildWorker();
+    await worker.onModuleInit();
+    const completedHandler = capturedOn!.mock.calls.find((c) => c[0] === 'completed')?.[1];
+
+    completedHandler({ name: 'invitation-expiration-sweep', id: 'job-1', processedOn: Date.now() - 250 });
+
+    const call = logSpy.mock.calls.find((c) => String(c[0]).startsWith('Scheduled job'));
+    expect(call).toBeDefined();
+    expect(call![0]).toMatch(/^Scheduled job invitation-expiration-sweep \(job-1\) completed in \d+ms\.$/);
+    expect(call![0]).not.toContain('org=');
+    logSpy.mockRestore();
+  });
+
+  it('does not crash and omits the duration when job.processedOn is missing (unexpected event sequence)', async () => {
+    const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+    const worker = buildWorker();
+    await worker.onModuleInit();
+    const completedHandler = capturedOn!.mock.calls.find((c) => c[0] === 'completed')?.[1];
+
+    expect(() =>
+      completedHandler({ name: 'invitation-expiration-sweep', id: 'job-1', processedOn: undefined }),
+    ).not.toThrow();
+
+    const call = logSpy.mock.calls.find((c) => String(c[0]).startsWith('Scheduled job'));
+    expect(call![0]).toBe('Scheduled job invitation-expiration-sweep (job-1) completed.');
+    logSpy.mockRestore();
+  });
+
+  it("includes duration in the 'failed' log (this queue's terminal-failure signal — no per-processor try/catch exists)", async () => {
+    const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const worker = buildWorker();
+    await worker.onModuleInit();
+    const failedHandler = capturedOn!.mock.calls.find((c) => c[0] === 'failed')?.[1];
+
+    failedHandler(
+      { name: 'invitation-expiration-sweep', id: 'job-1', processedOn: Date.now() - 400 },
+      new Error('boom'),
+    );
+
+    const call = errorSpy.mock.calls.find((c) => String(c[0]).startsWith('Scheduled job'));
+    expect(call).toBeDefined();
+    expect(call![0]).toMatch(/^Scheduled job invitation-expiration-sweep \(job-1\) failed \(\d+ms\): boom$/);
+    errorSpy.mockRestore();
+  });
+
+  it("does not crash and omits the duration in the 'failed' log when job is undefined (stalled-job-removed-by-removeOnFail edge case)", async () => {
+    const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const worker = buildWorker();
+    await worker.onModuleInit();
+    const failedHandler = capturedOn!.mock.calls.find((c) => c[0] === 'failed')?.[1];
+
+    expect(() => failedHandler(undefined, new Error('boom'))).not.toThrow();
+
+    const call = errorSpy.mock.calls.find((c) => String(c[0]).startsWith('Scheduled job'));
+    expect(call![0]).toBe('Scheduled job undefined (undefined) failed: boom');
+    errorSpy.mockRestore();
   });
 });

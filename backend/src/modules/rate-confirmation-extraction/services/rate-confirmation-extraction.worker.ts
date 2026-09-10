@@ -61,8 +61,11 @@ export class RateConfirmationExtractionWorker implements OnModuleInit, OnModuleD
           const maxAttempts = job.opts.attempts ?? 1;
           const message = error instanceof Error ? error.message : String(error);
           if (job.attemptsMade + 1 >= maxAttempts) {
+            // Monitoring Phase 4A-4 — job.processedOn is BullMQ's own
+            // timestamp for when the job became active.
+            const durationMs = job.processedOn ? Date.now() - job.processedOn : undefined;
             this.logger.error(
-              `Rate Confirmation extraction ${job.data.extractionId} (org ${job.data.organizationId}) failed after ${maxAttempts} attempts.`,
+              `Rate Confirmation extraction ${job.data.extractionId} (org ${job.data.organizationId}) failed after ${maxAttempts} attempts${durationMs !== undefined ? ` (${durationMs}ms)` : ''}.`,
               error instanceof Error ? error.stack : String(error),
             );
             await this.jobStore.markFailed(job.data.organizationId, job.data.extractionId, message);
@@ -84,9 +87,13 @@ export class RateConfirmationExtractionWorker implements OnModuleInit, OnModuleD
     this.worker.on('active', () =>
       this.heartbeat.recordActivity('rate-confirmation-extraction-worker', 'active'),
     );
-    this.worker.on('completed', () =>
-      this.heartbeat.recordActivity('rate-confirmation-extraction-worker', 'completed'),
-    );
+    this.worker.on('completed', (job) => {
+      const durationMs = job.processedOn ? Date.now() - job.processedOn : undefined;
+      this.logger.log(
+        `Rate Confirmation extraction job ${job.id} (org ${job.data.organizationId}) completed${durationMs !== undefined ? ` in ${durationMs}ms` : ''}.`,
+      );
+      this.heartbeat.recordActivity('rate-confirmation-extraction-worker', 'completed');
+    });
     this.worker.on('error', (error) => {
       this.logger.error(
         `Rate Confirmation extraction worker connection error: ${error.message}`,
