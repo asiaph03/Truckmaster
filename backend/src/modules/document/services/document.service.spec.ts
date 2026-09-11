@@ -1,3 +1,4 @@
+import { Logger } from '@nestjs/common';
 import { DocumentService } from './document.service';
 import { RequestContextStore } from '../../../common/tenant-context/request-context';
 import {
@@ -1690,6 +1691,89 @@ describe('DocumentService.deleteDocumentFamily — Load-Level Documents Delete',
     expect(tx.document.deleteMany).toHaveBeenCalledTimes(1);
     expect(tx.document.deleteMany).toHaveBeenCalledWith({
       where: { organizationId: ORG_ID, documentFamilyId: FAMILY_ID },
+    });
+  });
+
+  // Monitoring Phase 4A-16 — SECURITY: completes the S3 deleteObject gap
+  // Phase 4A-13 explicitly deferred. The orphan-cleanup catch must never
+  // log the raw AWS SDK error (.message/.stack) — only a safe errorType,
+  // alongside the storage key and organizationId already present.
+  describe('Monitoring Phase 4A-16 (S3 deleteObject error logging security)', () => {
+    const SENSITIVE_MARKER = 'SENSITIVE_S3_DELETE_ERROR_CONTENT';
+
+    function sensitiveS3Error(): Error {
+      return Object.assign(new Error(SENSITIVE_MARKER), {
+        stack: `Error: ${SENSITIVE_MARKER}\n    at fake-stack (${SENSITIVE_MARKER})`,
+        $metadata: { httpStatusCode: 500, requestId: SENSITIVE_MARKER },
+      });
+    }
+
+    afterEach(() => {
+      jest.restoreAllMocks();
+    });
+
+    it('logs errorType instead of the raw error, while preserving the existing storage key and organizationId', async () => {
+      const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+      const { service, storage } = buildService();
+      (storage.deleteObject as jest.Mock).mockRejectedValue(sensitiveS3Error());
+
+      await RequestContextStore.run({ requestId: 'r14', roles: ['ADMIN'] }, async () => {
+        await service.deleteDocumentFamily(ORG_ID, 'doc-v3', 'user-1');
+      });
+
+      const call = errorSpy.mock.calls.find((c) => String(c[0]).startsWith('Failed to delete S3 object'));
+      expect(call).toBeDefined();
+      expect(call![0]).toContain(`org_${ORG_ID}/documents/doc-v1`);
+      expect(call![0]).toContain(`org ${ORG_ID}`);
+      expect(call![0]).toContain('errorType=Error');
+    });
+
+    it('SECURITY — the sensitive marker present in error.message/.stack/$metadata never appears in any Logger call', async () => {
+      const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+      const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+      const { service, storage } = buildService();
+      (storage.deleteObject as jest.Mock).mockRejectedValue(sensitiveS3Error());
+
+      await RequestContextStore.run({ requestId: 'r15', roles: ['ADMIN'] }, async () => {
+        await service.deleteDocumentFamily(ORG_ID, 'doc-v3', 'user-1');
+      });
+
+      const allCalls = [...logSpy.mock.calls, ...warnSpy.mock.calls, ...errorSpy.mock.calls];
+      for (const call of allCalls) {
+        for (const arg of call) {
+          expect(String(arg)).not.toContain(SENSITIVE_MARKER);
+        }
+      }
+    });
+
+    it("the log call has exactly one argument (no trace/second argument, unlike the pre-4A-16 error.stack)", async () => {
+      const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+      const { service, storage } = buildService();
+      (storage.deleteObject as jest.Mock).mockRejectedValue(sensitiveS3Error());
+
+      await RequestContextStore.run({ requestId: 'r16', roles: ['ADMIN'] }, async () => {
+        await service.deleteDocumentFamily(ORG_ID, 'doc-v3', 'user-1');
+      });
+
+      const call = errorSpy.mock.calls.find((c) => String(c[0]).startsWith('Failed to delete S3 object'));
+      expect(call).toHaveLength(1);
+    });
+
+    it('preserves the existing orphan-cleanup control flow: resolves successfully and continues deleting the remaining S3 objects', async () => {
+      const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+      const { service, tx, storage } = buildService();
+      (storage.deleteObject as jest.Mock).mockRejectedValue(sensitiveS3Error());
+
+      await RequestContextStore.run({ requestId: 'r17', roles: ['ADMIN'] }, async () => {
+        await expect(
+          service.deleteDocumentFamily(ORG_ID, 'doc-v3', 'user-1'),
+        ).resolves.toBeUndefined();
+      });
+
+      expect(tx.document.deleteMany).toHaveBeenCalledTimes(1);
+      expect(storage.deleteObject).toHaveBeenCalledTimes(3);
+      expect(errorSpy).toHaveBeenCalledTimes(3);
     });
   });
 });

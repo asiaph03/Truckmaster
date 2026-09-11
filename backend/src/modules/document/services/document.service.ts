@@ -107,6 +107,16 @@ const RATE_CONFIRMATION_INTAKE_UPLOAD_ROLES: MembershipRoleName[] = [
 /** Task #9 — same shape as the other sweeps' ADMIN_VISIBILITY_ROLES. */
 const ADMIN_VISIBILITY_ROLES: MembershipRoleName[] = ['ADMIN'];
 
+/**
+ * Monitoring Phase 4A-16 — a class-name-only error identifier, never
+ * error.message/.stack. Safe by construction: a JS/TS class name is
+ * developer-defined source text, never runtime/user-controlled content.
+ * Completes the S3 deleteObject gap Phase 4A-13 explicitly deferred.
+ */
+function errorTypeOf(error: unknown): string {
+  return error instanceof Error ? error.constructor.name : typeof error;
+}
+
 @Injectable()
 export class DocumentService {
   private readonly logger = new Logger(DocumentService.name);
@@ -774,9 +784,13 @@ export class DocumentService {
       try {
         await this.storage.deleteObject(key);
       } catch (error) {
+        // Monitoring Phase 4A-16 — SECURITY: never log error.message/.stack
+        // here. Completes the S3 deleteObject gap Phase 4A-13 explicitly
+        // deferred (getObject/putObject were instrumented; deleteObject's
+        // raw AWS SDK error was never sanitized). storageKey and
+        // organizationId are already safe, existing context — preserved.
         this.logger.error(
-          `Failed to delete S3 object "${key}" after document family delete committed (org ${organizationId}). Orphaned object — safe to retry, requires no DB action.`,
-          error instanceof Error ? error.stack : undefined,
+          `Failed to delete S3 object "${key}" after document family delete committed (org ${organizationId}). Orphaned object — safe to retry, requires no DB action. errorType=${errorTypeOf(error)}`,
         );
       }
     }
