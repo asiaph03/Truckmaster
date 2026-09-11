@@ -80,11 +80,14 @@ describe('EmailSendWorker', () => {
 
     await processor({ data: JOB_DATA, attemptsMade: 0, opts: { attempts: 3 } });
 
-    expect(emailSender.send).toHaveBeenCalledWith({
-      to: JOB_DATA.to,
-      subject: JOB_DATA.subject,
-      body: JOB_DATA.body,
-    });
+    expect(emailSender.send).toHaveBeenCalledWith(
+      {
+        to: JOB_DATA.to,
+        subject: JOB_DATA.subject,
+        body: JOB_DATA.body,
+      },
+      { organizationId: JOB_DATA.organizationId, jobId: undefined },
+    );
     expect(audit.record).not.toHaveBeenCalled();
   });
 
@@ -228,18 +231,21 @@ describe('EmailSendWorker', () => {
         where: { id: 'doc-1', organizationId: 'org-1' },
       });
       expect(getObjectImpl).toHaveBeenCalledWith(DOCUMENT.fileStorageKey);
-      expect(emailSender.send).toHaveBeenCalledWith({
-        to: data.to,
-        subject: data.subject,
-        body: data.body,
-        attachments: [
-          {
-            filename: DOCUMENT.fileName,
-            content: Buffer.from('pdf-bytes'),
-            contentType: DOCUMENT.mimeType,
-          },
-        ],
-      });
+      expect(emailSender.send).toHaveBeenCalledWith(
+        {
+          to: data.to,
+          subject: data.subject,
+          body: data.body,
+          attachments: [
+            {
+              filename: DOCUMENT.fileName,
+              content: Buffer.from('pdf-bytes'),
+              contentType: DOCUMENT.mimeType,
+            },
+          ],
+        },
+        { organizationId: data.organizationId, jobId: undefined },
+      );
     });
 
     it('throws (and does not send) when the referenced document is not found', async () => {

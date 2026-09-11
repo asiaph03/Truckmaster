@@ -45,12 +45,15 @@ export class EmailSendWorker implements OnModuleInit, OnModuleDestroy {
       async (job) => {
         try {
           const attachments = await this.resolveAttachment(job.data);
-          await this.emailSender.send({
-            to: job.data.to,
-            subject: job.data.subject,
-            body: job.data.body,
-            ...(attachments ? { attachments } : {}),
-          });
+          await this.emailSender.send(
+            {
+              to: job.data.to,
+              subject: job.data.subject,
+              body: job.data.body,
+              ...(attachments ? { attachments } : {}),
+            },
+            { organizationId: job.data.organizationId, jobId: job.id! },
+          );
         } catch (error) {
           // Frontend Phase 16 — same retry-then-terminal-outcome pattern
           // as the malware-scan/PDF-generation workers: only the final

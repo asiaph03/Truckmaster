@@ -23,13 +23,26 @@ export interface EmailAttachment {
   contentType: string;
 }
 
+/**
+ * Monitoring Phase 4A-11 — external-call correlation only (never job
+ * payload data). Optional on the interface so an implementer that has no
+ * use for it (e.g. NoopEmailSender) isn't forced to accept it.
+ */
+export interface EmailSendCallContext {
+  organizationId: string;
+  jobId: string;
+}
+
 export interface IEmailSender {
-  send(message: {
-    to: string;
-    subject: string;
-    body: string;
-    attachments?: EmailAttachment[];
-  }): Promise<void>;
+  send(
+    message: {
+      to: string;
+      subject: string;
+      body: string;
+      attachments?: EmailAttachment[];
+    },
+    context?: EmailSendCallContext,
+  ): Promise<void>;
 }
 
 export const EMAIL_SENDER = 'EMAIL_SENDER';
