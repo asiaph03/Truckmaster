@@ -4,6 +4,17 @@ import { Prisma, PrismaClient } from '@prisma/client';
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
+ * Monitoring Phase 4A-12 — a whole withXTransaction call at/above this is
+ * logged as slow. Reasoned starting estimate (no prior Prisma-level timing
+ * signal existed to sample from): meaningfully below the existing 1000ms
+ * HTTP slow-request threshold (4A-1) so it fires earlier/more specifically
+ * than that broader signal, and well above the sub-10ms range expected for
+ * simple indexed, RLS-scoped lookups, so ordinary connection-pool jitter
+ * doesn't flood logs.
+ */
+const SLOW_TRANSACTION_THRESHOLD_MS = 250;
+
+/**
  * Thin wrapper around PrismaClient adding the app's two cross-cutting
  * database concerns:
  *
@@ -54,7 +65,8 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
     if (!UUID_RE.test(organizationId)) {
       throw new Error(`Invalid organizationId passed to withTenantTransaction: ${organizationId}`);
     }
-    return this.$transaction(async (tx: Prisma.TransactionClient) => {
+    const startedAt = Date.now();
+    const result = await this.$transaction(async (tx: Prisma.TransactionClient) => {
       // set_config(...) is used instead of a string-interpolated
       // `SET LOCAL app.current_org_id = '<value>'` specifically so the
       // organizationId is passed as a bound query parameter (via Prisma's
@@ -64,6 +76,8 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
       await tx.$executeRaw`SELECT set_config('app.current_org_id', ${organizationId}, true)`;
       return fn(tx);
     });
+    this.logSlowTransaction('withTenantTransaction', Date.now() - startedAt, { organizationId });
+    return result;
   }
 
   /**
@@ -85,10 +99,13 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
     if (!UUID_RE.test(userId)) {
       throw new Error(`Invalid userId passed to withUserTransaction: ${userId}`);
     }
-    return this.$transaction(async (tx: Prisma.TransactionClient) => {
+    const startedAt = Date.now();
+    const result = await this.$transaction(async (tx: Prisma.TransactionClient) => {
       await tx.$executeRaw`SELECT set_config('app.current_user_id', ${userId}, true)`;
       return fn(tx);
     });
+    this.logSlowTransaction('withUserTransaction', Date.now() - startedAt, { userId });
+    return result;
   }
 
   /**
@@ -111,9 +128,46 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
     if (!tokenHash) {
       throw new Error('Invalid tokenHash passed to withInvitationTokenTransaction: empty value');
     }
-    return this.$transaction(async (tx: Prisma.TransactionClient) => {
+    const startedAt = Date.now();
+    const result = await this.$transaction(async (tx: Prisma.TransactionClient) => {
       await tx.$executeRaw`SELECT set_config('app.current_invitation_token_hash', ${tokenHash}, true)`;
       return fn(tx);
     });
+    // No organizationId/userId exists at this bootstrap stage, and
+    // tokenHash itself is the credential — never logged (see this method's
+    // own doc comment above). No safe correlation field is available here;
+    // that omission is itself correct, not an oversight.
+    this.logSlowTransaction('withInvitationTokenTransaction', Date.now() - startedAt, {});
+    return result;
+  }
+
+  /**
+   * Monitoring Phase 4A-12 — transaction-level slow-query logging. Wraps
+   * the 3 withXTransaction methods above (182 call sites across the app,
+   * the near-universal entry point for state-mutating DB activity) rather
+   * than Prisma's own `$on('query', ...)` event API: organizationId/userId
+   * are already guaranteed-correct method parameters here, with none of
+   * that API's risks (its QueryEvent.params field carries real bound
+   * parameter values, and whether AsyncLocalStorage request-context
+   * survives Prisma's engine IPC boundary is unverified/undocumented).
+   * Logs metadata only — never SQL, params, or any request/response data.
+   * Fires only on the slow-success path; a failed transaction's error
+   * propagates untouched, with no new log here, so it isn't duplicated
+   * against each caller's own existing, already-correlated error log
+   * (Phase 4A-2 pattern).
+   */
+  private logSlowTransaction(
+    method: 'withTenantTransaction' | 'withUserTransaction' | 'withInvitationTokenTransaction',
+    durationMs: number,
+    context: { organizationId?: string; userId?: string },
+  ): void {
+    if (durationMs < SLOW_TRANSACTION_THRESHOLD_MS) return;
+
+    const parts = ['event=prisma_slow_transaction', `method=${method}`];
+    if (context.organizationId) parts.push(`organizationId=${context.organizationId}`);
+    if (context.userId) parts.push(`userId=${context.userId}`);
+    parts.push(`durationMs=${durationMs}`);
+
+    this.logger.warn(parts.join(' '));
   }
 }
