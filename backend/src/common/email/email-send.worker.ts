@@ -10,6 +10,18 @@ import { EMAIL_SENDER, EmailAttachment, IEmailSender } from './email-sender.inte
 import { EMAIL_QUEUE_NAME, EmailJobData } from './email-queue.constants';
 
 /**
+ * Monitoring Phase 4A-15 — a class-name-only error identifier, never
+ * error.message/.stack. Safe by construction: a JS/TS class name is
+ * developer-defined source text, never runtime/user-controlled content
+ * (Postmark's own thrown Error.message is confirmed, by reading
+ * postmark-email-sender.ts, to embed Postmark's own API response text,
+ * which can echo back an invalid recipient address).
+ */
+function errorTypeOf(error: unknown): string {
+  return error instanceof Error ? error.constructor.name : typeof error;
+}
+
+/**
  * Frontend Phase 16 — the async worker side of transactional email
  * (TECHNICAL_ARCHITECTURE.md §10's "Async, immediate" requirement,
  * previously never actually built — every send call was synchronous
@@ -74,8 +86,7 @@ export class EmailSendWorker implements OnModuleInit, OnModuleDestroy {
             // our own to maintain. Optional per BullMQ's types.
             const durationMs = job.processedOn ? Date.now() - job.processedOn : undefined;
             this.logger.error(
-              `Email job ${job.id} (org ${job.data.organizationId}) failed after ${maxAttempts} attempts${durationMs !== undefined ? ` (${durationMs}ms)` : ''}.`,
-              error instanceof Error ? error.stack : String(error),
+              `Email job ${job.id} (org ${job.data.organizationId}) failed after ${maxAttempts} attempts${durationMs !== undefined ? ` (${durationMs}ms)` : ''}. errorType=${errorTypeOf(error)}`,
             );
             await this.recordFailure(job.data, error);
             return;
@@ -87,10 +98,19 @@ export class EmailSendWorker implements OnModuleInit, OnModuleDestroy {
     );
 
     this.worker.on('failed', (job, error) => {
-      this.logger.error(
-        `Email send job ${job?.id} (org ${job?.data.organizationId}) failed: ${error.message}`,
-        error.stack,
+      // Monitoring Phase 4A-15 — SECURITY: never log error.message/.stack.
+      // Confirmed by source (postmark-email-sender.ts): a thrown
+      // Postmark error's .message can embed Postmark's own response text,
+      // which can echo back an invalid recipient address.
+      const parts = ['event=job_failed', 'worker=email-send-worker', `queue=${EMAIL_QUEUE_NAME}`];
+      if (job?.id) parts.push(`jobId=${job.id}`);
+      if (job?.data?.organizationId) parts.push(`organizationId=${job.data.organizationId}`);
+      parts.push(
+        `attempt=${job?.attemptsMade ?? 'unknown'}`,
+        `maxAttempts=${job?.opts?.attempts ?? 'unknown'}`,
+        `errorType=${errorTypeOf(error)}`,
       );
+      this.logger.error(parts.join(' '));
       this.heartbeat.recordActivity('email-send-worker', 'failed');
     });
     this.worker.on('active', () => this.heartbeat.recordActivity('email-send-worker', 'active'));
@@ -102,7 +122,12 @@ export class EmailSendWorker implements OnModuleInit, OnModuleDestroy {
       this.heartbeat.recordActivity('email-send-worker', 'completed');
     });
     this.worker.on('error', (error) => {
-      this.logger.error(`Email send worker connection error: ${error.message}`, error.stack);
+      // Monitoring Phase 4A-15 — SECURITY: connection-level handler, no
+      // Job available — never log error.message/.stack, never fabricate
+      // jobId/organizationId/attempt fields.
+      this.logger.error(
+        `event=worker_error worker=email-send-worker queue=${EMAIL_QUEUE_NAME} errorType=${errorTypeOf(error)}`,
+      );
       this.heartbeat.recordError('email-send-worker', 'error');
     });
     // Monitoring Phase 4A-5 — purely observational; deliberately does NOT

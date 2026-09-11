@@ -15,6 +15,17 @@ import {
 import { RateConfirmationExtractionJobStore } from './rate-confirmation-extraction-job-store.service';
 
 /**
+ * Monitoring Phase 4A-15 — a class-name-only error identifier, never
+ * error.message/.stack. Safe by construction: a JS/TS class name is
+ * developer-defined source text, never runtime/user-controlled content
+ * (Anthropic's APIError.message is confirmed, per the Phase 4A-14 audit,
+ * to be built directly from the API's own JSON error response body).
+ */
+function errorTypeOf(error: unknown): string {
+  return error instanceof Error ? error.constructor.name : typeof error;
+}
+
+/**
  * Rate Confirmation → New Load auto-populate feature — the async worker
  * side of extraction. Runs in-process (same modular monolith, no separate
  * worker deployment — matches every other worker in this codebase), off
@@ -91,10 +102,23 @@ export class RateConfirmationExtractionWorker implements OnModuleInit, OnModuleD
     );
 
     this.worker.on('failed', (job, error) => {
-      this.logger.error(
-        `Rate Confirmation extraction job ${job?.id} (org ${job?.data.organizationId}) failed: ${error.message}`,
-        error.stack,
+      // Monitoring Phase 4A-15 — SECURITY: never log error.message/.stack.
+      // Preserves the Phase 4A-14 finding (Anthropic APIError.message is
+      // response-body-derived) via a distinct code path — this generic
+      // hook fires on every failed attempt, not only the final one.
+      const parts = [
+        'event=job_failed',
+        'worker=rate-confirmation-extraction-worker',
+        `queue=${RATE_CONFIRMATION_EXTRACTION_QUEUE_NAME}`,
+      ];
+      if (job?.id) parts.push(`jobId=${job.id}`);
+      if (job?.data?.organizationId) parts.push(`organizationId=${job.data.organizationId}`);
+      parts.push(
+        `attempt=${job?.attemptsMade ?? 'unknown'}`,
+        `maxAttempts=${job?.opts?.attempts ?? 'unknown'}`,
+        `errorType=${errorTypeOf(error)}`,
       );
+      this.logger.error(parts.join(' '));
       this.heartbeat.recordActivity('rate-confirmation-extraction-worker', 'failed');
     });
     this.worker.on('active', () =>
@@ -108,9 +132,11 @@ export class RateConfirmationExtractionWorker implements OnModuleInit, OnModuleD
       this.heartbeat.recordActivity('rate-confirmation-extraction-worker', 'completed');
     });
     this.worker.on('error', (error) => {
+      // Monitoring Phase 4A-15 — SECURITY: connection-level handler, no
+      // Job available — never log error.message/.stack, never fabricate
+      // jobId/organizationId/attempt fields.
       this.logger.error(
-        `Rate Confirmation extraction worker connection error: ${error.message}`,
-        error.stack,
+        `event=worker_error worker=rate-confirmation-extraction-worker queue=${RATE_CONFIRMATION_EXTRACTION_QUEUE_NAME} errorType=${errorTypeOf(error)}`,
       );
       this.heartbeat.recordError('rate-confirmation-extraction-worker', 'error');
     });

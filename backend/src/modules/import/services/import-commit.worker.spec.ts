@@ -330,9 +330,12 @@ describe('ImportCommitWorker', () => {
     const failedHandler = capturedOn!.mock.calls.find((c) => c[0] === 'failed')?.[1];
     expect(failedHandler).toBeDefined();
 
-    failedHandler({ id: 'job-1', data: JOB_DATA }, new Error('boom'));
+    failedHandler(
+      { id: 'job-1', data: JOB_DATA, attemptsMade: 1, opts: { attempts: 3 } },
+      new Error('boom'),
+    );
 
-    const call = errorSpy.mock.calls.find((c) => String(c[0]).startsWith('Import commit job'));
+    const call = errorSpy.mock.calls.find((c) => String(c[0]).startsWith('event=job_failed'));
     expect(call).toBeDefined();
     expect(call![0]).toContain(JOB_DATA.organizationId);
     errorSpy.mockRestore();
@@ -562,5 +565,214 @@ describe('ImportCommitWorker — Monitoring Phase 4A-5 (stalled-event observabil
     expect(message).toBe('Import commit job job-42 stalled (was active).');
     expect(message).not.toMatch(/org[a-zA-Z]*=/i);
     warnSpy.mockRestore();
+  });
+});
+
+describe('ImportCommitWorker — Monitoring Phase 4A-15 (generic BullMQ failure/error logging security)', () => {
+  const JOB_DATA = { importBatchId: 'batch-1', organizationId: 'org-1' };
+  const BATCH = { id: 'batch-1', entityType: 'CUSTOMER', createdByUserId: 'user-1' };
+  const SENSITIVE_MARKER = 'SENSITIVE_BULLMQ_ERROR_CONTENT';
+
+  function row(overrides: Partial<Record<string, unknown>> = {}) {
+    return {
+      id: 'row-1',
+      rowNumber: 1,
+      status: 'VALID',
+      mappedData: { legalName: 'Acme Inc' },
+      duplicateWarning: null,
+      acknowledgeDuplicate: false,
+      ...overrides,
+    };
+  }
+
+  function buildWorker(opts: { rows: ReturnType<typeof row>[]; commitImpl?: jest.Mock }) {
+    capturedProcessor = undefined;
+    const redis = { duplicate: jest.fn().mockReturnValue({ on: jest.fn(), quit: jest.fn() }) };
+    const audit = { record: jest.fn().mockResolvedValue(undefined) };
+    const tx = {
+      importBatch: {
+        findFirst: jest.fn().mockResolvedValue(BATCH),
+        update: jest.fn().mockResolvedValue({}),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+      importBatchRow: {
+        findMany: jest.fn().mockResolvedValue(opts.rows),
+        update: jest.fn().mockResolvedValue({}),
+        count: jest.fn().mockResolvedValue(0),
+      },
+    };
+    const prisma = {
+      withTenantTransaction: jest
+        .fn()
+        .mockImplementation((_orgId: string, fn: (tx: unknown) => unknown) => fn(tx)),
+    };
+    const adapter = {
+      entityType: 'CUSTOMER',
+      commit: opts.commitImpl ?? jest.fn().mockResolvedValue({ entityId: 'created-1' }),
+    };
+    const adapters = { get: jest.fn().mockReturnValue(adapter) };
+    const parentResolution = { resolveByLegalName: jest.fn() };
+    const heartbeat = {
+      register: jest.fn(),
+      unregister: jest.fn(),
+      recordActivity: jest.fn(),
+      recordError: jest.fn(),
+    };
+    new ImportCommitWorker(
+      redis as never,
+      prisma as never,
+      audit as never,
+      adapters as never,
+      parentResolution as never,
+      heartbeat as never,
+    ).onModuleInit();
+    if (!capturedProcessor) throw new Error('Worker processor was not captured');
+    return { processor: capturedProcessor as Processor, tx };
+  }
+
+  function sensitiveError(): Error {
+    return Object.assign(new Error(`${SENSITIVE_MARKER}`), {
+      stack: `Error: ${SENSITIVE_MARKER}\n    at fake-stack (${SENSITIVE_MARKER})`,
+    });
+  }
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it("the generic worker.on('failed') log contains only safe metadata: event, worker, queue, jobId, organizationId, attempt, maxAttempts, errorType", () => {
+    const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    buildWorker({ rows: [] });
+    const failedHandler = capturedOn!.mock.calls.find((c) => c[0] === 'failed')?.[1];
+
+    failedHandler(
+      { id: 'job-1', data: JOB_DATA, attemptsMade: 2, opts: { attempts: 3 } },
+      new Error('boom'),
+    );
+
+    expect(errorSpy).toHaveBeenCalledWith(
+      'event=job_failed worker=import-commit-worker queue=import-commit jobId=job-1 organizationId=org-1 attempt=2 maxAttempts=3 errorType=Error',
+    );
+  });
+
+  it("SECURITY — worker.on('failed') never logs a sensitive marker present in error.message/.stack", () => {
+    const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    buildWorker({ rows: [] });
+    const failedHandler = capturedOn!.mock.calls.find((c) => c[0] === 'failed')?.[1];
+
+    failedHandler(
+      { id: 'job-1', data: JOB_DATA, attemptsMade: 1, opts: { attempts: 3 } },
+      sensitiveError(),
+    );
+
+    for (const call of errorSpy.mock.calls) {
+      for (const arg of call) {
+        expect(String(arg)).not.toContain(SENSITIVE_MARKER);
+      }
+    }
+  });
+
+  it("worker.on('error') logs only worker/queue/errorType — no jobId/organizationId/attempt fabricated", () => {
+    const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    buildWorker({ rows: [] });
+    const errorHandler = capturedOn!.mock.calls.find((c) => c[0] === 'error')?.[1];
+
+    errorHandler(new Error('connection lost'));
+
+    expect(errorSpy).toHaveBeenCalledWith(
+      'event=worker_error worker=import-commit-worker queue=import-commit errorType=Error',
+    );
+  });
+
+  it("SECURITY — worker.on('error') never logs a sensitive marker present in error.message/.stack", () => {
+    const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    buildWorker({ rows: [] });
+    const errorHandler = capturedOn!.mock.calls.find((c) => c[0] === 'error')?.[1];
+
+    errorHandler(sensitiveError());
+
+    for (const call of errorSpy.mock.calls) {
+      for (const arg of call) {
+        expect(String(arg)).not.toContain(SENSITIVE_MARKER);
+      }
+    }
+  });
+
+  it('SECURITY — the per-row adapter.commit() failure path never logs a sensitive marker present in error.message/.stack', async () => {
+    const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const commitImpl = jest.fn().mockRejectedValue(sensitiveError());
+    const { processor, tx } = buildWorker({ rows: [row()], commitImpl });
+
+    await processor({ data: JOB_DATA, attemptsMade: 0, opts: { attempts: 3 } });
+
+    // Row-level isolation preserved: the row is still marked FAILED with the
+    // existing generic (non-sensitive) message, processing did not crash.
+    expect(tx.importBatchRow.update).toHaveBeenCalledWith({
+      where: { id: 'row-1' },
+      data: expect.objectContaining({ status: 'FAILED', errors: ['Unexpected error during import.'] }),
+    });
+
+    for (const call of errorSpy.mock.calls) {
+      for (const arg of call) {
+        expect(String(arg)).not.toContain(SENSITIVE_MARKER);
+      }
+    }
+  });
+
+  it('SECURITY — the job-level final-attempt catch never logs a sensitive marker present in error.message/.stack', async () => {
+    const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const redis = { duplicate: jest.fn().mockReturnValue({ on: jest.fn(), quit: jest.fn() }) };
+    const audit = { record: jest.fn().mockResolvedValue(undefined) };
+    const tx = { importBatch: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) } };
+    const prisma = {
+      withTenantTransaction: jest
+        .fn()
+        .mockImplementation((_orgId: string, fn: (tx: unknown) => unknown) => {
+          // Only the markBatchFailed() call (inside the catch block below)
+          // may succeed — the initial processJob() call must throw, so the
+          // catch block's own final-attempt log is what's under test here.
+          if (fn.toString().includes('updateMany')) return fn(tx);
+          throw sensitiveError();
+        }),
+    };
+    const adapters = { get: jest.fn() };
+    const parentResolution = { resolveByLegalName: jest.fn() };
+    const heartbeat = {
+      register: jest.fn(),
+      unregister: jest.fn(),
+      recordActivity: jest.fn(),
+      recordError: jest.fn(),
+    };
+    capturedProcessor = undefined;
+    new ImportCommitWorker(
+      redis as never,
+      prisma as never,
+      audit as never,
+      adapters as never,
+      parentResolution as never,
+      heartbeat as never,
+    ).onModuleInit();
+    const processor = capturedProcessor!;
+
+    await processor({ data: JOB_DATA, attemptsMade: 2, opts: { attempts: 3 } });
+
+    for (const call of errorSpy.mock.calls) {
+      for (const arg of call) {
+        expect(String(arg)).not.toContain(SENSITIVE_MARKER);
+      }
+    }
+  });
+
+  it("the 'failed' event still calls Logger.error with exactly one argument (no trace/second argument)", () => {
+    const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    buildWorker({ rows: [] });
+    const failedHandler = capturedOn!.mock.calls.find((c) => c[0] === 'failed')?.[1];
+
+    failedHandler(
+      { id: 'job-1', data: JOB_DATA, attemptsMade: 1, opts: { attempts: 3 } },
+      new Error('boom'),
+    );
+
+    expect(errorSpy.mock.calls[0]).toHaveLength(1);
   });
 });

@@ -186,9 +186,12 @@ describe('InvoiceDocumentGenerationWorker', () => {
     const failedHandler = capturedOn!.mock.calls.find((c) => c[0] === 'failed')?.[1];
     expect(failedHandler).toBeDefined();
 
-    failedHandler({ id: 'job-1', data: JOB_DATA }, new Error('boom'));
+    failedHandler(
+      { id: 'job-1', data: JOB_DATA, attemptsMade: 1, opts: { attempts: 3 } },
+      new Error('boom'),
+    );
 
-    const call = errorSpy.mock.calls.find((c) => String(c[0]).startsWith('Invoice PDF job'));
+    const call = errorSpy.mock.calls.find((c) => String(c[0]).startsWith('event=job_failed'));
     expect(call).toBeDefined();
     expect(call![0]).toContain(JOB_DATA.organizationId);
     errorSpy.mockRestore();
@@ -402,5 +405,152 @@ describe('InvoiceDocumentGenerationWorker — Monitoring Phase 4A-5 (stalled-eve
     expect(message).toBe('Invoice PDF job job-42 stalled (was active).');
     expect(message).not.toMatch(/org[a-zA-Z]*=/i);
     warnSpy.mockRestore();
+  });
+});
+
+describe('InvoiceDocumentGenerationWorker — Monitoring Phase 4A-15 (generic BullMQ failure/error logging security)', () => {
+  const JOB_DATA = { documentId: 'doc-1', organizationId: 'org-1', invoiceId: 'invoice-1' };
+  const DOCUMENT = { id: 'doc-1', fileStorageKey: 'org_org-1/documents/doc-1' };
+  const INVOICE = {
+    id: 'invoice-1',
+    invoiceNumber: 'INV-000001',
+    status: 'SENT',
+    total: '1800.00',
+    remainingBalance: '1800.00',
+    dueDate: new Date('2026-09-15'),
+    customer: { legalName: 'Acme Shipper LLC' },
+    lineItems: [{ description: 'Linehaul — Load L-1001', amount: '1800.00' }],
+  };
+  const SENSITIVE_MARKER = 'SENSITIVE_BULLMQ_ERROR_CONTENT';
+
+  function buildWorker(generateImpl: jest.Mock) {
+    capturedProcessor = undefined;
+    const redis = { duplicate: jest.fn().mockReturnValue({ on: jest.fn(), quit: jest.fn() }) };
+    const pdfGenerator = { generateInvoice: generateImpl };
+    const audit = { record: jest.fn().mockResolvedValue(undefined) };
+    const storage = { putObject: jest.fn().mockResolvedValue(undefined) };
+    const tx = {
+      document: {
+        findFirst: jest.fn().mockResolvedValue(DOCUMENT),
+        update: jest.fn().mockResolvedValue({}),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+      invoice: { findFirst: jest.fn().mockResolvedValue(INVOICE) },
+    };
+    const prisma = {
+      withTenantTransaction: jest
+        .fn()
+        .mockImplementation((_orgId: string, fn: (tx: unknown) => unknown) => fn(tx)),
+    };
+    const heartbeat = {
+      register: jest.fn(),
+      unregister: jest.fn(),
+      recordActivity: jest.fn(),
+      recordError: jest.fn(),
+    };
+    new InvoiceDocumentGenerationWorker(
+      redis as never,
+      pdfGenerator as never,
+      prisma as never,
+      audit as never,
+      storage as never,
+      heartbeat as never,
+    ).onModuleInit();
+    if (!capturedProcessor) throw new Error('Worker processor was not captured');
+    return { processor: capturedProcessor as Processor };
+  }
+
+  function sensitiveError(): Error {
+    return Object.assign(new Error(`${SENSITIVE_MARKER}`), {
+      stack: `Error: ${SENSITIVE_MARKER}\n    at fake-stack (${SENSITIVE_MARKER})`,
+    });
+  }
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it("the generic worker.on('failed') log contains only safe metadata: event, worker, queue, jobId, organizationId, attempt, maxAttempts, errorType", () => {
+    const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    buildWorker(jest.fn());
+    const failedHandler = capturedOn!.mock.calls.find((c) => c[0] === 'failed')?.[1];
+
+    failedHandler(
+      { id: 'job-1', data: JOB_DATA, attemptsMade: 2, opts: { attempts: 3 } },
+      new Error('boom'),
+    );
+
+    expect(errorSpy).toHaveBeenCalledWith(
+      'event=job_failed worker=invoice-pdf-worker queue=invoice-pdf jobId=job-1 organizationId=org-1 attempt=2 maxAttempts=3 errorType=Error',
+    );
+  });
+
+  it("SECURITY — worker.on('failed') never logs a sensitive marker present in error.message/.stack", () => {
+    const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    buildWorker(jest.fn());
+    const failedHandler = capturedOn!.mock.calls.find((c) => c[0] === 'failed')?.[1];
+
+    failedHandler(
+      { id: 'job-1', data: JOB_DATA, attemptsMade: 1, opts: { attempts: 3 } },
+      sensitiveError(),
+    );
+
+    for (const call of errorSpy.mock.calls) {
+      for (const arg of call) {
+        expect(String(arg)).not.toContain(SENSITIVE_MARKER);
+      }
+    }
+  });
+
+  it("worker.on('error') logs only worker/queue/errorType — no jobId/organizationId/attempt fabricated", () => {
+    const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    buildWorker(jest.fn());
+    const errorHandler = capturedOn!.mock.calls.find((c) => c[0] === 'error')?.[1];
+
+    errorHandler(new Error('connection lost'));
+
+    expect(errorSpy).toHaveBeenCalledWith(
+      'event=worker_error worker=invoice-pdf-worker queue=invoice-pdf errorType=Error',
+    );
+  });
+
+  it("SECURITY — worker.on('error') never logs a sensitive marker present in error.message/.stack", () => {
+    const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    buildWorker(jest.fn());
+    const errorHandler = capturedOn!.mock.calls.find((c) => c[0] === 'error')?.[1];
+
+    errorHandler(sensitiveError());
+
+    for (const call of errorSpy.mock.calls) {
+      for (const arg of call) {
+        expect(String(arg)).not.toContain(SENSITIVE_MARKER);
+      }
+    }
+  });
+
+  it('SECURITY — the processor final-attempt catch never logs a sensitive marker present in error.message/.stack', async () => {
+    const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const { processor } = buildWorker(jest.fn().mockRejectedValue(sensitiveError()));
+
+    await processor({ id: 'job-1', data: JOB_DATA, attemptsMade: 2, opts: { attempts: 3 } });
+
+    for (const call of errorSpy.mock.calls) {
+      for (const arg of call) {
+        expect(String(arg)).not.toContain(SENSITIVE_MARKER);
+      }
+    }
+  });
+
+  it("the 'failed' event still calls Logger.error with exactly one argument (no trace/second argument)", () => {
+    const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    buildWorker(jest.fn());
+    const failedHandler = capturedOn!.mock.calls.find((c) => c[0] === 'failed')?.[1];
+
+    failedHandler(
+      { id: 'job-1', data: JOB_DATA, attemptsMade: 1, opts: { attempts: 3 } },
+      new Error('boom'),
+    );
+
+    expect(errorSpy.mock.calls[0]).toHaveLength(1);
   });
 });

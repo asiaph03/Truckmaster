@@ -174,17 +174,25 @@ describe('ScheduledJobsWorker — Monitoring Phase 4A-4 (job duration logging)',
     const failedHandler = capturedOn!.mock.calls.find((c) => c[0] === 'failed')?.[1];
 
     failedHandler(
-      { name: 'invitation-expiration-sweep', id: 'job-1', processedOn: Date.now() - 400 },
+      {
+        name: 'invitation-expiration-sweep',
+        id: 'job-1',
+        processedOn: Date.now() - 400,
+        attemptsMade: 1,
+        opts: { attempts: 1 },
+      },
       new Error('boom'),
     );
 
-    const call = errorSpy.mock.calls.find((c) => String(c[0]).startsWith('Scheduled job'));
+    const call = errorSpy.mock.calls.find((c) => String(c[0]).startsWith('event=job_failed'));
     expect(call).toBeDefined();
-    expect(call![0]).toMatch(/^Scheduled job invitation-expiration-sweep \(job-1\) failed \(\d+ms\): boom$/);
+    expect(call![0]).toMatch(
+      /^event=job_failed worker=scheduled-jobs-worker queue=scheduled-jobs jobName=invitation-expiration-sweep jobId=job-1 attempt=1 maxAttempts=1 durationMs=\d+ errorType=Error$/,
+    );
     errorSpy.mockRestore();
   });
 
-  it("does not crash and omits the duration in the 'failed' log when job is undefined (stalled-job-removed-by-removeOnFail edge case)", async () => {
+  it("does not crash and omits jobName/jobId/duration in the 'failed' log when job is undefined (stalled-job-removed-by-removeOnFail edge case)", async () => {
     const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
     const worker = buildWorker();
     await worker.onModuleInit();
@@ -192,8 +200,10 @@ describe('ScheduledJobsWorker — Monitoring Phase 4A-4 (job duration logging)',
 
     expect(() => failedHandler(undefined, new Error('boom'))).not.toThrow();
 
-    const call = errorSpy.mock.calls.find((c) => String(c[0]).startsWith('Scheduled job'));
-    expect(call![0]).toBe('Scheduled job undefined (undefined) failed: boom');
+    const call = errorSpy.mock.calls.find((c) => String(c[0]).startsWith('event=job_failed'));
+    expect(call![0]).toBe(
+      'event=job_failed worker=scheduled-jobs-worker queue=scheduled-jobs attempt=unknown maxAttempts=unknown errorType=Error',
+    );
     errorSpy.mockRestore();
   });
 });
@@ -282,5 +292,118 @@ describe('ScheduledJobsWorker — Monitoring Phase 4A-5 (stalled-event observabi
     expect(message).toBe('Scheduled job job-42 stalled (was active).');
     expect(message).not.toMatch(/org[a-zA-Z]*=/i);
     warnSpy.mockRestore();
+  });
+});
+
+describe('ScheduledJobsWorker — Monitoring Phase 4A-15 (generic BullMQ failure/error logging security)', () => {
+  const SENSITIVE_MARKER = 'SENSITIVE_BULLMQ_ERROR_CONTENT';
+
+  function buildWorker() {
+    capturedProcessor = undefined;
+    const redis = { duplicate: jest.fn().mockReturnValue({ on: jest.fn(), quit: jest.fn() }) };
+    const queue = { add: jest.fn().mockResolvedValue({}) };
+    const sweep = () => ({ run: jest.fn().mockResolvedValue(undefined) });
+    const heartbeat = {
+      register: jest.fn(),
+      unregister: jest.fn(),
+      recordActivity: jest.fn(),
+      recordError: jest.fn(),
+    };
+    return new ScheduledJobsWorker(
+      redis as never,
+      queue as never,
+      sweep() as never,
+      sweep() as never,
+      sweep() as never,
+      sweep() as never,
+      sweep() as never,
+      sweep() as never,
+      heartbeat as never,
+    );
+  }
+
+  function sensitiveError(): Error {
+    return Object.assign(new Error(`${SENSITIVE_MARKER}`), {
+      stack: `Error: ${SENSITIVE_MARKER}\n    at fake-stack (${SENSITIVE_MARKER})`,
+    });
+  }
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it("SECURITY — worker.on('failed') never logs a sensitive marker present in error.message/.stack", async () => {
+    const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const worker = buildWorker();
+    await worker.onModuleInit();
+    const failedHandler = capturedOn!.mock.calls.find((c) => c[0] === 'failed')?.[1];
+
+    failedHandler(
+      { name: 'invitation-expiration-sweep', id: 'job-1', attemptsMade: 1, opts: { attempts: 1 } },
+      sensitiveError(),
+    );
+
+    for (const call of errorSpy.mock.calls) {
+      for (const arg of call) {
+        expect(String(arg)).not.toContain(SENSITIVE_MARKER);
+      }
+    }
+  });
+
+  it("the 'failed' log never contains organizationId — this queue's job payload is always {}", async () => {
+    const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const worker = buildWorker();
+    await worker.onModuleInit();
+    const failedHandler = capturedOn!.mock.calls.find((c) => c[0] === 'failed')?.[1];
+
+    failedHandler(
+      { name: 'invitation-expiration-sweep', id: 'job-1', attemptsMade: 1, opts: { attempts: 1 } },
+      new Error('boom'),
+    );
+
+    const call = errorSpy.mock.calls.find((c) => String(c[0]).startsWith('event=job_failed'));
+    expect(call![0]).not.toMatch(/organizationId=/);
+  });
+
+  it("worker.on('error') logs only worker/queue/errorType — no jobId/attempt fabricated", () => {
+    const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const worker = buildWorker();
+    worker.onModuleInit();
+    const errorHandler = capturedOn!.mock.calls.find((c) => c[0] === 'error')?.[1];
+
+    errorHandler(new Error('connection lost'));
+
+    expect(errorSpy).toHaveBeenCalledWith(
+      'event=worker_error worker=scheduled-jobs-worker queue=scheduled-jobs errorType=Error',
+    );
+  });
+
+  it("SECURITY — worker.on('error') never logs a sensitive marker present in error.message/.stack", () => {
+    const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const worker = buildWorker();
+    worker.onModuleInit();
+    const errorHandler = capturedOn!.mock.calls.find((c) => c[0] === 'error')?.[1];
+
+    errorHandler(sensitiveError());
+
+    for (const call of errorSpy.mock.calls) {
+      for (const arg of call) {
+        expect(String(arg)).not.toContain(SENSITIVE_MARKER);
+      }
+    }
+  });
+
+  it("the 'failed' event still calls Logger.error with exactly one argument (no trace/second argument)", async () => {
+    const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const worker = buildWorker();
+    await worker.onModuleInit();
+    const failedHandler = capturedOn!.mock.calls.find((c) => c[0] === 'failed')?.[1];
+
+    failedHandler(
+      { name: 'invitation-expiration-sweep', id: 'job-1', attemptsMade: 1, opts: { attempts: 1 } },
+      new Error('boom'),
+    );
+
+    expect(errorSpy.mock.calls[0]).toHaveLength(1);
   });
 });

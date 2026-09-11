@@ -13,6 +13,15 @@ import {
 } from './rate-confirmation.constants';
 
 /**
+ * Monitoring Phase 4A-15 — a class-name-only error identifier, never
+ * error.message/.stack. Safe by construction: a JS/TS class name is
+ * developer-defined source text, never runtime/user-controlled content.
+ */
+function errorTypeOf(error: unknown): string {
+  return error instanceof Error ? error.constructor.name : typeof error;
+}
+
+/**
  * Workflow 5 §5.7 step 2 — the async worker side of Rate Confirmation PDF
  * generation. Runs in-process (same modular monolith, no separate worker
  * deployment in V1), off the request path, mirroring MalwareScanWorker's
@@ -59,8 +68,7 @@ export class RateConfirmationGenerationWorker implements OnModuleInit, OnModuleD
             // timestamp for when the job became active.
             const durationMs = job.processedOn ? Date.now() - job.processedOn : undefined;
             this.logger.error(
-              `Rate Confirmation PDF generation for document ${job.data.documentId} (org ${job.data.organizationId}) failed after ${maxAttempts} attempts${durationMs !== undefined ? ` (${durationMs}ms)` : ''} — recording FAILED.`,
-              error instanceof Error ? error.stack : String(error),
+              `Rate Confirmation PDF generation for document ${job.data.documentId} (org ${job.data.organizationId}) failed after ${maxAttempts} attempts${durationMs !== undefined ? ` (${durationMs}ms)` : ''} — recording FAILED. errorType=${errorTypeOf(error)}`,
             );
             await this.markFailed(job.data);
             return;
@@ -72,10 +80,20 @@ export class RateConfirmationGenerationWorker implements OnModuleInit, OnModuleD
     );
 
     this.worker.on('failed', (job, error) => {
-      this.logger.error(
-        `Rate Confirmation PDF job ${job?.id} (org ${job?.data.organizationId}) failed: ${error.message}`,
-        error.stack,
+      // Monitoring Phase 4A-15 — SECURITY: never log error.message/.stack.
+      const parts = [
+        'event=job_failed',
+        'worker=rate-confirmation-pdf-worker',
+        `queue=${RATE_CONFIRMATION_QUEUE_NAME}`,
+      ];
+      if (job?.id) parts.push(`jobId=${job.id}`);
+      if (job?.data?.organizationId) parts.push(`organizationId=${job.data.organizationId}`);
+      parts.push(
+        `attempt=${job?.attemptsMade ?? 'unknown'}`,
+        `maxAttempts=${job?.opts?.attempts ?? 'unknown'}`,
+        `errorType=${errorTypeOf(error)}`,
       );
+      this.logger.error(parts.join(' '));
       this.heartbeat.recordActivity('rate-confirmation-pdf-worker', 'failed');
     });
     this.worker.on('active', () =>
@@ -89,9 +107,11 @@ export class RateConfirmationGenerationWorker implements OnModuleInit, OnModuleD
       this.heartbeat.recordActivity('rate-confirmation-pdf-worker', 'completed');
     });
     this.worker.on('error', (error) => {
+      // Monitoring Phase 4A-15 — SECURITY: connection-level handler, no
+      // Job available — never log error.message/.stack, never fabricate
+      // jobId/organizationId/attempt fields.
       this.logger.error(
-        `Rate Confirmation PDF worker connection error: ${error.message}`,
-        error.stack,
+        `event=worker_error worker=rate-confirmation-pdf-worker queue=${RATE_CONFIRMATION_QUEUE_NAME} errorType=${errorTypeOf(error)}`,
       );
       this.heartbeat.recordError('rate-confirmation-pdf-worker', 'error');
     });

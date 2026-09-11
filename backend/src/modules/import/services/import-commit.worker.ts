@@ -12,6 +12,17 @@ import { ImportDuplicateCache } from '../adapters/types';
 import { IMPORT_COMMIT_QUEUE_NAME, ImportCommitJobData } from '../import.constants';
 
 /**
+ * Monitoring Phase 4A-15 — a class-name-only error identifier, never
+ * error.message/.stack. Safe by construction: a JS/TS class name is
+ * developer-defined source text, never runtime/user-controlled content —
+ * relevant here in particular since adapter.commit() (below) processes
+ * literal spreadsheet row data (names, addresses, contacts).
+ */
+function errorTypeOf(error: unknown): string {
+  return error instanceof Error ? error.constructor.name : typeof error;
+}
+
+/**
  * Bulk Import commit worker (approved technical design, Decision 6 —
  * one BullMQ job per ImportBatch; approved queue decision — mirrors
  * RateConfirmationGenerationWorker's exact structure: duplicated ioredis
@@ -56,8 +67,7 @@ export class ImportCommitWorker implements OnModuleInit, OnModuleDestroy {
             // timestamp for when the job became active.
             const durationMs = job.processedOn ? Date.now() - job.processedOn : undefined;
             this.logger.error(
-              `Import batch ${job.data.importBatchId} (org ${job.data.organizationId}) commit failed after ${maxAttempts} attempts${durationMs !== undefined ? ` (${durationMs}ms)` : ''} — recording FAILED.`,
-              error instanceof Error ? error.stack : String(error),
+              `Import batch ${job.data.importBatchId} (org ${job.data.organizationId}) commit failed after ${maxAttempts} attempts${durationMs !== undefined ? ` (${durationMs}ms)` : ''} — recording FAILED. errorType=${errorTypeOf(error)}`,
             );
             await this.markBatchFailed(job.data);
             return;
@@ -69,10 +79,20 @@ export class ImportCommitWorker implements OnModuleInit, OnModuleDestroy {
     );
 
     this.worker.on('failed', (job, error) => {
-      this.logger.error(
-        `Import commit job ${job?.id} (org ${job?.data.organizationId}) failed: ${error.message}`,
-        error.stack,
+      // Monitoring Phase 4A-15 — SECURITY: never log error.message/.stack.
+      const parts = [
+        'event=job_failed',
+        'worker=import-commit-worker',
+        `queue=${IMPORT_COMMIT_QUEUE_NAME}`,
+      ];
+      if (job?.id) parts.push(`jobId=${job.id}`);
+      if (job?.data?.organizationId) parts.push(`organizationId=${job.data.organizationId}`);
+      parts.push(
+        `attempt=${job?.attemptsMade ?? 'unknown'}`,
+        `maxAttempts=${job?.opts?.attempts ?? 'unknown'}`,
+        `errorType=${errorTypeOf(error)}`,
       );
+      this.logger.error(parts.join(' '));
       this.heartbeat.recordActivity('import-commit-worker', 'failed');
     });
     this.worker.on('active', () => this.heartbeat.recordActivity('import-commit-worker', 'active'));
@@ -84,7 +104,12 @@ export class ImportCommitWorker implements OnModuleInit, OnModuleDestroy {
       this.heartbeat.recordActivity('import-commit-worker', 'completed');
     });
     this.worker.on('error', (error) => {
-      this.logger.error(`Import commit worker connection error: ${error.message}`, error.stack);
+      // Monitoring Phase 4A-15 — SECURITY: connection-level handler, no
+      // Job available — never log error.message/.stack, never fabricate
+      // jobId/organizationId/attempt fields.
+      this.logger.error(
+        `event=worker_error worker=import-commit-worker queue=${IMPORT_COMMIT_QUEUE_NAME} errorType=${errorTypeOf(error)}`,
+      );
       this.heartbeat.recordError('import-commit-worker', 'error');
     });
     // Monitoring Phase 4A-5 — purely observational; deliberately does NOT
@@ -171,11 +196,11 @@ export class ImportCommitWorker implements OnModuleInit, OnModuleDestroy {
         const message =
           error instanceof AppError ? error.message : 'Unexpected error during import.';
         if (!(error instanceof AppError)) {
+          // Monitoring Phase 4A-15 — SECURITY: adapter.commit() processes
+          // literal spreadsheet row data (names, addresses, contacts) —
+          // never log error.message/.stack here.
           this.logger.error(
-            `Unexpected error importing row ${row.rowNumber} of batch ${batch.id}: ${
-              error instanceof Error ? error.message : String(error)
-            }`,
-            error instanceof Error ? error.stack : undefined,
+            `Unexpected error importing row ${row.rowNumber} of batch ${batch.id}. errorType=${errorTypeOf(error)}`,
           );
         }
         await this.markRow(data.organizationId, row.id, { status: 'FAILED', errors: [message] });

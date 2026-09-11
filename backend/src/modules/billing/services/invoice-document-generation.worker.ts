@@ -10,6 +10,15 @@ import { IPdfGenerator, PDF_GENERATOR } from '../../../common/pdf/pdf-generator.
 import { INVOICE_QUEUE_NAME, InvoiceJobData } from './invoice.constants';
 
 /**
+ * Monitoring Phase 4A-15 — a class-name-only error identifier, never
+ * error.message/.stack. Safe by construction: a JS/TS class name is
+ * developer-defined source text, never runtime/user-controlled content.
+ */
+function errorTypeOf(error: unknown): string {
+  return error instanceof Error ? error.constructor.name : typeof error;
+}
+
+/**
  * Workflow 8 §8.6 — async PDF generation for a Sent invoice, off the
  * request path. Structurally identical to RateConfirmationGenerationWorker
  * (Phase 4): its own duplicated Redis connection, `.quit()`'d in
@@ -47,8 +56,7 @@ export class InvoiceDocumentGenerationWorker implements OnModuleInit, OnModuleDe
             // timestamp for when the job became active.
             const durationMs = job.processedOn ? Date.now() - job.processedOn : undefined;
             this.logger.error(
-              `Invoice PDF generation for document ${job.data.documentId} (org ${job.data.organizationId}) failed after ${maxAttempts} attempts${durationMs !== undefined ? ` (${durationMs}ms)` : ''} — recording FAILED.`,
-              error instanceof Error ? error.stack : String(error),
+              `Invoice PDF generation for document ${job.data.documentId} (org ${job.data.organizationId}) failed after ${maxAttempts} attempts${durationMs !== undefined ? ` (${durationMs}ms)` : ''} — recording FAILED. errorType=${errorTypeOf(error)}`,
             );
             await this.markFailed(job.data);
             return;
@@ -60,10 +68,16 @@ export class InvoiceDocumentGenerationWorker implements OnModuleInit, OnModuleDe
     );
 
     this.worker.on('failed', (job, error) => {
-      this.logger.error(
-        `Invoice PDF job ${job?.id} (org ${job?.data.organizationId}) failed: ${error.message}`,
-        error.stack,
+      // Monitoring Phase 4A-15 — SECURITY: never log error.message/.stack.
+      const parts = ['event=job_failed', 'worker=invoice-pdf-worker', `queue=${INVOICE_QUEUE_NAME}`];
+      if (job?.id) parts.push(`jobId=${job.id}`);
+      if (job?.data?.organizationId) parts.push(`organizationId=${job.data.organizationId}`);
+      parts.push(
+        `attempt=${job?.attemptsMade ?? 'unknown'}`,
+        `maxAttempts=${job?.opts?.attempts ?? 'unknown'}`,
+        `errorType=${errorTypeOf(error)}`,
       );
+      this.logger.error(parts.join(' '));
       this.heartbeat.recordActivity('invoice-pdf-worker', 'failed');
     });
     this.worker.on('active', () => this.heartbeat.recordActivity('invoice-pdf-worker', 'active'));
@@ -75,7 +89,12 @@ export class InvoiceDocumentGenerationWorker implements OnModuleInit, OnModuleDe
       this.heartbeat.recordActivity('invoice-pdf-worker', 'completed');
     });
     this.worker.on('error', (error) => {
-      this.logger.error(`Invoice PDF worker connection error: ${error.message}`, error.stack);
+      // Monitoring Phase 4A-15 — SECURITY: connection-level handler, no
+      // Job available — never log error.message/.stack, never fabricate
+      // jobId/organizationId/attempt fields.
+      this.logger.error(
+        `event=worker_error worker=invoice-pdf-worker queue=${INVOICE_QUEUE_NAME} errorType=${errorTypeOf(error)}`,
+      );
       this.heartbeat.recordError('invoice-pdf-worker', 'error');
     });
     // Monitoring Phase 4A-5 — purely observational; deliberately does NOT

@@ -32,6 +32,17 @@ export const SCHEDULED_JOBS_RETENTION: Pick<JobsOptions, 'removeOnComplete' | 'r
 };
 
 /**
+ * Monitoring Phase 4A-15 — a class-name-only error identifier, never
+ * error.message/.stack. Safe by construction: a JS/TS class name is
+ * developer-defined source text, never runtime/user-controlled content.
+ * This worker's generic 'failed' handler is the sole failure signal for
+ * all 6 sweep services it dispatches to (no per-processor try/catch).
+ */
+function errorTypeOf(error: unknown): string {
+  return error instanceof Error ? error.constructor.name : typeof error;
+}
+
+/**
  * Owns the single shared `scheduled-jobs` queue/worker pair and registers
  * the Phase 7 repeatable jobs plus the Operational Alerts feature's two
  * (check-call reminder/due-soon, load-lateness) sweeps on it
@@ -74,11 +85,24 @@ export class ScheduledJobsWorker implements OnModuleInit, OnModuleDestroy {
       // there is no separate per-processor try/catch to attach duration
       // to, unlike the other 7 workers. job.processedOn is BullMQ's own
       // timestamp for when the job became active.
+      // Monitoring Phase 4A-15 — SECURITY: never log error.message/.stack.
+      // No organizationId here by design (see the 'completed' handler
+      // below) — this queue's job payload is always {}.
       const durationMs = job?.processedOn ? Date.now() - job.processedOn : undefined;
-      this.logger.error(
-        `Scheduled job ${job?.name} (${job?.id}) failed${durationMs !== undefined ? ` (${durationMs}ms)` : ''}: ${error.message}`,
-        error.stack,
+      const parts = [
+        'event=job_failed',
+        'worker=scheduled-jobs-worker',
+        `queue=${SCHEDULED_JOBS_QUEUE_NAME}`,
+      ];
+      if (job?.name) parts.push(`jobName=${job.name}`);
+      if (job?.id) parts.push(`jobId=${job.id}`);
+      parts.push(
+        `attempt=${job?.attemptsMade ?? 'unknown'}`,
+        `maxAttempts=${job?.opts?.attempts ?? 'unknown'}`,
       );
+      if (durationMs !== undefined) parts.push(`durationMs=${durationMs}`);
+      parts.push(`errorType=${errorTypeOf(error)}`);
+      this.logger.error(parts.join(' '));
       this.heartbeat.recordActivity('scheduled-jobs-worker', 'failed');
     });
     this.worker.on('active', () => this.heartbeat.recordActivity('scheduled-jobs-worker', 'active'));
@@ -93,7 +117,12 @@ export class ScheduledJobsWorker implements OnModuleInit, OnModuleDestroy {
       this.heartbeat.recordActivity('scheduled-jobs-worker', 'completed');
     });
     this.worker.on('error', (error) => {
-      this.logger.error(`Scheduled jobs worker connection error: ${error.message}`, error.stack);
+      // Monitoring Phase 4A-15 — SECURITY: connection-level handler, no
+      // Job available — never log error.message/.stack, never fabricate
+      // jobId/attempt fields.
+      this.logger.error(
+        `event=worker_error worker=scheduled-jobs-worker queue=${SCHEDULED_JOBS_QUEUE_NAME} errorType=${errorTypeOf(error)}`,
+      );
       this.heartbeat.recordError('scheduled-jobs-worker', 'error');
     });
     // Monitoring Phase 4A-5 — purely observational; deliberately does NOT
