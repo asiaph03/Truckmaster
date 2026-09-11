@@ -80,7 +80,10 @@ describe('RateConfirmationExtractionWorker', () => {
       organizationId: JOB_DATA.organizationId,
       jobId: undefined,
     });
-    expect(extractImpl).toHaveBeenCalledWith(PDF_BYTES, JOB_DATA.extractionId);
+    expect(extractImpl).toHaveBeenCalledWith(PDF_BYTES, JOB_DATA.extractionId, {
+      organizationId: JOB_DATA.organizationId,
+      jobId: undefined,
+    });
     expect(jobStore.markComplete).toHaveBeenCalledWith(
       JOB_DATA.organizationId,
       JOB_DATA.extractionId,
@@ -98,6 +101,20 @@ describe('RateConfirmationExtractionWorker', () => {
     await processor({ id: 'job-99', data: JOB_DATA, attemptsMade: 0, opts: { attempts: 3 } });
 
     expect(storage.getObject).toHaveBeenCalledWith(JOB_DATA.storageKey, {
+      organizationId: JOB_DATA.organizationId,
+      jobId: 'job-99',
+    });
+  });
+
+  it('threads organizationId and jobId into extractor.extract() as context (Monitoring Phase 4A-14)', async () => {
+    const extractImpl = jest
+      .fn()
+      .mockResolvedValue({ multiLoadDetected: false, data: { loadNumber: 'L-1001' } });
+    const { processor, extractor } = buildWorker(extractImpl);
+
+    await processor({ id: 'job-99', data: JOB_DATA, attemptsMade: 0, opts: { attempts: 3 } });
+
+    expect(extractor.extract).toHaveBeenCalledWith(PDF_BYTES, JOB_DATA.extractionId, {
       organizationId: JOB_DATA.organizationId,
       jobId: 'job-99',
     });
@@ -394,5 +411,101 @@ describe('RateConfirmationExtractionWorker — Monitoring Phase 4A-5 (stalled-ev
     expect(message).toBe('Rate Confirmation extraction job job-42 stalled (was active).');
     expect(message).not.toMatch(/org[a-zA-Z]*=/i);
     warnSpy.mockRestore();
+  });
+});
+
+describe('RateConfirmationExtractionWorker — Monitoring Phase 4A-14 (Anthropic extraction logging security)', () => {
+  const JOB_DATA = {
+    extractionId: 'extraction-1',
+    documentId: 'doc-1',
+    organizationId: 'org-1',
+    storageKey: 'org_org-1/documents/doc-1',
+  };
+  const SENSITIVE_MARKER = 'SENSITIVE_ANTHROPIC_ERROR_CONTENT';
+
+  function buildWorker(extractImpl: jest.Mock) {
+    capturedProcessor = undefined;
+    const redis = { duplicate: jest.fn().mockReturnValue({ on: jest.fn(), quit: jest.fn() }) };
+    const extractor = { extract: extractImpl };
+    const storage = { getObject: jest.fn().mockResolvedValue(Buffer.from('pdf-bytes')) };
+    const jobStore = {
+      markInProgress: jest.fn().mockResolvedValue(undefined),
+      markComplete: jest.fn().mockResolvedValue(undefined),
+      markFailed: jest.fn().mockResolvedValue(undefined),
+    };
+    const heartbeat = {
+      register: jest.fn(),
+      unregister: jest.fn(),
+      recordActivity: jest.fn(),
+      recordError: jest.fn(),
+    };
+
+    new RateConfirmationExtractionWorker(
+      redis as never,
+      extractor as never,
+      storage as never,
+      jobStore as never,
+      heartbeat as never,
+    ).onModuleInit();
+    if (!capturedProcessor) throw new Error('Worker processor was not captured');
+    return { processor: capturedProcessor as Processor };
+  }
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it('the final-attempt failure log call has no second (trace) argument at all', async () => {
+    const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const originalError = Object.assign(new Error('502 overloaded_error'), {
+      status: 529,
+      stack: 'Error: 502 overloaded_error\n    at fake-stack',
+    });
+    const { processor } = buildWorker(jest.fn().mockRejectedValue(originalError));
+
+    await processor({
+      id: 'job-1',
+      data: JOB_DATA,
+      attemptsMade: 2,
+      opts: { attempts: 3 },
+      processedOn: Date.now() - 100,
+    });
+
+    const call = errorSpy.mock.calls.find((c) =>
+      String(c[0]).startsWith('Rate Confirmation extraction extraction-1'),
+    );
+    expect(call).toBeDefined();
+    expect(call).toHaveLength(1);
+  });
+
+  it('SECURITY — an Anthropic APIError carrying a sensitive marker in message/stack/error never appears in any worker logger call', async () => {
+    const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+    const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+
+    const sensitiveError = Object.assign(new Error(`400 ${SENSITIVE_MARKER}`), {
+      status: 400,
+      stack: `Error: 400 ${SENSITIVE_MARKER}\n    at fake-stack (${SENSITIVE_MARKER})`,
+      error: { type: 'invalid_request_error', message: SENSITIVE_MARKER },
+      headers: new Map([['request-id', SENSITIVE_MARKER]]),
+      requestID: SENSITIVE_MARKER,
+      workspaceID: SENSITIVE_MARKER,
+    });
+    const { processor } = buildWorker(jest.fn().mockRejectedValue(sensitiveError));
+
+    await processor({
+      id: 'job-1',
+      data: JOB_DATA,
+      attemptsMade: 2,
+      opts: { attempts: 3 },
+      processedOn: Date.now() - 100,
+    });
+
+    const allCalls = [...logSpy.mock.calls, ...warnSpy.mock.calls, ...errorSpy.mock.calls];
+    for (const call of allCalls) {
+      for (const arg of call) {
+        expect(String(arg)).not.toContain(SENSITIVE_MARKER);
+      }
+    }
   });
 });

@@ -1,5 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { Logger } from '@nestjs/common';
 import {
   AnthropicRateConfirmationExtractor,
   MISSING_ANTHROPIC_API_KEY_ERROR_MESSAGE,
@@ -272,5 +273,233 @@ describe('AnthropicRateConfirmationExtractor.extract — request shape (mocked c
     await expect(extractor.extract(Buffer.from('x'), 'f.pdf')).rejects.toThrow(
       'Anthropic API request failed with status 529.',
     );
+  });
+});
+
+describe('AnthropicRateConfirmationExtractor — Monitoring Phase 4A-14 (external-call timing/error attribution + logging security)', () => {
+  const CONTEXT = { organizationId: 'org-1', jobId: 'job-1' };
+  const STORAGE_KEY_LIKE = 'org_org-1/documents/doc-1';
+  const SIGNED_URL_LIKE = 'https://s3.example.com/bucket/key?X-Amz-Signature=abc';
+  const SENSITIVE_MARKER = 'SENSITIVE_ANTHROPIC_ERROR_CONTENT';
+
+  function buildExtractor(
+    createImpl: (...args: unknown[]) => unknown,
+    pdfTextResult: PdfTextExtractionResult = { text: 'RATE CONFIRMATION text', pageCount: 1, hasTextLayer: true },
+  ) {
+    const createMock = jest.fn().mockImplementation(createImpl);
+    const extractor = new AnthropicRateConfirmationExtractor(
+      { get: () => ({ apiKey: 'test-key', model: 'claude-sonnet-5' }) } as never,
+      { extractText: jest.fn().mockResolvedValue(pdfTextResult) } as never,
+    );
+    (extractor as unknown as { client: { messages: { create: typeof createMock } } }).client = {
+      messages: { create: createMock },
+    };
+    return { extractor, createMock };
+  }
+
+  function toolUseResponse(input: unknown) {
+    return { content: [{ type: 'tool_use', name: 'record_rate_confirmation_extraction', input }] };
+  }
+
+  const CLEAN_TOOL_RESULT = { multiLoadDetected: false, stops: [], warnings: [], unmappedFields: [] };
+
+  function mockDuration(startMs: number, endMs: number): jest.SpyInstance {
+    return jest.spyOn(Date, 'now').mockReturnValueOnce(startMs).mockReturnValueOnce(endMs);
+  }
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it('a successful call logs event=anthropic_operation dependency=anthropic operation=messages.create ... outcome=success via Logger.log', async () => {
+    const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+    const { extractor } = buildExtractor(() => toolUseResponse(CLEAN_TOOL_RESULT));
+    mockDuration(1_000, 1_150);
+
+    await extractor.extract(Buffer.from('%PDF-1.4'), 'ratecon.pdf', CONTEXT);
+
+    expect(logSpy).toHaveBeenCalledWith(
+      'event=anthropic_operation dependency=anthropic operation=messages.create organizationId=org-1 jobId=job-1 durationMs=150 outcome=success',
+    );
+  });
+
+  it('omits organizationId/jobId cleanly when no context is passed', async () => {
+    const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+    const { extractor } = buildExtractor(() => toolUseResponse(CLEAN_TOOL_RESULT));
+    mockDuration(1_000, 1_010);
+
+    await extractor.extract(Buffer.from('%PDF-1.4'), 'ratecon.pdf');
+
+    expect(logSpy).toHaveBeenCalledWith(
+      'event=anthropic_operation dependency=anthropic operation=messages.create durationMs=10 outcome=success',
+    );
+  });
+
+  it('on failure, logs outcome=failure with errorCategory via Logger.warn, and rethrows the original error object unchanged', async () => {
+    const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    const originalError = Object.assign(new Error('bad request'), { status: 400 });
+    const { extractor } = buildExtractor(() => {
+      throw originalError;
+    });
+    mockDuration(1_000, 1_075);
+
+    await expect(extractor.extract(Buffer.from('x'), 'f.pdf', CONTEXT)).rejects.toBe(originalError);
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      'event=anthropic_operation dependency=anthropic operation=messages.create organizationId=org-1 jobId=job-1 durationMs=75 outcome=failure errorCategory=client_error',
+    );
+  });
+
+  describe('errorCategory classification — coarse operational category, derived only from the typed status field', () => {
+    it('status 400-499 -> client_error', async () => {
+      const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      const { extractor } = buildExtractor(() => {
+        throw Object.assign(new Error('x'), { status: 429 });
+      });
+      mockDuration(1_000, 1_010);
+
+      await expect(extractor.extract(Buffer.from('x'), 'f.pdf')).rejects.toThrow();
+
+      expect(warnSpy.mock.calls[0][0]).toContain('errorCategory=client_error');
+    });
+
+    it('status >= 500 -> server_error', async () => {
+      const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      const { extractor } = buildExtractor(() => {
+        throw Object.assign(new Error('x'), { status: 529 });
+      });
+      mockDuration(1_000, 1_010);
+
+      await expect(extractor.extract(Buffer.from('x'), 'f.pdf')).rejects.toThrow();
+
+      expect(warnSpy.mock.calls[0][0]).toContain('errorCategory=server_error');
+    });
+
+    it('a connection-level error with no status -> network_error', async () => {
+      const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      const { extractor } = buildExtractor(() => {
+        throw new Error('Connection error.');
+      });
+      mockDuration(1_000, 1_010);
+
+      await expect(extractor.extract(Buffer.from('x'), 'f.pdf')).rejects.toThrow();
+
+      expect(warnSpy.mock.calls[0][0]).toContain('errorCategory=network_error');
+    });
+
+    it('a thrown value that is neither status-bearing nor a genuine Error -> unknown', async () => {
+      const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      const { extractor } = buildExtractor(() => {
+        throw 'a plain string was thrown';
+      });
+      mockDuration(1_000, 1_010);
+
+      await expect(extractor.extract(Buffer.from('x'), 'f.pdf')).rejects.toBe('a plain string was thrown');
+
+      expect(warnSpy.mock.calls[0][0]).toContain('errorCategory=unknown');
+    });
+  });
+
+  describe('security/PII', () => {
+    it('never logs error.message, error.stack, error.error, error.headers, requestID, or workspaceID', async () => {
+      const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      const sensitiveError = Object.assign(new Error(`400 ${SENSITIVE_MARKER}`), {
+        status: 400,
+        stack: `Error: 400 ${SENSITIVE_MARKER}\n    at fake-stack`,
+        error: { type: 'invalid_request_error', message: SENSITIVE_MARKER },
+        headers: new Map([['request-id', SENSITIVE_MARKER]]),
+        requestID: SENSITIVE_MARKER,
+        workspaceID: SENSITIVE_MARKER,
+      });
+      const { extractor } = buildExtractor(() => {
+        throw sensitiveError;
+      });
+      mockDuration(1_000, 1_010);
+
+      await expect(extractor.extract(Buffer.from('x'), 'f.pdf', CONTEXT)).rejects.toBe(sensitiveError);
+
+      const [message] = warnSpy.mock.calls[0];
+      expect(message).not.toContain(SENSITIVE_MARKER);
+      expect(message).not.toContain('requestID');
+      expect(message).not.toContain('workspaceID');
+      expect(message).not.toContain('headers');
+      expect(message).toBe(
+        'event=anthropic_operation dependency=anthropic operation=messages.create organizationId=org-1 jobId=job-1 durationMs=10 outcome=failure errorCategory=client_error',
+      );
+    });
+
+    it('SECURITY — a sensitive marker present in message/stack/error is never emitted by ANY logger call from this class', async () => {
+      const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+      const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+      const sensitiveError = Object.assign(new Error(`529 ${SENSITIVE_MARKER}`), {
+        status: 529,
+        stack: `Error: 529 ${SENSITIVE_MARKER}\n    at fake-stack (${SENSITIVE_MARKER})`,
+        error: { type: 'overloaded_error', message: SENSITIVE_MARKER },
+        headers: new Map([['request-id', SENSITIVE_MARKER]]),
+      });
+      const { extractor } = buildExtractor(() => {
+        throw sensitiveError;
+      });
+      mockDuration(1_000, 1_010);
+
+      await expect(extractor.extract(Buffer.from('x'), 'f.pdf', CONTEXT)).rejects.toBe(sensitiveError);
+
+      const allCalls = [...logSpy.mock.calls, ...warnSpy.mock.calls, ...errorSpy.mock.calls];
+      for (const call of allCalls) {
+        for (const arg of call) {
+          expect(String(arg)).not.toContain(SENSITIVE_MARKER);
+        }
+      }
+    });
+
+    it('never logs the prompt, extracted text, model response, storage key, or a signed URL — success path', async () => {
+      const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+      const { extractor } = buildExtractor(
+        () => toolUseResponse(CLEAN_TOOL_RESULT),
+        {
+          text: 'CONFIDENTIAL RATE CONFIRMATION DOCUMENT TEXT — Acme Shipper — $2,500.00',
+          pageCount: 1,
+          hasTextLayer: true,
+        },
+      );
+      mockDuration(1_000, 1_010);
+
+      await extractor.extract(Buffer.from('%PDF-1.4'), STORAGE_KEY_LIKE, CONTEXT);
+
+      const [message] = logSpy.mock.calls[0];
+      expect(message).not.toContain('CONFIDENTIAL');
+      expect(message).not.toContain('Acme Shipper');
+      expect(message).not.toContain(STORAGE_KEY_LIKE);
+      expect(message).not.toContain(SIGNED_URL_LIKE);
+      expect(message).not.toContain('test-key');
+      expect(message).not.toContain('record_rate_confirmation_extraction');
+    });
+
+    it('never logs the API key, whether the call succeeds or fails', async () => {
+      const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+      const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      const { extractor: successExtractor } = buildExtractor(() => toolUseResponse(CLEAN_TOOL_RESULT));
+      mockDuration(1_000, 1_010);
+      await successExtractor.extract(Buffer.from('x'), 'f.pdf', CONTEXT);
+      expect(logSpy.mock.calls[0][0]).not.toContain('test-key');
+
+      const { extractor: failExtractor } = buildExtractor(() => {
+        throw Object.assign(new Error('x'), { status: 401 });
+      });
+      mockDuration(2_000, 2_010);
+      await expect(failExtractor.extract(Buffer.from('x'), 'f.pdf', CONTEXT)).rejects.toThrow();
+      expect(warnSpy.mock.calls[0][0]).not.toContain('test-key');
+    });
+  });
+
+  it('existing return value behavior is completely unchanged by the new instrumentation', async () => {
+    jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+    const { extractor } = buildExtractor(() => toolUseResponse(CLEAN_TOOL_RESULT));
+    mockDuration(1_000, 1_010);
+
+    const result = await extractor.extract(Buffer.from('%PDF-1.4'), 'ratecon.pdf', CONTEXT);
+
+    expect(result).toEqual({ multiLoadDetected: false, data: expect.any(Object) });
   });
 });

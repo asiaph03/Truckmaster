@@ -79,6 +79,18 @@ export type RateConfirmationExtractionOutcome =
   { multiLoadDetected: true } | { multiLoadDetected: false; data: ExtractedRateConfirmationData };
 
 /**
+ * Monitoring Phase 4A-14 — external-call correlation only (never job
+ * payload/document data). Optional on the interface, mirroring
+ * MalwareScanCallContext/EmailSendCallContext exactly, so an implementer
+ * with no use for it (LocalRateConfirmationExtractor) isn't forced to
+ * accept it.
+ */
+export interface RateConfirmationExtractionCallContext {
+  organizationId?: string;
+  jobId?: string;
+}
+
+/**
  * Replaceable extraction provider — mirrors IMalwareScanner's exact
  * pattern (Architecture Decision 10 precedent): the interface is the
  * locked deliverable, the concrete provider (LocalRateConfirmationExtractor
@@ -90,8 +102,13 @@ export interface IRateConfirmationExtractor {
   /**
    * @param pdfBytes the raw, already-malware-scanned-CLEAN PDF bytes.
    * @param fileName original file name, for context/logging only (never logged in full — see the service's own logging convention).
+   * @param context optional external-call correlation (Monitoring Phase 4A-14) — never document/job payload data.
    */
-  extract(pdfBytes: Buffer, fileName: string): Promise<RateConfirmationExtractionOutcome>;
+  extract(
+    pdfBytes: Buffer,
+    fileName: string,
+    context?: RateConfirmationExtractionCallContext,
+  ): Promise<RateConfirmationExtractionOutcome>;
 }
 
 export const RATE_CONFIRMATION_EXTRACTOR = 'RATE_CONFIRMATION_EXTRACTOR';

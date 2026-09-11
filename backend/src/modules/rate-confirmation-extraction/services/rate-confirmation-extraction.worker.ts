@@ -64,9 +64,22 @@ export class RateConfirmationExtractionWorker implements OnModuleInit, OnModuleD
             // Monitoring Phase 4A-4 — job.processedOn is BullMQ's own
             // timestamp for when the job became active.
             const durationMs = job.processedOn ? Date.now() - job.processedOn : undefined;
+            // Monitoring Phase 4A-14 — SECURITY: never pass the Error
+            // object, its .stack, .message, or String(error) here. The
+            // active extractor (AnthropicRateConfirmationExtractor) can
+            // throw an APIError whose .message/.stack are built directly
+            // from the Anthropic API's own JSON error response body
+            // (confirmed by reading the installed SDK's source), which can
+            // plausibly reference this document's content. The Anthropic
+            // dependency layer already emits its own safe, categorized
+            // event=anthropic_operation log on failure — this log is
+            // intentionally metadata-only so it isn't duplicated here.
+            // `message` (still passed to jobStore.markFailed below) is
+            // unchanged — that's the existing, approved, access-controlled
+            // user-facing failure reason shown in the New Load form, not a
+            // shared application log.
             this.logger.error(
               `Rate Confirmation extraction ${job.data.extractionId} (org ${job.data.organizationId}) failed after ${maxAttempts} attempts${durationMs !== undefined ? ` (${durationMs}ms)` : ''}.`,
-              error instanceof Error ? error.stack : String(error),
             );
             await this.jobStore.markFailed(job.data.organizationId, job.data.extractionId, message);
             return;
@@ -121,7 +134,10 @@ export class RateConfirmationExtractionWorker implements OnModuleInit, OnModuleD
       organizationId: data.organizationId,
       jobId,
     });
-    const outcome = await this.extractor.extract(pdfBytes, data.extractionId);
+    const outcome = await this.extractor.extract(pdfBytes, data.extractionId, {
+      organizationId: data.organizationId,
+      jobId,
+    });
 
     // Never log the extracted content itself — only that extraction
     // completed and whether it was a normal result or a multi-load

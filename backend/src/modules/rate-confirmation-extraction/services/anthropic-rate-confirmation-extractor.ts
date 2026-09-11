@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import Anthropic from '@anthropic-ai/sdk';
 import { AppConfig } from '../../../config/configuration';
@@ -7,9 +7,33 @@ import {
   ExtractedRateConfirmationData,
   ExtractedStop,
   IRateConfirmationExtractor,
+  RateConfirmationExtractionCallContext,
   RateConfirmationExtractionOutcome,
 } from '../rate-confirmation-extractor.interface';
 import { PdfTextExtractorService } from './pdf-text-extractor.service';
+
+/**
+ * Monitoring Phase 4A-14 — coarse operational category only, never a claim
+ * about the exact underlying failure. Derived exclusively from
+ * APIError.status (a plain HTTP status number) — never from
+ * error.message/.stack/.error/.headers, which the installed SDK builds
+ * directly from the API's own JSON error response body (confirmed by
+ * reading node_modules/@anthropic-ai/sdk/core/error.js — Error.message is
+ * `${status} ${error.message ?? JSON.stringify(error)}`), and therefore
+ * can plausibly reference document content for this content-processing API.
+ */
+type AnthropicErrorCategory = 'client_error' | 'server_error' | 'network_error' | 'unknown';
+
+function categorizeAnthropicError(error: unknown): AnthropicErrorCategory {
+  const status = (error as { status?: unknown } | null)?.status;
+  if (typeof status === 'number') {
+    if (status >= 400 && status < 500) return 'client_error';
+    if (status >= 500) return 'server_error';
+    return 'unknown';
+  }
+  if (error instanceof Error) return 'network_error';
+  return 'unknown';
+}
 
 const VALID_EQUIPMENT_TYPES = ['DRY_VAN', 'REEFER', 'FLATBED'] as const;
 const VALID_STOP_TYPES = ['PICKUP', 'DELIVERY'] as const;
@@ -149,6 +173,8 @@ Rules — follow these exactly:
  */
 @Injectable()
 export class AnthropicRateConfirmationExtractor implements IRateConfirmationExtractor {
+  private readonly logger = new Logger(AnthropicRateConfirmationExtractor.name);
+
   /**
    * Lazily constructed — constructing the SDK client eagerly (in the
    * constructor) would mean a missing key crashes the whole app at Nest
@@ -173,7 +199,11 @@ export class AnthropicRateConfirmationExtractor implements IRateConfirmationExtr
     return this.client;
   }
 
-  async extract(pdfBytes: Buffer, fileName: string): Promise<RateConfirmationExtractionOutcome> {
+  async extract(
+    pdfBytes: Buffer,
+    fileName: string,
+    context?: RateConfirmationExtractionCallContext,
+  ): Promise<RateConfirmationExtractionOutcome> {
     // Fail fast on a missing key before doing any local PDF work.
     const client = this.getClient();
     const { model } = this.config.get('anthropic', { infer: true })!;
@@ -202,20 +232,32 @@ export class AnthropicRateConfirmationExtractor implements IRateConfirmationExtr
           },
         ];
 
-    const response = await client.messages.create({
-      model,
-      max_tokens: 4096,
-      system: SYSTEM_PROMPT,
-      tools: [
-        {
-          name: EXTRACTION_TOOL_NAME,
-          description: 'Record the structured extraction result for this Rate Confirmation.',
-          input_schema: EXTRACTION_TOOL_INPUT_SCHEMA,
-        },
-      ],
-      tool_choice: { type: 'tool', name: EXTRACTION_TOOL_NAME },
-      messages: [{ role: 'user', content: userContent }],
-    });
+    // Monitoring Phase 4A-14 — instruments only the messages.create() call
+    // itself; never logs the prompt, document content, model response, or
+    // any raw Anthropic SDK error field (see categorizeAnthropicError's
+    // doc comment for why error.message/.stack/.error/.headers are unsafe).
+    const startedAt = Date.now();
+    let response: Anthropic.Message;
+    try {
+      response = await client.messages.create({
+        model,
+        max_tokens: 4096,
+        system: SYSTEM_PROMPT,
+        tools: [
+          {
+            name: EXTRACTION_TOOL_NAME,
+            description: 'Record the structured extraction result for this Rate Confirmation.',
+            input_schema: EXTRACTION_TOOL_INPUT_SCHEMA,
+          },
+        ],
+        tool_choice: { type: 'tool', name: EXTRACTION_TOOL_NAME },
+        messages: [{ role: 'user', content: userContent }],
+      });
+    } catch (error) {
+      this.logAnthropicOperation(context, Date.now() - startedAt, 'failure', categorizeAnthropicError(error));
+      throw error;
+    }
+    this.logAnthropicOperation(context, Date.now() - startedAt, 'success');
 
     const toolUseBlock = response.content.find(
       (block): block is Anthropic.ToolUseBlock => block.type === 'tool_use',
@@ -225,6 +267,26 @@ export class AnthropicRateConfirmationExtractor implements IRateConfirmationExtr
     }
 
     return parseExtractionToolInput(toolUseBlock.input);
+  }
+
+  private logAnthropicOperation(
+    context: RateConfirmationExtractionCallContext | undefined,
+    durationMs: number,
+    outcome: 'success' | 'failure',
+    errorCategory?: AnthropicErrorCategory,
+  ): void {
+    const parts = ['event=anthropic_operation', 'dependency=anthropic', 'operation=messages.create'];
+    if (context?.organizationId) parts.push(`organizationId=${context.organizationId}`);
+    if (context?.jobId) parts.push(`jobId=${context.jobId}`);
+    parts.push(`durationMs=${durationMs}`, `outcome=${outcome}`);
+    if (errorCategory !== undefined) parts.push(`errorCategory=${errorCategory}`);
+
+    const message = parts.join(' ');
+    if (outcome === 'success') {
+      this.logger.log(message);
+    } else {
+      this.logger.warn(message);
+    }
   }
 }
 
