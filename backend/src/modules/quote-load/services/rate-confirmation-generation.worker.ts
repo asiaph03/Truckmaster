@@ -44,7 +44,7 @@ export class RateConfirmationGenerationWorker implements OnModuleInit, OnModuleD
       RATE_CONFIRMATION_QUEUE_NAME,
       async (job) => {
         try {
-          await this.processJob(job.data);
+          await this.processJob(job.data, job.id!);
         } catch (error) {
           // Frontend Phase 16 — same retry-then-terminal-status pattern as
           // MalwareScanWorker: only the final configured attempt resolves
@@ -114,7 +114,7 @@ export class RateConfirmationGenerationWorker implements OnModuleInit, OnModuleD
     );
   }
 
-  private async processJob(data: RateConfirmationJobData): Promise<void> {
+  private async processJob(data: RateConfirmationJobData, jobId: string): Promise<void> {
     await this.prisma.withTenantTransaction(data.organizationId, async (tx) => {
       const document = await tx.document.findFirst({
         where: { id: data.documentId, organizationId: data.organizationId },
@@ -141,7 +141,10 @@ export class RateConfirmationGenerationWorker implements OnModuleInit, OnModuleD
         })),
       });
 
-      await this.storage.putObject(document.fileStorageKey, pdfBytes, 'application/pdf');
+      await this.storage.putObject(document.fileStorageKey, pdfBytes, 'application/pdf', {
+        organizationId: data.organizationId,
+        jobId,
+      });
 
       await tx.document.update({
         where: { id: document.id },

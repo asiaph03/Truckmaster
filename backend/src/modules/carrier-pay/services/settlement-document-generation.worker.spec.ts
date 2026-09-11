@@ -87,6 +87,7 @@ describe('SettlementDocumentGenerationWorker', () => {
       DOCUMENT.fileStorageKey,
       pdfBytes,
       'application/pdf',
+      { organizationId: JOB_DATA.organizationId, jobId: undefined },
     );
     expect(tx.document.update).toHaveBeenCalledWith({
       where: { id: DOCUMENT.id },
@@ -103,6 +104,21 @@ describe('SettlementDocumentGenerationWorker', () => {
       }),
     );
     expect(tx.document.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('threads the job id through to StorageService.putObject() as jobId, alongside organizationId (Monitoring Phase 4A-13)', async () => {
+    const pdfBytes = Buffer.from('pdf-bytes');
+    const generateImpl = jest.fn().mockResolvedValue(pdfBytes);
+    const { processor, storage } = buildWorker(generateImpl);
+
+    await processor({ id: 'job-99', data: JOB_DATA, attemptsMade: 0, opts: { attempts: 3 } });
+
+    expect(storage.putObject).toHaveBeenCalledWith(
+      DOCUMENT.fileStorageKey,
+      pdfBytes,
+      'application/pdf',
+      { organizationId: JOB_DATA.organizationId, jobId: 'job-99' },
+    );
   });
 
   it('rethrows on attempt 1 of 3 (a thrown PDF-generator error) and does not mark the document FAILED yet', async () => {

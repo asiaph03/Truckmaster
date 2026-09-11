@@ -37,7 +37,7 @@ export class InvoiceDocumentGenerationWorker implements OnModuleInit, OnModuleDe
       INVOICE_QUEUE_NAME,
       async (job) => {
         try {
-          await this.processJob(job.data);
+          await this.processJob(job.data, job.id!);
         } catch (error) {
           // Frontend Phase 16 — same retry-then-terminal-status pattern as
           // MalwareScanWorker/RateConfirmationGenerationWorker.
@@ -97,7 +97,7 @@ export class InvoiceDocumentGenerationWorker implements OnModuleInit, OnModuleDe
     );
   }
 
-  private async processJob(data: InvoiceJobData): Promise<void> {
+  private async processJob(data: InvoiceJobData, jobId: string): Promise<void> {
     await this.prisma.withTenantTransaction(data.organizationId, async (tx) => {
       const document = await tx.document.findFirst({
         where: { id: data.documentId, organizationId: data.organizationId },
@@ -123,7 +123,10 @@ export class InvoiceDocumentGenerationWorker implements OnModuleInit, OnModuleDe
         })),
       });
 
-      await this.storage.putObject(document.fileStorageKey, pdfBytes, 'application/pdf');
+      await this.storage.putObject(document.fileStorageKey, pdfBytes, 'application/pdf', {
+        organizationId: data.organizationId,
+        jobId,
+      });
 
       await tx.document.update({
         where: { id: document.id },

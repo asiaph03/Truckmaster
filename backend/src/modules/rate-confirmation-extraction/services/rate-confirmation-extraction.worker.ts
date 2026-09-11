@@ -50,7 +50,7 @@ export class RateConfirmationExtractionWorker implements OnModuleInit, OnModuleD
       RATE_CONFIRMATION_EXTRACTION_QUEUE_NAME,
       async (job) => {
         try {
-          await this.processJob(job.data);
+          await this.processJob(job.data, job.id!);
         } catch (error) {
           // Same retry-then-terminal-status pattern as MalwareScanWorker
           // and RateConfirmationGenerationWorker: only the final
@@ -111,10 +111,16 @@ export class RateConfirmationExtractionWorker implements OnModuleInit, OnModuleD
     this.heartbeat.register('rate-confirmation-extraction-worker', () => this.worker!.isRunning());
   }
 
-  private async processJob(data: RateConfirmationExtractionJobData): Promise<void> {
+  private async processJob(
+    data: RateConfirmationExtractionJobData,
+    jobId: string,
+  ): Promise<void> {
     await this.jobStore.markInProgress(data.organizationId, data.extractionId);
 
-    const pdfBytes = await this.storage.getObject(data.storageKey);
+    const pdfBytes = await this.storage.getObject(data.storageKey, {
+      organizationId: data.organizationId,
+      jobId,
+    });
     const outcome = await this.extractor.extract(pdfBytes, data.extractionId);
 
     // Never log the extracted content itself — only that extraction

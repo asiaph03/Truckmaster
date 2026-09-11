@@ -36,7 +36,7 @@ export class SettlementDocumentGenerationWorker implements OnModuleInit, OnModul
       SETTLEMENT_QUEUE_NAME,
       async (job) => {
         try {
-          await this.processJob(job.data);
+          await this.processJob(job.data, job.id!);
         } catch (error) {
           // Frontend Phase 16 — same retry-then-terminal-status pattern as
           // MalwareScanWorker/RateConfirmationGenerationWorker.
@@ -96,7 +96,7 @@ export class SettlementDocumentGenerationWorker implements OnModuleInit, OnModul
     );
   }
 
-  private async processJob(data: SettlementJobData): Promise<void> {
+  private async processJob(data: SettlementJobData, jobId: string): Promise<void> {
     await this.prisma.withTenantTransaction(data.organizationId, async (tx) => {
       const document = await tx.document.findFirst({
         where: { id: data.documentId, organizationId: data.organizationId },
@@ -119,7 +119,10 @@ export class SettlementDocumentGenerationWorker implements OnModuleInit, OnModul
         referenceNumber: carrierPayment.referenceNumber ?? undefined,
       });
 
-      await this.storage.putObject(document.fileStorageKey, pdfBytes, 'application/pdf');
+      await this.storage.putObject(document.fileStorageKey, pdfBytes, 'application/pdf', {
+        organizationId: data.organizationId,
+        jobId,
+      });
 
       await tx.document.update({
         where: { id: document.id },

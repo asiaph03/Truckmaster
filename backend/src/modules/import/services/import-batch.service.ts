@@ -111,7 +111,7 @@ export class ImportBatchService {
       throw new ValidationError(`Cannot confirm upload for a batch in status ${batch.status}.`);
     }
 
-    const bytes = await this.storage.getObject(batch.storageKey);
+    const bytes = await this.storage.getObject(batch.storageKey, { organizationId });
     if (bytes.byteLength > IMPORT_MAX_FILE_SIZE_BYTES) {
       throw new ValidationError(
         `File exceeds the maximum allowed size of ${IMPORT_MAX_FILE_SIZE_BYTES / (1024 * 1024)} MB.`,
@@ -189,7 +189,7 @@ export class ImportBatchService {
       );
     }
 
-    const bytes = await this.storage.getObject(batch.storageKey);
+    const bytes = await this.storage.getObject(batch.storageKey, { organizationId });
     const parsed =
       batch.fileFormat === 'CSV'
         ? this.spreadsheet.parseCsv(bytes)

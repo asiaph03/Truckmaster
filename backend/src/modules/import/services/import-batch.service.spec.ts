@@ -193,7 +193,7 @@ describe('ImportBatchService', () => {
           entityType: 'CUSTOMER',
           status: 'VALIDATED',
         });
-      const { service, tx } = buildService({
+      const { service, tx, storage } = buildService({
         txOverrides: {
           importBatch: { findFirst: findFirstImpl, update: jest.fn().mockResolvedValue({}) },
         },
@@ -216,6 +216,9 @@ describe('ImportBatchService', () => {
         ['ADMIN'],
       );
 
+      // Monitoring Phase 4A-13 — organizationId (never jobId — this is an
+      // HTTP-path call, no job) is threaded into StorageService.getObject().
+      expect(storage.getObject).toHaveBeenCalledWith('k', { organizationId: 'org-1' });
       expect(tx.importBatchRow.createMany).toHaveBeenCalledWith({
         data: expect.arrayContaining([
           expect.objectContaining({ rowNumber: 1, status: 'VALID' }),

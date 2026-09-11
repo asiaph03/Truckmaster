@@ -44,7 +44,7 @@ export class EmailSendWorker implements OnModuleInit, OnModuleDestroy {
       EMAIL_QUEUE_NAME,
       async (job) => {
         try {
-          const attachments = await this.resolveAttachment(job.data);
+          const attachments = await this.resolveAttachment(job.data, job.id!);
           await this.emailSender.send(
             {
               to: job.data.to,
@@ -128,7 +128,10 @@ export class EmailSendWorker implements OnModuleInit, OnModuleDestroy {
    * terminal-failure path as any other send failure; the email is never
    * sent without its required attachment.
    */
-  private async resolveAttachment(data: EmailJobData): Promise<EmailAttachment[] | undefined> {
+  private async resolveAttachment(
+    data: EmailJobData,
+    jobId: string,
+  ): Promise<EmailAttachment[] | undefined> {
     if (!data.attachmentDocumentId) return undefined;
 
     const document = await this.prisma.withTenantTransaction(data.organizationId, (tx) =>
@@ -140,7 +143,10 @@ export class EmailSendWorker implements OnModuleInit, OnModuleDestroy {
       throw new Error(`Email attachment document ${data.attachmentDocumentId} was not found.`);
     }
 
-    const content = await this.storage.getObject(document.fileStorageKey);
+    const content = await this.storage.getObject(document.fileStorageKey, {
+      organizationId: data.organizationId,
+      jobId,
+    });
     return [{ filename: document.fileName, content, contentType: document.mimeType }];
   }
 

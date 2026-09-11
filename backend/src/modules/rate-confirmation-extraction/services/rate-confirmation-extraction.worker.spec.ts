@@ -76,7 +76,10 @@ describe('RateConfirmationExtractionWorker', () => {
     await processor({ data: JOB_DATA, attemptsMade: 0, opts: { attempts: 3 } });
 
     expect(jobStore.markInProgress).toHaveBeenCalledWith(JOB_DATA.organizationId, JOB_DATA.extractionId);
-    expect(storage.getObject).toHaveBeenCalledWith(JOB_DATA.storageKey);
+    expect(storage.getObject).toHaveBeenCalledWith(JOB_DATA.storageKey, {
+      organizationId: JOB_DATA.organizationId,
+      jobId: undefined,
+    });
     expect(extractImpl).toHaveBeenCalledWith(PDF_BYTES, JOB_DATA.extractionId);
     expect(jobStore.markComplete).toHaveBeenCalledWith(
       JOB_DATA.organizationId,
@@ -84,6 +87,20 @@ describe('RateConfirmationExtractionWorker', () => {
       { loadNumber: 'L-1001' },
     );
     expect(jobStore.markFailed).not.toHaveBeenCalled();
+  });
+
+  it('threads the job id through to StorageService.getObject() as jobId, alongside organizationId (Monitoring Phase 4A-13)', async () => {
+    const extractImpl = jest
+      .fn()
+      .mockResolvedValue({ multiLoadDetected: false, data: { loadNumber: 'L-1001' } });
+    const { processor, storage } = buildWorker(extractImpl);
+
+    await processor({ id: 'job-99', data: JOB_DATA, attemptsMade: 0, opts: { attempts: 3 } });
+
+    expect(storage.getObject).toHaveBeenCalledWith(JOB_DATA.storageKey, {
+      organizationId: JOB_DATA.organizationId,
+      jobId: 'job-99',
+    });
   });
 
   it('marks failed with a multi-load message when multiLoadDetected is true, without marking complete', async () => {

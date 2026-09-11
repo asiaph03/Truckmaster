@@ -230,7 +230,10 @@ describe('EmailSendWorker', () => {
       expect(tx.document.findFirst).toHaveBeenCalledWith({
         where: { id: 'doc-1', organizationId: 'org-1' },
       });
-      expect(getObjectImpl).toHaveBeenCalledWith(DOCUMENT.fileStorageKey);
+      expect(getObjectImpl).toHaveBeenCalledWith(DOCUMENT.fileStorageKey, {
+        organizationId: data.organizationId,
+        jobId: undefined,
+      });
       expect(emailSender.send).toHaveBeenCalledWith(
         {
           to: data.to,
@@ -246,6 +249,20 @@ describe('EmailSendWorker', () => {
         },
         { organizationId: data.organizationId, jobId: undefined },
       );
+    });
+
+    it('threads the job id through to StorageService.getObject() as jobId, alongside organizationId (Monitoring Phase 4A-13)', async () => {
+      const sendImpl = jest.fn().mockResolvedValue(undefined);
+      const getObjectImpl = jest.fn().mockResolvedValue(Buffer.from('pdf-bytes'));
+      const { processor } = buildWorker(sendImpl, { document: DOCUMENT, getObjectImpl });
+
+      const data = { ...JOB_DATA, attachmentDocumentId: 'doc-1' };
+      await processor({ id: 'job-99', data, attemptsMade: 0, opts: { attempts: 3 } });
+
+      expect(getObjectImpl).toHaveBeenCalledWith(DOCUMENT.fileStorageKey, {
+        organizationId: data.organizationId,
+        jobId: 'job-99',
+      });
     });
 
     it('throws (and does not send) when the referenced document is not found', async () => {

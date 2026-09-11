@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
   CopyObjectCommand,
@@ -9,6 +9,28 @@ import {
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { AppConfig } from '../../config/configuration';
+
+/**
+ * Monitoring Phase 4A-13 — S3 operation observability. organizationId/jobId
+ * are threaded in by callers that already have them (workers pass their
+ * job's org+id; HTTP-path callers pass organizationId only) — never guessed,
+ * never sourced from AsyncLocalStorage/global context.
+ */
+type S3CallContext = { organizationId?: string; jobId?: string };
+type S3ErrorCategory = 'client_error' | 'server_error' | 'network_error' | 'unknown';
+
+/**
+ * Coarse operational category only — not a claim about the exact underlying
+ * AWS failure. Deliberately never reads error.message/.stack/$metadata; only
+ * the typed, purpose-built $fault field (SmithyException) is inspected.
+ */
+function categorizeS3Error(error: unknown): S3ErrorCategory {
+  const fault = (error as { $fault?: unknown } | null)?.$fault;
+  if (fault === 'client') return 'client_error';
+  if (fault === 'server') return 'server_error';
+  if (error instanceof Error) return 'network_error';
+  return 'unknown';
+}
 
 /**
  * Thin wrapper around the S3-compatible object storage client
@@ -25,6 +47,7 @@ import { AppConfig } from '../../config/configuration';
  */
 @Injectable()
 export class StorageService {
+  private readonly logger = new Logger(StorageService.name);
   private readonly client: S3Client;
   private readonly bucket: string;
 
@@ -67,10 +90,28 @@ export class StorageService {
    * other write path in this class remains the presigned-URL flow
    * (Decision 9); this is additive, not a replacement for it.
    */
-  async putObject(key: string, body: Buffer, contentType: string): Promise<void> {
-    await this.client.send(
-      new PutObjectCommand({ Bucket: this.bucket, Key: key, Body: body, ContentType: contentType }),
-    );
+  async putObject(
+    key: string,
+    body: Buffer,
+    contentType: string,
+    context?: S3CallContext,
+  ): Promise<void> {
+    const startedAt = Date.now();
+    try {
+      await this.client.send(
+        new PutObjectCommand({ Bucket: this.bucket, Key: key, Body: body, ContentType: contentType }),
+      );
+      this.logS3Operation('putObject', context, Date.now() - startedAt, 'success');
+    } catch (error) {
+      this.logS3Operation(
+        'putObject',
+        context,
+        Date.now() - startedAt,
+        'failure',
+        categorizeS3Error(error),
+      );
+      throw error;
+    }
   }
 
   async getUploadUrl(key: string, contentType: string, expiresInSeconds = 300): Promise<string> {
@@ -95,15 +136,29 @@ export class StorageService {
    * would issue a public-ish signed URL before the scan/CLEAN check has
    * even run, contradicting §8.4's "no download before CLEAN" rule.
    */
-  async getObject(key: string): Promise<Buffer> {
-    const response = await this.client.send(
-      new GetObjectCommand({ Bucket: this.bucket, Key: key }),
-    );
-    const chunks: Uint8Array[] = [];
-    for await (const chunk of response.Body as AsyncIterable<Uint8Array>) {
-      chunks.push(chunk);
+  async getObject(key: string, context?: S3CallContext): Promise<Buffer> {
+    const startedAt = Date.now();
+    try {
+      const response = await this.client.send(
+        new GetObjectCommand({ Bucket: this.bucket, Key: key }),
+      );
+      const chunks: Uint8Array[] = [];
+      for await (const chunk of response.Body as AsyncIterable<Uint8Array>) {
+        chunks.push(chunk);
+      }
+      const result = Buffer.concat(chunks);
+      this.logS3Operation('getObject', context, Date.now() - startedAt, 'success');
+      return result;
+    } catch (error) {
+      this.logS3Operation(
+        'getObject',
+        context,
+        Date.now() - startedAt,
+        'failure',
+        categorizeS3Error(error),
+      );
+      throw error;
     }
-    return Buffer.concat(chunks);
   }
 
   /**
@@ -136,5 +191,34 @@ export class StorageService {
    */
   async deleteObject(key: string): Promise<void> {
     await this.client.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: key }));
+  }
+
+  /**
+   * Monitoring Phase 4A-13 — S3 getObject/putObject timing/error
+   * attribution, matching the exact 4A-11/4A-12 pattern (plain key=value
+   * line, Logger.log on success / Logger.warn on failure). Never logs the
+   * bucket, key, a signed URL, file contents, or any AWS error field
+   * (message/stack/$metadata) — only operation, correlation ids, duration,
+   * outcome, and a coarse errorCategory.
+   */
+  private logS3Operation(
+    operation: 'getObject' | 'putObject',
+    context: S3CallContext | undefined,
+    durationMs: number,
+    outcome: 'success' | 'failure',
+    errorCategory?: S3ErrorCategory,
+  ): void {
+    const parts = ['event=s3_operation', 'dependency=s3', `operation=${operation}`];
+    if (context?.organizationId) parts.push(`organizationId=${context.organizationId}`);
+    if (context?.jobId) parts.push(`jobId=${context.jobId}`);
+    parts.push(`durationMs=${durationMs}`, `outcome=${outcome}`);
+    if (errorCategory !== undefined) parts.push(`errorCategory=${errorCategory}`);
+
+    const message = parts.join(' ');
+    if (outcome === 'success') {
+      this.logger.log(message);
+    } else {
+      this.logger.warn(message);
+    }
   }
 }
