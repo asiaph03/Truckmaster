@@ -8,6 +8,7 @@ import { PrismaModule } from './common/prisma/prisma.module';
 import { RedisModule } from './common/redis/redis.module';
 import { WorkerHealthModule } from './common/worker-health/worker-health.module';
 import { QueueRegistryModule } from './common/queue-health/queue-registry.module';
+import { SweepHealthModule } from './common/sweep-health/sweep-health.module';
 import { StorageModule } from './common/storage/storage.module';
 import { AuditModule } from './common/audit/audit.module';
 import { RequestContextMiddleware } from './common/tenant-context/request-context.middleware';
@@ -109,6 +110,7 @@ import { ImportModule } from './modules/import/import.module';
     RedisModule,
     WorkerHealthModule,
     QueueRegistryModule,
+    SweepHealthModule,
     StorageModule,
     AuditModule,
     HealthModule,

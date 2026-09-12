@@ -10,6 +10,7 @@ import { ComplianceExpirationNotificationService } from './compliance-expiration
 import { CheckCallReminderSweepService } from './check-call-reminder-sweep.service';
 import { LoadLatenessSweepService } from './load-lateness-sweep.service';
 import { BUSINESS_TIMEZONE } from '../../../common/timezone/business-timezone';
+import { SweepHealthService } from '../../../common/sweep-health/sweep-health.service';
 import {
   DAILY_SWEEP_CRON,
   JOB_NAMES,
@@ -71,6 +72,7 @@ export class ScheduledJobsWorker implements OnModuleInit, OnModuleDestroy {
     private readonly checkCallReminderSweep: CheckCallReminderSweepService,
     private readonly loadLatenessSweep: LoadLatenessSweepService,
     private readonly heartbeat: WorkerHeartbeatService,
+    private readonly sweepHealth: SweepHealthService,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -105,6 +107,16 @@ export class ScheduledJobsWorker implements OnModuleInit, OnModuleDestroy {
       parts.push(`errorType=${errorTypeOf(error)}`);
       this.logger.error(parts.join(' '));
       this.heartbeat.recordActivity('scheduled-jobs-worker', 'failed');
+      // Monitoring Phase 4A-23D — best-effort; a Redis failure here must
+      // never affect this job's own already-terminal outcome, so this is
+      // deliberately not awaited. SweepHealthService itself never rejects,
+      // but the .catch() here is defense-in-depth against that contract
+      // ever changing (an unhandled rejection would otherwise crash the
+      // process — confirmed by this phase's own test suite). lastSuccessAt
+      // is intentionally left untouched on failure.
+      if (job?.name) {
+        this.sweepHealth.recordFailure(job.name, job.processedOn ?? Date.now()).catch(() => undefined);
+      }
     });
     this.worker.on('active', () => this.heartbeat.recordActivity('scheduled-jobs-worker', 'active'));
     this.worker.on('completed', (job) => {
@@ -116,6 +128,9 @@ export class ScheduledJobsWorker implements OnModuleInit, OnModuleDestroy {
         `Scheduled job ${job.name} (${job.id}) completed${durationMs !== undefined ? ` in ${durationMs}ms` : ''}.`,
       );
       this.heartbeat.recordActivity('scheduled-jobs-worker', 'completed');
+      // Monitoring Phase 4A-23D — best-effort, not awaited; see the
+      // 'failed' handler's own comment above for why the .catch() exists.
+      this.sweepHealth.recordSuccess(job.name, job.processedOn ?? Date.now()).catch(() => undefined);
     });
     this.worker.on('error', (error) => {
       // Monitoring Phase 4A-15 — SECURITY: connection-level handler, no
