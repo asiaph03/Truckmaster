@@ -19,7 +19,16 @@ export const JOB_NAMES = {
   LOAD_LATENESS_SWEEP: 'load-lateness-sweep',
 } as const;
 
-/** Decision 8 — 03:00 UTC, a fixed documented constant (no per-org timezone concept exists in V1). */
+/**
+ * Decision 8 — 03:00 in the application's business timezone (no per-org
+ * timezone concept exists in V1). This pattern alone is timezone-agnostic;
+ * `ScheduledJobsWorker.registerRepeatableJobs()` pairs it with an explicit
+ * `tz: BUSINESS_TIMEZONE` on every daily-cadence job so BullMQ/cron-parser
+ * never falls back to interpreting it in whatever timezone the production
+ * server's OS happens to be configured with (Monitoring Phase 4A-23B —
+ * confirmed by a live-production audit that, without an explicit `tz`,
+ * cron-parser silently defaults to the server's local timezone).
+ */
 export const DAILY_SWEEP_CRON = '0 3 * * *';
 
 /**

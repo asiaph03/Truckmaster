@@ -1,5 +1,7 @@
 import { Logger } from '@nestjs/common';
 import { ScheduledJobsWorker } from './scheduled-jobs.worker';
+import { BUSINESS_TIMEZONE } from '../../../common/timezone/business-timezone';
+import { DAILY_SWEEP_CRON, OPERATIONAL_SWEEP_INTERVAL_MS } from './background-jobs.constants';
 
 type Processor = (jobName: string) => Promise<void>;
 
@@ -405,5 +407,83 @@ describe('ScheduledJobsWorker — Monitoring Phase 4A-15 (generic BullMQ failure
     );
 
     expect(errorSpy.mock.calls[0]).toHaveLength(1);
+  });
+});
+
+describe('ScheduledJobsWorker — Monitoring Phase 4A-23B (daily sweep timezone pinning)', () => {
+  function buildWorker() {
+    capturedProcessor = undefined;
+    const redis = { duplicate: jest.fn().mockReturnValue({ on: jest.fn(), quit: jest.fn() }) };
+    const queue = { add: jest.fn().mockResolvedValue({}) };
+    const sweep = () => ({ run: jest.fn().mockResolvedValue(undefined) });
+    const heartbeat = {
+      register: jest.fn(),
+      unregister: jest.fn(),
+      recordActivity: jest.fn(),
+      recordError: jest.fn(),
+    };
+
+    const worker = new ScheduledJobsWorker(
+      redis as never,
+      queue as never,
+      sweep() as never,
+      sweep() as never,
+      sweep() as never,
+      sweep() as never,
+      sweep() as never,
+      sweep() as never,
+      heartbeat as never,
+    );
+    return { worker, queue };
+  }
+
+  const DAILY_JOB_NAMES = [
+    'invitation-expiration-sweep',
+    'quote-expiration-sweep',
+    'carrier-compliance-expiration-sweep',
+    'compliance-expiration-notifications',
+  ];
+  const OPERATIONAL_JOB_NAMES = ['check-call-reminder-sweep', 'load-lateness-sweep'];
+
+  it.each(DAILY_JOB_NAMES)(
+    'pins the daily sweep "%s" to pattern=DAILY_SWEEP_CRON with an explicit tz=BUSINESS_TIMEZONE',
+    async (jobName) => {
+      const { worker, queue } = buildWorker();
+
+      await worker.onModuleInit();
+
+      const call = queue.add.mock.calls.find((c) => c[0] === jobName);
+      expect(call).toBeDefined();
+      const opts = call![2];
+      expect(opts.repeat).toEqual({ pattern: DAILY_SWEEP_CRON, tz: BUSINESS_TIMEZONE });
+    },
+  );
+
+  it.each(OPERATIONAL_JOB_NAMES)(
+    'leaves the 15-minute operational sweep "%s" on a plain every-interval with no cron tz option',
+    async (jobName) => {
+      const { worker, queue } = buildWorker();
+
+      await worker.onModuleInit();
+
+      const call = queue.add.mock.calls.find((c) => c[0] === jobName);
+      expect(call).toBeDefined();
+      const opts = call![2];
+      expect(opts.repeat).toEqual({ every: OPERATIONAL_SWEEP_INTERVAL_MS });
+      expect(opts.repeat.tz).toBeUndefined();
+      expect(opts.repeat.pattern).toBeUndefined();
+    },
+  );
+
+  it('never lets the daily sweeps fall back to server-local-time interpretation (regression guard: tz must always be present)', async () => {
+    const { worker, queue } = buildWorker();
+
+    await worker.onModuleInit();
+
+    for (const jobName of DAILY_JOB_NAMES) {
+      const call = queue.add.mock.calls.find((c) => c[0] === jobName)!;
+      expect(call[2].repeat.tz).toBe('America/New_York');
+      expect(call[2].repeat.tz).not.toBeUndefined();
+    }
   });
 });

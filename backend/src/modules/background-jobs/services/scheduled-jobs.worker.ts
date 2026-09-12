@@ -9,6 +9,7 @@ import { CarrierComplianceExpirationSweepService } from './carrier-compliance-ex
 import { ComplianceExpirationNotificationService } from './compliance-expiration-notification.service';
 import { CheckCallReminderSweepService } from './check-call-reminder-sweep.service';
 import { LoadLatenessSweepService } from './load-lateness-sweep.service';
+import { BUSINESS_TIMEZONE } from '../../../common/timezone/business-timezone';
 import {
   DAILY_SWEEP_CRON,
   JOB_NAMES,
@@ -143,7 +144,7 @@ export class ScheduledJobsWorker implements OnModuleInit, OnModuleDestroy {
       JOB_NAMES.INVITATION_EXPIRATION_SWEEP,
       {},
       {
-        repeat: { pattern: DAILY_SWEEP_CRON },
+        repeat: { pattern: DAILY_SWEEP_CRON, tz: BUSINESS_TIMEZONE },
         jobId: JOB_NAMES.INVITATION_EXPIRATION_SWEEP,
         ...SCHEDULED_JOBS_RETENTION,
       },
@@ -152,7 +153,7 @@ export class ScheduledJobsWorker implements OnModuleInit, OnModuleDestroy {
       JOB_NAMES.QUOTE_EXPIRATION_SWEEP,
       {},
       {
-        repeat: { pattern: DAILY_SWEEP_CRON },
+        repeat: { pattern: DAILY_SWEEP_CRON, tz: BUSINESS_TIMEZONE },
         jobId: JOB_NAMES.QUOTE_EXPIRATION_SWEEP,
         ...SCHEDULED_JOBS_RETENTION,
       },
@@ -161,7 +162,7 @@ export class ScheduledJobsWorker implements OnModuleInit, OnModuleDestroy {
       JOB_NAMES.CARRIER_COMPLIANCE_EXPIRATION_SWEEP,
       {},
       {
-        repeat: { pattern: DAILY_SWEEP_CRON },
+        repeat: { pattern: DAILY_SWEEP_CRON, tz: BUSINESS_TIMEZONE },
         jobId: JOB_NAMES.CARRIER_COMPLIANCE_EXPIRATION_SWEEP,
         ...SCHEDULED_JOBS_RETENTION,
       },
@@ -170,7 +171,7 @@ export class ScheduledJobsWorker implements OnModuleInit, OnModuleDestroy {
       JOB_NAMES.COMPLIANCE_EXPIRATION_NOTIFICATIONS,
       {},
       {
-        repeat: { pattern: DAILY_SWEEP_CRON },
+        repeat: { pattern: DAILY_SWEEP_CRON, tz: BUSINESS_TIMEZONE },
         jobId: JOB_NAMES.COMPLIANCE_EXPIRATION_NOTIFICATIONS,
         ...SCHEDULED_JOBS_RETENTION,
       },
