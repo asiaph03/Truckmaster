@@ -15,6 +15,17 @@ export interface QueueCountsSnapshot {
   delayed: number;
   failed: number;
   completed: number;
+  /** Age in ms of the oldest currently waiting job (Job.timestamp), or null if none is waiting. */
+  oldestWaitingAgeMs: number | null;
+  /** Age in ms of the oldest currently active job (Job.processedOn), or null if none is active or it has no processedOn yet. */
+  oldestActiveAgeMs: number | null;
+}
+
+/** Never negative — a clock skew or in-flight timestamp update could otherwise produce a negative age. */
+function ageMs(timestamp: number | null | undefined, now: number): number | null {
+  if (timestamp === null || timestamp === undefined) return null;
+  const age = now - timestamp;
+  return age < 0 ? 0 : age;
 }
 
 /**
@@ -41,12 +52,28 @@ export class QueueRegistryService {
     this.queues.set(name, queue);
   }
 
-  /** Read-only — getJobCounts() never mutates queue state. Queried in parallel; a name collision (there should never be one) would simply overwrite the earlier registration. */
+  /**
+   * Read-only — getJobCounts()/getWaiting()/getActive() never mutate queue
+   * state. Queried in parallel; a name collision (there should never be
+   * one) would simply overwrite the earlier registration.
+   *
+   * Monitoring Phase 4A-25 — getWaiting(0, 0)/getActive(0, 0) each fetch
+   * exactly one job (BullMQ's own bounded LRANGE per job type — confirmed
+   * by reading the installed bullmq source; both hardcode ascending order
+   * internally, so index 0 is always the oldest job), never the full
+   * waiting/active list. Only Job.timestamp/Job.processedOn (plain
+   * numbers) are read — never job.data/payload/organizationId.
+   */
   async getAllQueueCounts(): Promise<QueueCountsSnapshot[]> {
     const entries = [...this.queues.entries()];
+    const now = Date.now();
     const snapshots = await Promise.all(
       entries.map(async ([name, queue]) => {
-        const counts = await queue.getJobCounts('waiting', 'active', 'delayed', 'failed', 'completed');
+        const [counts, oldestWaiting, oldestActive] = await Promise.all([
+          queue.getJobCounts('waiting', 'active', 'delayed', 'failed', 'completed'),
+          queue.getWaiting(0, 0),
+          queue.getActive(0, 0),
+        ]);
         return {
           name,
           waiting: counts.waiting ?? 0,
@@ -54,6 +81,8 @@ export class QueueRegistryService {
           delayed: counts.delayed ?? 0,
           failed: counts.failed ?? 0,
           completed: counts.completed ?? 0,
+          oldestWaitingAgeMs: ageMs(oldestWaiting[0]?.timestamp, now),
+          oldestActiveAgeMs: ageMs(oldestActive[0]?.processedOn, now),
         };
       }),
     );

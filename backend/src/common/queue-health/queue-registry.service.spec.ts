@@ -8,9 +8,15 @@ import { SETTLEMENT_JOB_OPTIONS } from '../../modules/carrier-pay/services/settl
 import { IMPORT_COMMIT_JOB_OPTIONS } from '../../modules/import/import.constants';
 import { SCHEDULED_JOBS_RETENTION } from '../../modules/background-jobs/services/scheduled-jobs.worker';
 
-function fakeQueue(counts: Partial<Record<'waiting' | 'active' | 'delayed' | 'failed' | 'completed', number>>) {
+function fakeQueue(
+  counts: Partial<Record<'waiting' | 'active' | 'delayed' | 'failed' | 'completed', number>>,
+  overrides: Partial<Record<'getWaiting' | 'getActive', jest.Mock>> = {},
+) {
   return {
     getJobCounts: jest.fn().mockResolvedValue(counts),
+    getWaiting: jest.fn().mockResolvedValue([]),
+    getActive: jest.fn().mockResolvedValue([]),
+    ...overrides,
   };
 }
 
@@ -28,7 +34,16 @@ describe('QueueRegistryService', () => {
     const result = await service.getAllQueueCounts();
 
     expect(result).toEqual([
-      { name: 'malware-scan', waiting: 1, active: 2, delayed: 3, failed: 4, completed: 5 },
+      {
+        name: 'malware-scan',
+        waiting: 1,
+        active: 2,
+        delayed: 3,
+        failed: 4,
+        completed: 5,
+        oldestWaitingAgeMs: null,
+        oldestActiveAgeMs: null,
+      },
     ]);
   });
 
@@ -76,11 +91,21 @@ describe('QueueRegistryService', () => {
 
     const [result] = await service.getAllQueueCounts();
 
-    expect(result).toEqual({ name: 'email-send', waiting: 2, active: 0, delayed: 0, failed: 0, completed: 0 });
+    expect(result).toEqual({
+      name: 'email-send',
+      waiting: 2,
+      active: 0,
+      delayed: 0,
+      failed: 0,
+      completed: 0,
+      oldestWaitingAgeMs: null,
+      oldestActiveAgeMs: null,
+    });
   });
 
   it('a Redis/getJobCounts failure on one queue rejects the whole call (surfaced to the controller for its 503 handling)', async () => {
-    const failingQueue = { getJobCounts: jest.fn().mockRejectedValue(new Error('Redis unreachable')) };
+    const failingQueue = fakeQueue({});
+    failingQueue.getJobCounts = jest.fn().mockRejectedValue(new Error('Redis unreachable'));
     service.register('email-send', failingQueue as never);
 
     await expect(service.getAllQueueCounts()).rejects.toThrow('Redis unreachable');
@@ -101,12 +126,166 @@ describe('QueueRegistryService', () => {
     expect(result).toEqual([]);
   });
 
-  it('security/PII — a snapshot never contains anything beyond name and the 5 count fields', async () => {
+  it('security/PII — a snapshot never contains anything beyond name, the 5 count fields, and the 2 age fields', async () => {
     service.register('email-send', fakeQueue({ waiting: 1, active: 1, delayed: 1, failed: 1, completed: 1 }) as never);
 
     const [result] = await service.getAllQueueCounts();
 
-    expect(Object.keys(result).sort()).toEqual(['active', 'completed', 'delayed', 'failed', 'name', 'waiting']);
+    expect(Object.keys(result).sort()).toEqual(
+      [
+        'active',
+        'completed',
+        'delayed',
+        'failed',
+        'name',
+        'oldestActiveAgeMs',
+        'oldestWaitingAgeMs',
+        'waiting',
+      ].sort(),
+    );
+  });
+});
+
+describe('QueueRegistryService — Monitoring Phase 4A-25 (oldest waiting/active job age)', () => {
+  let service: QueueRegistryService;
+
+  beforeEach(() => {
+    service = new QueueRegistryService();
+  });
+
+  it('queue with no waiting/active jobs reports both ages as null', async () => {
+    service.register('email-send', fakeQueue({ waiting: 0, active: 0 }) as never);
+
+    const [result] = await service.getAllQueueCounts();
+
+    expect(result.oldestWaitingAgeMs).toBeNull();
+    expect(result.oldestActiveAgeMs).toBeNull();
+  });
+
+  it('a waiting job with a known timestamp produces the correct age', async () => {
+    const now = 1_000_000;
+    jest.spyOn(Date, 'now').mockReturnValue(now);
+    const queue = fakeQueue(
+      { waiting: 1 },
+      { getWaiting: jest.fn().mockResolvedValue([{ timestamp: now - 5_000 }]) },
+    );
+    service.register('email-send', queue as never);
+
+    const [result] = await service.getAllQueueCounts();
+
+    expect(result.oldestWaitingAgeMs).toBe(5_000);
+    jest.restoreAllMocks();
+  });
+
+  it('an active job with a known processedOn produces the correct age', async () => {
+    const now = 2_000_000;
+    jest.spyOn(Date, 'now').mockReturnValue(now);
+    const queue = fakeQueue(
+      { active: 1 },
+      { getActive: jest.fn().mockResolvedValue([{ processedOn: now - 8_000 }]) },
+    );
+    service.register('email-send', queue as never);
+
+    const [result] = await service.getAllQueueCounts();
+
+    expect(result.oldestActiveAgeMs).toBe(8_000);
+    jest.restoreAllMocks();
+  });
+
+  it('an active job with processedOn = null reports oldestActiveAgeMs as null', async () => {
+    const queue = fakeQueue({ active: 1 }, { getActive: jest.fn().mockResolvedValue([{ processedOn: null }]) });
+    service.register('email-send', queue as never);
+
+    const [result] = await service.getAllQueueCounts();
+
+    expect(result.oldestActiveAgeMs).toBeNull();
+  });
+
+  it('a future timestamp (clock skew) clamps age to 0 rather than a negative number', async () => {
+    const now = 1_000_000;
+    jest.spyOn(Date, 'now').mockReturnValue(now);
+    const queue = fakeQueue(
+      { waiting: 1 },
+      { getWaiting: jest.fn().mockResolvedValue([{ timestamp: now + 10_000 }]) },
+    );
+    service.register('email-send', queue as never);
+
+    const [result] = await service.getAllQueueCounts();
+
+    expect(result.oldestWaitingAgeMs).toBe(0);
+    jest.restoreAllMocks();
+  });
+
+  it('calls getWaiting(0, 0) and getActive(0, 0) — a single bounded job, never a broad scan', async () => {
+    const queue = fakeQueue({ waiting: 5, active: 3 });
+    service.register('email-send', queue as never);
+
+    await service.getAllQueueCounts();
+
+    expect(queue.getWaiting).toHaveBeenCalledWith(0, 0);
+    expect(queue.getActive).toHaveBeenCalledWith(0, 0);
+    expect(queue.getWaiting).toHaveBeenCalledTimes(1);
+    expect(queue.getActive).toHaveBeenCalledTimes(1);
+  });
+
+  it('when getWaiting/getActive return multiple jobs (defensive — BullMQ itself guarantees index 0 is oldest), only the first element is used', async () => {
+    const now = 1_000_000;
+    jest.spyOn(Date, 'now').mockReturnValue(now);
+    const queue = fakeQueue(
+      { waiting: 2 },
+      {
+        getWaiting: jest.fn().mockResolvedValue([{ timestamp: now - 20_000 }, { timestamp: now - 1_000 }]),
+      },
+    );
+    service.register('email-send', queue as never);
+
+    const [result] = await service.getAllQueueCounts();
+
+    expect(result.oldestWaitingAgeMs).toBe(20_000);
+    jest.restoreAllMocks();
+  });
+
+  it('existing count fields remain unchanged alongside the new age fields', async () => {
+    const queue = fakeQueue({ waiting: 3, active: 2, delayed: 1, failed: 0, completed: 10 });
+    service.register('email-send', queue as never);
+
+    const [result] = await service.getAllQueueCounts();
+
+    expect(result.waiting).toBe(3);
+    expect(result.active).toBe(2);
+    expect(result.delayed).toBe(1);
+    expect(result.failed).toBe(0);
+    expect(result.completed).toBe(10);
+  });
+
+  it('a getWaiting/getActive failure rejects the whole call, same as an existing getJobCounts failure', async () => {
+    const failingQueue = fakeQueue({}, { getWaiting: jest.fn().mockRejectedValue(new Error('Redis unreachable')) });
+    service.register('email-send', failingQueue as never);
+
+    await expect(service.getAllQueueCounts()).rejects.toThrow('Redis unreachable');
+  });
+
+  it('security/PII — no job data/payload is ever read, only .timestamp/.processedOn numeric fields', async () => {
+    const now = 1_000_000;
+    jest.spyOn(Date, 'now').mockReturnValue(now);
+    const queue = fakeQueue(
+      { waiting: 1, active: 1 },
+      {
+        getWaiting: jest.fn().mockResolvedValue([
+          { timestamp: now - 1_000, data: { organizationId: 'org-secret', customerEmail: 'leak@example.com' } },
+        ]),
+        getActive: jest.fn().mockResolvedValue([
+          { processedOn: now - 2_000, data: { organizationId: 'org-secret' } },
+        ]),
+      },
+    );
+    service.register('email-send', queue as never);
+
+    const [result] = await service.getAllQueueCounts();
+
+    expect(JSON.stringify(result)).not.toContain('org-secret');
+    expect(JSON.stringify(result)).not.toContain('leak@example.com');
+    jest.restoreAllMocks();
   });
 });
 

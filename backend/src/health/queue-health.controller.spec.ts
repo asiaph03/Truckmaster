@@ -69,9 +69,18 @@ describe('QueueHealthController', () => {
     expect(body).toHaveProperty('queues');
   });
 
-  it('security/PII — each queue entry contains only name and the 5 count fields, never job ids, organizationId, or payload data', async () => {
+  it('security/PII — each queue entry contains only name, the 5 count fields, and the 2 age fields, never job ids, organizationId, or payload data', async () => {
     const snapshot = [
-      { name: 'malware-scan', waiting: 0, active: 0, delayed: 0, failed: 0, completed: 1 },
+      {
+        name: 'malware-scan',
+        waiting: 0,
+        active: 0,
+        delayed: 0,
+        failed: 0,
+        completed: 1,
+        oldestWaitingAgeMs: null,
+        oldestActiveAgeMs: null,
+      },
     ];
     const queueRegistry = { getAllQueueCounts: jest.fn().mockResolvedValue(snapshot) } as unknown as QueueRegistryService;
     const controller = new QueueHealthController(queueRegistry);
@@ -80,7 +89,9 @@ describe('QueueHealthController', () => {
     const body = (await controller.list(res)) as { queues: Record<string, unknown>[] };
 
     for (const queue of body.queues) {
-      expect(Object.keys(queue).sort()).toEqual(['active', 'completed', 'delayed', 'failed', 'name', 'waiting']);
+      expect(Object.keys(queue).sort()).toEqual(
+        ['active', 'completed', 'delayed', 'failed', 'name', 'oldestActiveAgeMs', 'oldestWaitingAgeMs', 'waiting'].sort(),
+      );
     }
   });
 
