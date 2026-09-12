@@ -6,6 +6,19 @@ import { AppConfig } from '../../config/configuration';
 export const REDIS_CLIENT = 'REDIS_CLIENT';
 
 /**
+ * Monitoring Phase 4A-21 — a class-name-only error identifier, never
+ * error.message/.stack. Safe by construction: a JS/TS class name is
+ * developer-defined source text, never runtime/user-controlled content.
+ * Applies the same standard already used for Anthropic (4A-14), the BullMQ
+ * workers (4A-15), S3 deleteObject (4A-16), the scheduled sweeps (4A-17),
+ * and the HTTP exception filter (4A-19) to this codebase's last remaining
+ * raw-message/stack logging site.
+ */
+function errorTypeOf(error: unknown): string {
+  return error instanceof Error ? error.constructor.name : typeof error;
+}
+
+/**
  * Monitoring Phase 4A-1 — every ioredis client (the primary connection and
  * every `.duplicate()`) is its own EventEmitter; an `'error'` event with no
  * listener is a Node fatal error, so a transient Redis blip could crash the
@@ -17,10 +30,17 @@ export const REDIS_CLIENT = 'REDIS_CLIENT';
  * client's own construction share one implementation, and so this logic
  * is unit-testable against a plain EventEmitter-like stub without needing
  * a real ioredis connection.
+ *
+ * Monitoring Phase 4A-21 — SECURITY: never log err.message/.stack. An
+ * ioredis connection-level error is usually a generic Node/Redis-protocol
+ * string (e.g. ECONNREFUSED), but nothing guarantees that across every
+ * ioredis/Redis-server error shape, so this follows the same
+ * metadata-only convention already applied to every other external
+ * dependency in this codebase.
  */
 export function attachRedisErrorHandler(client: Redis, label: string): void {
   client.on('error', (err) => {
-    new Logger('Redis').error(`Redis connection error (${label}): ${err.message}`, err.stack);
+    new Logger('Redis').error(`event=redis_connection_error connection=${label} errorType=${errorTypeOf(err)}`);
   });
 }
 
