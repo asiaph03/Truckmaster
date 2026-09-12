@@ -11,6 +11,19 @@ import { RequestContextStore } from '../tenant-context/request-context';
 import { AppError } from '../errors/app-error';
 
 /**
+ * Monitoring Phase 4A-19 — a class-name-only error identifier, never
+ * error.message/.stack. Safe by construction: a JS/TS class name is
+ * developer-defined source text, never runtime/user-controlled content.
+ * This filter is the HTTP-wide catch-all — an uncaught Prisma/S3/
+ * Anthropic/Postmark error reaching here from any endpoint could carry
+ * provider-response-derived content in .message/.stack (established
+ * across Phases 4A-14 through 4A-17), so neither is ever logged here.
+ */
+function errorTypeOf(error: unknown): string {
+  return error instanceof Error ? error.constructor.name : typeof error;
+}
+
+/**
  * Maps every thrown error to the consistent JSON error shape defined in
  * TECHNICAL_ARCHITECTURE.md §2.7:
  *   { "error": { "code": "...", "message": "...", "details": {...} } }
@@ -76,10 +89,22 @@ export class AppExceptionFilter implements ExceptionFilter {
       // HttpAccessLoggingMiddleware's own org=/user= convention, so a 5xx
       // is triageable from this single log line instead of needing to
       // cross-reference the separate HttpAccess line via requestId.
-      const parts = [`[${requestId ?? 'no-request-id'}]`, request.method, request.url, '—', message];
+      //
+      // Monitoring Phase 4A-19 — SECURITY: never log request.url (includes
+      // the query string — confirmed exploitable via existing free-text
+      // `search`/`q` query parameters) or exception.stack (this filter is
+      // the HTTP-wide catch-all; an uncaught Prisma/S3/Anthropic/Postmark
+      // error can reach here with provider-response-derived .stack
+      // content, per the same finding already remediated for the BullMQ
+      // workers, scheduled sweeps, and S3 deleteObject in Phases
+      // 4A-15/4A-16/4A-17). Route uses the same safe pattern already
+      // established by HttpAccessLoggingMiddleware.
+      const route = request.route?.path ?? request.path;
+      const parts = [`[${requestId ?? 'no-request-id'}]`, request.method, route, '—', message];
       if (organizationId) parts.push(`org=${organizationId}`);
       if (userId) parts.push(`user=${userId}`);
-      this.logger.error(parts.join(' '), exception instanceof Error ? exception.stack : undefined);
+      parts.push(`errorType=${errorTypeOf(exception)}`);
+      this.logger.error(parts.join(' '));
     }
 
     response.status(status).json({
