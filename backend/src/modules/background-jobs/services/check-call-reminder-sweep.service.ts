@@ -39,6 +39,15 @@ function buildDetailLine(driverName: string | null, timeText: string): string {
 }
 
 /**
+ * Monitoring Phase 4A-17 — a class-name-only error identifier, never
+ * error.message/.stack. Safe by construction: a JS/TS class name is
+ * developer-defined source text, never runtime/user-controlled content.
+ */
+function errorTypeOf(error: unknown): string {
+  return error instanceof Error ? error.constructor.name : typeof error;
+}
+
+/**
  * TECHNICAL_ARCHITECTURE.md §10.1 (B1 resolved) — fixed, non-configurable
  * OVERDUE THRESHOLD read from `CHECK_CALL_REMINDER_HOURS` (Decision 3,
  * confirmed at 4 hours). This threshold is unchanged by the Operational
@@ -110,10 +119,7 @@ export class CheckCallReminderSweepService {
         loads = await this.loadInTransitLoads(org.id);
       } catch (error) {
         this.logger.error(
-          `Check-call reminder sweep: failed to load in-transit loads for org ${org.id}: ${
-            error instanceof Error ? error.message : String(error)
-          }`,
-          error instanceof Error ? error.stack : undefined,
+          `Check-call reminder sweep: failed to load in-transit loads for org ${org.id}. errorType=${errorTypeOf(error)}`,
         );
         continue;
       }
@@ -154,10 +160,7 @@ export class CheckCallReminderSweepService {
         } catch (error) {
           recordsFailed++;
           this.logger.error(
-            `Check-call reminder sweep: failed for org ${org.id}, load ${load.id}: ${
-              error instanceof Error ? error.message : String(error)
-            }`,
-            error instanceof Error ? error.stack : undefined,
+            `Check-call reminder sweep: failed for org ${org.id}, load ${load.id}. errorType=${errorTypeOf(error)}`,
           );
         }
       }

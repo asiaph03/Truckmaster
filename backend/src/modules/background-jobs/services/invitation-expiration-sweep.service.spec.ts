@@ -295,3 +295,122 @@ describe('InvitationExpirationSweepService — Monitoring Phase 4A-10 (run summa
     logSpy.mockRestore();
   });
 });
+
+describe('InvitationExpirationSweepService — Monitoring Phase 4A-17 (sanitized error logging)', () => {
+  const SENSITIVE_MARKER = 'SENSITIVE_PRISMA_ERROR_CONTENT';
+
+  function sensitivePrismaError(): Error {
+    return Object.assign(new Error(SENSITIVE_MARKER), {
+      stack: `Error: ${SENSITIVE_MARKER}\n    at fake-stack (${SENSITIVE_MARKER})`,
+      meta: { target: [SENSITIVE_MARKER] },
+    });
+  }
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it('the loadStaleMemberships (candidate-query) failure log contains only org correlation and errorType — no raw error content', async () => {
+    const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const prisma = {
+      organization: { findMany: jest.fn().mockResolvedValue([{ id: ORG_ID }]) },
+      withTenantTransaction: jest.fn().mockRejectedValue(sensitivePrismaError()),
+    };
+    const audit = { record: jest.fn().mockResolvedValue(undefined) };
+    const notifications = { createForUserAndRoles: jest.fn().mockResolvedValue(undefined) };
+    const service = new InvitationExpirationSweepService(prisma as never, audit as never, notifications as never);
+
+    await expect(service.run()).resolves.toBeUndefined();
+
+    expect(errorSpy).toHaveBeenCalledWith(
+      `Invitation expiration sweep: failed to load candidates for org ${ORG_ID}. errorType=Error`,
+    );
+  });
+
+  it('SECURITY — the loadStaleMemberships failure log never contains a sensitive marker present in error.message/.stack/.meta', async () => {
+    const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+    const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const prisma = {
+      organization: { findMany: jest.fn().mockResolvedValue([{ id: ORG_ID }]) },
+      withTenantTransaction: jest.fn().mockRejectedValue(sensitivePrismaError()),
+    };
+    const audit = { record: jest.fn().mockResolvedValue(undefined) };
+    const notifications = { createForUserAndRoles: jest.fn().mockResolvedValue(undefined) };
+    const service = new InvitationExpirationSweepService(prisma as never, audit as never, notifications as never);
+
+    await service.run();
+
+    const allCalls = [...logSpy.mock.calls, ...warnSpy.mock.calls, ...errorSpy.mock.calls];
+    for (const call of allCalls) {
+      for (const arg of call) {
+        expect(String(arg)).not.toContain(SENSITIVE_MARKER);
+      }
+    }
+  });
+
+  it('the per-membership failure log contains only org+entity correlation and errorType — no raw error content', async () => {
+    const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const tx = {
+      organizationMembership: {
+        findMany: jest
+          .fn()
+          .mockResolvedValue([
+            { id: 'membership-fail', status: 'INVITED', invitationExpiresAt: new Date('2020-01-01') },
+          ]),
+        update: jest.fn().mockRejectedValue(sensitivePrismaError()),
+      },
+      notification: { findFirst: jest.fn().mockResolvedValue(null) },
+    };
+    const prisma = {
+      organization: { findMany: jest.fn().mockResolvedValue([{ id: ORG_ID }]) },
+      withTenantTransaction: jest
+        .fn()
+        .mockImplementation((_orgId: string, fn: (tx: unknown) => unknown) => fn(tx)),
+    };
+    const audit = { record: jest.fn().mockResolvedValue(undefined) };
+    const notifications = { createForUserAndRoles: jest.fn().mockResolvedValue(undefined) };
+    const service = new InvitationExpirationSweepService(prisma as never, audit as never, notifications as never);
+
+    await service.run();
+
+    expect(errorSpy).toHaveBeenCalledWith(
+      `Invitation expiration sweep: failed for org ${ORG_ID}, membership membership-fail. errorType=Error`,
+    );
+  });
+
+  it('SECURITY — the per-membership failure log never contains a sensitive marker present in error.message/.stack/.meta', async () => {
+    const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+    const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const tx = {
+      organizationMembership: {
+        findMany: jest
+          .fn()
+          .mockResolvedValue([
+            { id: 'membership-fail', status: 'INVITED', invitationExpiresAt: new Date('2020-01-01') },
+          ]),
+        update: jest.fn().mockRejectedValue(sensitivePrismaError()),
+      },
+      notification: { findFirst: jest.fn().mockResolvedValue(null) },
+    };
+    const prisma = {
+      organization: { findMany: jest.fn().mockResolvedValue([{ id: ORG_ID }]) },
+      withTenantTransaction: jest
+        .fn()
+        .mockImplementation((_orgId: string, fn: (tx: unknown) => unknown) => fn(tx)),
+    };
+    const audit = { record: jest.fn().mockResolvedValue(undefined) };
+    const notifications = { createForUserAndRoles: jest.fn().mockResolvedValue(undefined) };
+    const service = new InvitationExpirationSweepService(prisma as never, audit as never, notifications as never);
+
+    await service.run();
+
+    const allCalls = [...logSpy.mock.calls, ...warnSpy.mock.calls, ...errorSpy.mock.calls];
+    for (const call of allCalls) {
+      for (const arg of call) {
+        expect(String(arg)).not.toContain(SENSITIVE_MARKER);
+      }
+    }
+  });
+});

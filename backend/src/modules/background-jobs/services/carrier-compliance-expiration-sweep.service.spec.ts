@@ -305,3 +305,207 @@ describe('CarrierComplianceExpirationSweepService — Monitoring Phase 4A-10 (ru
     logSpy.mockRestore();
   });
 });
+
+describe('CarrierComplianceExpirationSweepService — Monitoring Phase 4A-17 (sanitized error logging)', () => {
+  const SENSITIVE_MARKER = 'SENSITIVE_PRISMA_ERROR_CONTENT';
+
+  function sensitivePrismaError(): Error {
+    return Object.assign(new Error(SENSITIVE_MARKER), {
+      stack: `Error: ${SENSITIVE_MARKER}\n    at fake-stack (${SENSITIVE_MARKER})`,
+      meta: { target: [SENSITIVE_MARKER] },
+    });
+  }
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it('the loadStaleDocs (candidate-query) failure log contains only org correlation and errorType — no raw error content', async () => {
+    const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const prisma = {
+      organization: { findMany: jest.fn().mockResolvedValue([{ id: ORG_ID }]) },
+      withTenantTransaction: jest.fn().mockRejectedValue(sensitivePrismaError()),
+    };
+    const audit = { record: jest.fn().mockResolvedValue(undefined) };
+    const carrierEligibility = { recalculate: jest.fn().mockResolvedValue({ eligible: true, reasons: [] }) };
+    const service = new CarrierComplianceExpirationSweepService(prisma as never, audit as never, carrierEligibility as never);
+
+    await expect(service.run()).resolves.toBeUndefined();
+
+    expect(errorSpy).toHaveBeenCalledWith(
+      `Carrier compliance expiration sweep: failed to load stale documents for org ${ORG_ID}. errorType=Error`,
+    );
+  });
+
+  it('SECURITY — the loadStaleDocs failure log never contains a sensitive marker present in error.message/.stack/.meta', async () => {
+    const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+    const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const prisma = {
+      organization: { findMany: jest.fn().mockResolvedValue([{ id: ORG_ID }]) },
+      withTenantTransaction: jest.fn().mockRejectedValue(sensitivePrismaError()),
+    };
+    const audit = { record: jest.fn().mockResolvedValue(undefined) };
+    const carrierEligibility = { recalculate: jest.fn().mockResolvedValue({ eligible: true, reasons: [] }) };
+    const service = new CarrierComplianceExpirationSweepService(prisma as never, audit as never, carrierEligibility as never);
+
+    await service.run();
+
+    const allCalls = [...logSpy.mock.calls, ...warnSpy.mock.calls, ...errorSpy.mock.calls];
+    for (const call of allCalls) {
+      for (const arg of call) {
+        expect(String(arg)).not.toContain(SENSITIVE_MARKER);
+      }
+    }
+  });
+
+  it('the per-document failure log contains only org+entity correlation and errorType — no raw error content', async () => {
+    const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const tx = {
+      document: {
+        findMany: jest.fn().mockResolvedValue([{ id: 'doc-fail' }]),
+        update: jest.fn().mockRejectedValue(sensitivePrismaError()),
+      },
+      carrier: { findMany: jest.fn().mockResolvedValue([]) },
+    };
+    const prisma = {
+      organization: { findMany: jest.fn().mockResolvedValue([{ id: ORG_ID }]) },
+      withTenantTransaction: jest
+        .fn()
+        .mockImplementation((_orgId: string, fn: (tx: unknown) => unknown) => fn(tx)),
+    };
+    const audit = { record: jest.fn().mockResolvedValue(undefined) };
+    const carrierEligibility = { recalculate: jest.fn().mockResolvedValue({ eligible: true, reasons: [] }) };
+    const service = new CarrierComplianceExpirationSweepService(prisma as never, audit as never, carrierEligibility as never);
+
+    await service.run();
+
+    expect(errorSpy).toHaveBeenCalledWith(
+      `Carrier compliance expiration sweep: failed to expire document for org ${ORG_ID}, document doc-fail. errorType=Error`,
+    );
+  });
+
+  it('SECURITY — the per-document failure log never contains a sensitive marker present in error.message/.stack/.meta', async () => {
+    const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+    const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const tx = {
+      document: {
+        findMany: jest.fn().mockResolvedValue([{ id: 'doc-fail' }]),
+        update: jest.fn().mockRejectedValue(sensitivePrismaError()),
+      },
+      carrier: { findMany: jest.fn().mockResolvedValue([]) },
+    };
+    const prisma = {
+      organization: { findMany: jest.fn().mockResolvedValue([{ id: ORG_ID }]) },
+      withTenantTransaction: jest
+        .fn()
+        .mockImplementation((_orgId: string, fn: (tx: unknown) => unknown) => fn(tx)),
+    };
+    const audit = { record: jest.fn().mockResolvedValue(undefined) };
+    const carrierEligibility = { recalculate: jest.fn().mockResolvedValue({ eligible: true, reasons: [] }) };
+    const service = new CarrierComplianceExpirationSweepService(prisma as never, audit as never, carrierEligibility as never);
+
+    await service.run();
+
+    const allCalls = [...logSpy.mock.calls, ...warnSpy.mock.calls, ...errorSpy.mock.calls];
+    for (const call of allCalls) {
+      for (const arg of call) {
+        expect(String(arg)).not.toContain(SENSITIVE_MARKER);
+      }
+    }
+  });
+
+  it('the loadActiveCarriers (candidate-query) failure log contains only org correlation and errorType — no raw error content', async () => {
+    const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const tx = {
+      document: { findMany: jest.fn().mockResolvedValue([]), update: jest.fn() },
+      carrier: { findMany: jest.fn() },
+    };
+    const prisma = {
+      organization: { findMany: jest.fn().mockResolvedValue([{ id: ORG_ID }]) },
+      withTenantTransaction: jest
+        .fn()
+        .mockImplementation((_orgId: string, fn: (tx: unknown) => unknown) => {
+          // First call is loadStaleDocs (must succeed, empty); second call is loadActiveCarriers (must fail).
+          if (fn.toString().includes('document.findMany')) return fn(tx);
+          return Promise.reject(sensitivePrismaError());
+        }),
+    };
+    const audit = { record: jest.fn().mockResolvedValue(undefined) };
+    const carrierEligibility = { recalculate: jest.fn().mockResolvedValue({ eligible: true, reasons: [] }) };
+    const service = new CarrierComplianceExpirationSweepService(prisma as never, audit as never, carrierEligibility as never);
+
+    await expect(service.run()).resolves.toBeUndefined();
+
+    expect(errorSpy).toHaveBeenCalledWith(
+      `Carrier compliance expiration sweep: failed to load active carriers for org ${ORG_ID}. errorType=Error`,
+    );
+  });
+
+  it('SECURITY — the loadActiveCarriers failure log never contains a sensitive marker present in error.message/.stack/.meta', async () => {
+    const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+    const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const tx = {
+      document: { findMany: jest.fn().mockResolvedValue([]), update: jest.fn() },
+      carrier: { findMany: jest.fn() },
+    };
+    const prisma = {
+      organization: { findMany: jest.fn().mockResolvedValue([{ id: ORG_ID }]) },
+      withTenantTransaction: jest
+        .fn()
+        .mockImplementation((_orgId: string, fn: (tx: unknown) => unknown) => {
+          if (fn.toString().includes('document.findMany')) return fn(tx);
+          return Promise.reject(sensitivePrismaError());
+        }),
+    };
+    const audit = { record: jest.fn().mockResolvedValue(undefined) };
+    const carrierEligibility = { recalculate: jest.fn().mockResolvedValue({ eligible: true, reasons: [] }) };
+    const service = new CarrierComplianceExpirationSweepService(prisma as never, audit as never, carrierEligibility as never);
+
+    await service.run();
+
+    const allCalls = [...logSpy.mock.calls, ...warnSpy.mock.calls, ...errorSpy.mock.calls];
+    for (const call of allCalls) {
+      for (const arg of call) {
+        expect(String(arg)).not.toContain(SENSITIVE_MARKER);
+      }
+    }
+  });
+
+  it('the per-carrier failure log contains only org+entity correlation and errorType — no raw error content', async () => {
+    const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const { service, carrierEligibility } = buildService({
+      staleDocs: [],
+      activeCarriers: [{ id: 'carrier-fail' }],
+    });
+    (carrierEligibility.recalculate as jest.Mock).mockRejectedValue(sensitivePrismaError());
+
+    await service.run();
+
+    expect(errorSpy).toHaveBeenCalledWith(
+      `Carrier compliance expiration sweep: failed to recalculate eligibility for org ${ORG_ID}, carrier carrier-fail. errorType=Error`,
+    );
+  });
+
+  it('SECURITY — the per-carrier failure log never contains a sensitive marker present in error.message/.stack/.meta', async () => {
+    const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+    const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const { service, carrierEligibility } = buildService({
+      staleDocs: [],
+      activeCarriers: [{ id: 'carrier-fail' }],
+    });
+    (carrierEligibility.recalculate as jest.Mock).mockRejectedValue(sensitivePrismaError());
+
+    await service.run();
+
+    const allCalls = [...logSpy.mock.calls, ...warnSpy.mock.calls, ...errorSpy.mock.calls];
+    for (const call of allCalls) {
+      for (const arg of call) {
+        expect(String(arg)).not.toContain(SENSITIVE_MARKER);
+      }
+    }
+  });
+});

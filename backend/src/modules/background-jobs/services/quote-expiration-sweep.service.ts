@@ -8,6 +8,15 @@ import { NotificationService } from '../../notification/services/notification.se
 const ADMIN_VISIBILITY_ROLES: MembershipRoleName[] = ['ADMIN'];
 
 /**
+ * Monitoring Phase 4A-17 — a class-name-only error identifier, never
+ * error.message/.stack. Safe by construction: a JS/TS class name is
+ * developer-defined source text, never runtime/user-controlled content.
+ */
+function errorTypeOf(error: unknown): string {
+  return error instanceof Error ? error.constructor.name : typeof error;
+}
+
+/**
  * Workflow 4 §4.5 — unlike the invitation-expiration case, no lazy
  * check exists anywhere for Quotes today: an `OPEN` Quote past its
  * `expirationDate` currently sits there forever with no code path
@@ -56,10 +65,7 @@ export class QuoteExpirationSweepService {
         stale = await this.loadStaleQuotes(org.id);
       } catch (error) {
         this.logger.error(
-          `Quote expiration sweep: failed to load candidates for org ${org.id}: ${
-            error instanceof Error ? error.message : String(error)
-          }`,
-          error instanceof Error ? error.stack : undefined,
+          `Quote expiration sweep: failed to load candidates for org ${org.id}. errorType=${errorTypeOf(error)}`,
         );
         continue;
       }
@@ -109,10 +115,7 @@ export class QuoteExpirationSweepService {
         } catch (error) {
           recordsFailed++;
           this.logger.error(
-            `Quote expiration sweep: failed for org ${org.id}, quote ${quote.id}: ${
-              error instanceof Error ? error.message : String(error)
-            }`,
-            error instanceof Error ? error.stack : undefined,
+            `Quote expiration sweep: failed for org ${org.id}, quote ${quote.id}. errorType=${errorTypeOf(error)}`,
           );
         }
       }

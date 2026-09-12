@@ -8,6 +8,18 @@ import { NotificationService } from '../../notification/services/notification.se
 const ADMIN_VISIBILITY_ROLES: MembershipRoleName[] = ['ADMIN'];
 
 /**
+ * Monitoring Phase 4A-17 — a class-name-only error identifier, never
+ * error.message/.stack. Safe by construction: a JS/TS class name is
+ * developer-defined source text, never runtime/user-controlled content.
+ * Every catch in this sweep can only ever receive a Prisma-sourced or
+ * local-application error (see Phase 4A-17 audit) — this is a
+ * defense-in-depth measure, not a response to a confirmed leak.
+ */
+function errorTypeOf(error: unknown): string {
+  return error instanceof Error ? error.constructor.name : typeof error;
+}
+
+/**
  * Workflow 1 §1.6 — the proactive, org-wide counterpart to
  * `MembershipService.expireIfNeeded`'s lazy, just-in-time check (which
  * already keeps the business rule correct for any invitation someone
@@ -70,10 +82,7 @@ export class InvitationExpirationSweepService {
         stale = await this.loadStaleMemberships(org.id);
       } catch (error) {
         this.logger.error(
-          `Invitation expiration sweep: failed to load candidates for org ${org.id}: ${
-            error instanceof Error ? error.message : String(error)
-          }`,
-          error instanceof Error ? error.stack : undefined,
+          `Invitation expiration sweep: failed to load candidates for org ${org.id}. errorType=${errorTypeOf(error)}`,
         );
         continue;
       }
@@ -127,10 +136,7 @@ export class InvitationExpirationSweepService {
         } catch (error) {
           recordsFailed++;
           this.logger.error(
-            `Invitation expiration sweep: failed for org ${org.id}, membership ${membership.id}: ${
-              error instanceof Error ? error.message : String(error)
-            }`,
-            error instanceof Error ? error.stack : undefined,
+            `Invitation expiration sweep: failed for org ${org.id}, membership ${membership.id}. errorType=${errorTypeOf(error)}`,
           );
         }
       }

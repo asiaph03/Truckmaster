@@ -30,6 +30,15 @@ function stopTypeLabel(stopType: 'PICKUP' | 'DELIVERY' | 'OTHER'): string {
 }
 
 /**
+ * Monitoring Phase 4A-17 — a class-name-only error identifier, never
+ * error.message/.stack. Safe by construction: a JS/TS class name is
+ * developer-defined source text, never runtime/user-controlled content.
+ */
+function errorTypeOf(error: unknown): string {
+  return error instanceof Error ? error.constructor.name : typeof error;
+}
+
+/**
  * Operational Alerts feature — reuses `findLateStop` (the single
  * backend-owned "Load Late" definition; see that file's own doc comment)
  * to notify the assigned dispatcher when a Load has a scheduled
@@ -92,10 +101,7 @@ export class LoadLatenessSweepService {
         loads = await this.loadOperationalLoads(org.id);
       } catch (error) {
         this.logger.error(
-          `Load lateness sweep: failed to load operational loads for org ${org.id}: ${
-            error instanceof Error ? error.message : String(error)
-          }`,
-          error instanceof Error ? error.stack : undefined,
+          `Load lateness sweep: failed to load operational loads for org ${org.id}. errorType=${errorTypeOf(error)}`,
         );
         continue;
       }
@@ -146,10 +152,7 @@ export class LoadLatenessSweepService {
         } catch (error) {
           recordsFailed++;
           this.logger.error(
-            `Load lateness sweep: failed for org ${org.id}, load ${load.id}: ${
-              error instanceof Error ? error.message : String(error)
-            }`,
-            error instanceof Error ? error.stack : undefined,
+            `Load lateness sweep: failed for org ${org.id}, load ${load.id}. errorType=${errorTypeOf(error)}`,
           );
         }
       }

@@ -776,3 +776,126 @@ describe('CheckCallReminderSweepService — Monitoring Phase 4A-10 (run summary)
     logSpy.mockRestore();
   });
 });
+
+describe('CheckCallReminderSweepService — Monitoring Phase 4A-17 (sanitized error logging)', () => {
+  const SENSITIVE_MARKER = 'SENSITIVE_PRISMA_ERROR_CONTENT';
+
+  function sensitivePrismaError(): Error {
+    return Object.assign(new Error(SENSITIVE_MARKER), {
+      stack: `Error: ${SENSITIVE_MARKER}\n    at fake-stack (${SENSITIVE_MARKER})`,
+      meta: { target: [SENSITIVE_MARKER] },
+    });
+  }
+
+  const overdueLoad = (id: string) => ({
+    id,
+    loadNumber: `LOAD-${id}`,
+    assignedDispatcherId: 'dispatcher-1',
+    dispatchRecord: { dispatchedAt: FIVE_HOURS_AGO, driverName: 'Manual Driver', sourceDriver: null },
+    checkCalls: [],
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it('the loadInTransitLoads (candidate-query) failure log contains only org correlation and errorType — no raw error content', async () => {
+    const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const prisma = {
+      organization: { findMany: jest.fn().mockResolvedValue([{ id: ORG_ID }]) },
+      withTenantTransaction: jest.fn().mockRejectedValue(sensitivePrismaError()),
+    };
+    const audit = { record: jest.fn().mockResolvedValue(undefined) };
+    const notifications = { createForUserAndRoles: jest.fn().mockResolvedValue(undefined) };
+    const config = { get: jest.fn().mockReturnValue(4) };
+    const service = new CheckCallReminderSweepService(prisma as never, audit as never, notifications as never, config as never);
+
+    await expect(service.run()).resolves.toBeUndefined();
+
+    expect(errorSpy).toHaveBeenCalledWith(
+      `Check-call reminder sweep: failed to load in-transit loads for org ${ORG_ID}. errorType=Error`,
+    );
+  });
+
+  it('SECURITY — the loadInTransitLoads failure log never contains a sensitive marker present in error.message/.stack/.meta', async () => {
+    const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+    const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const prisma = {
+      organization: { findMany: jest.fn().mockResolvedValue([{ id: ORG_ID }]) },
+      withTenantTransaction: jest.fn().mockRejectedValue(sensitivePrismaError()),
+    };
+    const audit = { record: jest.fn().mockResolvedValue(undefined) };
+    const notifications = { createForUserAndRoles: jest.fn().mockResolvedValue(undefined) };
+    const config = { get: jest.fn().mockReturnValue(4) };
+    const service = new CheckCallReminderSweepService(prisma as never, audit as never, notifications as never, config as never);
+
+    await service.run();
+
+    const allCalls = [...logSpy.mock.calls, ...warnSpy.mock.calls, ...errorSpy.mock.calls];
+    for (const call of allCalls) {
+      for (const arg of call) {
+        expect(String(arg)).not.toContain(SENSITIVE_MARKER);
+      }
+    }
+  });
+
+  it('the per-load failure log contains only org+entity correlation and errorType — no raw error content', async () => {
+    const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const tx = {
+      load: { findMany: jest.fn().mockResolvedValue([overdueLoad('load-fail')]) },
+      notification: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        updateMany: jest.fn().mockRejectedValue(sensitivePrismaError()),
+      },
+    };
+    const prisma = {
+      organization: { findMany: jest.fn().mockResolvedValue([{ id: ORG_ID }]) },
+      withTenantTransaction: jest
+        .fn()
+        .mockImplementation((_orgId: string, fn: (tx: unknown) => unknown) => fn(tx)),
+    };
+    const audit = { record: jest.fn().mockResolvedValue(undefined) };
+    const notifications = { createForUserAndRoles: jest.fn().mockResolvedValue(undefined) };
+    const config = { get: jest.fn().mockReturnValue(4) };
+    const service = new CheckCallReminderSweepService(prisma as never, audit as never, notifications as never, config as never);
+
+    await service.run();
+
+    expect(errorSpy).toHaveBeenCalledWith(
+      `Check-call reminder sweep: failed for org ${ORG_ID}, load load-fail. errorType=Error`,
+    );
+  });
+
+  it('SECURITY — the per-load failure log never contains a sensitive marker present in error.message/.stack/.meta', async () => {
+    const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+    const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const tx = {
+      load: { findMany: jest.fn().mockResolvedValue([overdueLoad('load-fail')]) },
+      notification: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        updateMany: jest.fn().mockRejectedValue(sensitivePrismaError()),
+      },
+    };
+    const prisma = {
+      organization: { findMany: jest.fn().mockResolvedValue([{ id: ORG_ID }]) },
+      withTenantTransaction: jest
+        .fn()
+        .mockImplementation((_orgId: string, fn: (tx: unknown) => unknown) => fn(tx)),
+    };
+    const audit = { record: jest.fn().mockResolvedValue(undefined) };
+    const notifications = { createForUserAndRoles: jest.fn().mockResolvedValue(undefined) };
+    const config = { get: jest.fn().mockReturnValue(4) };
+    const service = new CheckCallReminderSweepService(prisma as never, audit as never, notifications as never, config as never);
+
+    await service.run();
+
+    const allCalls = [...logSpy.mock.calls, ...warnSpy.mock.calls, ...errorSpy.mock.calls];
+    for (const call of allCalls) {
+      for (const arg of call) {
+        expect(String(arg)).not.toContain(SENSITIVE_MARKER);
+      }
+    }
+  });
+});

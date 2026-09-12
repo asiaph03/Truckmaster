@@ -5,6 +5,15 @@ import { AuditService } from '../../../common/audit/audit.service';
 import { NotificationService } from '../../notification/services/notification.service';
 import { EXPIRABLE_DOCUMENT_CODES } from './carrier-compliance-expiration-sweep.service';
 
+/**
+ * Monitoring Phase 4A-17 — a class-name-only error identifier, never
+ * error.message/.stack. Safe by construction: a JS/TS class name is
+ * developer-defined source text, never runtime/user-controlled content.
+ */
+function errorTypeOf(error: unknown): string {
+  return error instanceof Error ? error.constructor.name : typeof error;
+}
+
 const THRESHOLDS: { days: number; type: NotificationType }[] = [
   { days: 30, type: 'COMPLIANCE_EXPIRING_30_DAY' },
   { days: 15, type: 'COMPLIANCE_EXPIRING_15_DAY' },
@@ -86,10 +95,7 @@ export class ComplianceExpirationNotificationService {
           docs = await this.loadExpiringDocs(org.id, windowStart, windowEnd);
         } catch (error) {
           this.logger.error(
-            `Compliance expiration notification sweep: failed to load expiring documents for org ${org.id}, threshold ${threshold.days}d: ${
-              error instanceof Error ? error.message : String(error)
-            }`,
-            error instanceof Error ? error.stack : undefined,
+            `Compliance expiration notification sweep: failed to load expiring documents for org ${org.id}, threshold ${threshold.days}d. errorType=${errorTypeOf(error)}`,
           );
           docs = [];
         }
@@ -134,10 +140,7 @@ export class ComplianceExpirationNotificationService {
           } catch (error) {
             recordsFailed++;
             this.logger.error(
-              `Compliance expiration notification sweep: failed for org ${org.id}, document ${doc.id}, threshold ${threshold.days}d: ${
-                error instanceof Error ? error.message : String(error)
-              }`,
-              error instanceof Error ? error.stack : undefined,
+              `Compliance expiration notification sweep: failed for org ${org.id}, document ${doc.id}, threshold ${threshold.days}d. errorType=${errorTypeOf(error)}`,
             );
           }
         }
@@ -147,10 +150,7 @@ export class ComplianceExpirationNotificationService {
           insuranceRecords = await this.loadExpiringInsurance(org.id, windowStart, windowEnd);
         } catch (error) {
           this.logger.error(
-            `Compliance expiration notification sweep: failed to load expiring insurance for org ${org.id}, threshold ${threshold.days}d: ${
-              error instanceof Error ? error.message : String(error)
-            }`,
-            error instanceof Error ? error.stack : undefined,
+            `Compliance expiration notification sweep: failed to load expiring insurance for org ${org.id}, threshold ${threshold.days}d. errorType=${errorTypeOf(error)}`,
           );
           insuranceRecords = [];
         }
@@ -197,10 +197,7 @@ export class ComplianceExpirationNotificationService {
           } catch (error) {
             recordsFailed++;
             this.logger.error(
-              `Compliance expiration notification sweep: failed for org ${org.id}, carrierInsurance ${record.id}, threshold ${threshold.days}d: ${
-                error instanceof Error ? error.message : String(error)
-              }`,
-              error instanceof Error ? error.stack : undefined,
+              `Compliance expiration notification sweep: failed for org ${org.id}, carrierInsurance ${record.id}, threshold ${threshold.days}d. errorType=${errorTypeOf(error)}`,
             );
           }
         }

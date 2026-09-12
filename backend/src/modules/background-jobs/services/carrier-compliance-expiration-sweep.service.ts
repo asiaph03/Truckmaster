@@ -12,6 +12,15 @@ import { CarrierEligibilityService } from '../../carrier/services/carrier-eligib
 export const EXPIRABLE_DOCUMENT_CODES = ['MC_AUTHORITY', 'CARRIER_AGREEMENT'] as const;
 
 /**
+ * Monitoring Phase 4A-17 — a class-name-only error identifier, never
+ * error.message/.stack. Safe by construction: a JS/TS class name is
+ * developer-defined source text, never runtime/user-controlled content.
+ */
+function errorTypeOf(error: unknown): string {
+  return error instanceof Error ? error.constructor.name : typeof error;
+}
+
+/**
  * Closes the real, previously-disclosed correctness gap in
  * `CarrierEligibilityService`'s own comment: `Carrier.assignmentEligible`
  * is a stored field only recalculated "synchronously inside the same
@@ -98,10 +107,7 @@ export class CarrierComplianceExpirationSweepService {
         staleDocs = await this.loadStaleDocs(org.id);
       } catch (error) {
         this.logger.error(
-          `Carrier compliance expiration sweep: failed to load stale documents for org ${org.id}: ${
-            error instanceof Error ? error.message : String(error)
-          }`,
-          error instanceof Error ? error.stack : undefined,
+          `Carrier compliance expiration sweep: failed to load stale documents for org ${org.id}. errorType=${errorTypeOf(error)}`,
         );
         staleDocs = [];
       }
@@ -128,10 +134,7 @@ export class CarrierComplianceExpirationSweepService {
         } catch (error) {
           documentsFailed++;
           this.logger.error(
-            `Carrier compliance expiration sweep: failed to expire document for org ${org.id}, document ${doc.id}: ${
-              error instanceof Error ? error.message : String(error)
-            }`,
-            error instanceof Error ? error.stack : undefined,
+            `Carrier compliance expiration sweep: failed to expire document for org ${org.id}, document ${doc.id}. errorType=${errorTypeOf(error)}`,
           );
         }
       }
@@ -141,10 +144,7 @@ export class CarrierComplianceExpirationSweepService {
         activeCarriers = await this.loadActiveCarriers(org.id);
       } catch (error) {
         this.logger.error(
-          `Carrier compliance expiration sweep: failed to load active carriers for org ${org.id}: ${
-            error instanceof Error ? error.message : String(error)
-          }`,
-          error instanceof Error ? error.stack : undefined,
+          `Carrier compliance expiration sweep: failed to load active carriers for org ${org.id}. errorType=${errorTypeOf(error)}`,
         );
         continue;
       }
@@ -160,10 +160,7 @@ export class CarrierComplianceExpirationSweepService {
         } catch (error) {
           carriersFailed++;
           this.logger.error(
-            `Carrier compliance expiration sweep: failed to recalculate eligibility for org ${org.id}, carrier ${carrier.id}: ${
-              error instanceof Error ? error.message : String(error)
-            }`,
-            error instanceof Error ? error.stack : undefined,
+            `Carrier compliance expiration sweep: failed to recalculate eligibility for org ${org.id}, carrier ${carrier.id}. errorType=${errorTypeOf(error)}`,
           );
         }
       }
