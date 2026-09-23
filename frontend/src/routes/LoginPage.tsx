@@ -1,8 +1,19 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { Mail, Lock, Eye, EyeOff, ArrowRight, Truck, Users, FileText, BarChart3 } from 'lucide-react';
+import {
+  Mail,
+  Lock,
+  Eye,
+  EyeOff,
+  ArrowRight,
+  Truck,
+  Users,
+  FileText,
+  BarChart3,
+} from 'lucide-react';
 import { authApi } from '../api';
 import { ApiError } from '../api/errors';
 import { useSessionStore } from '../auth/session-store';
@@ -126,7 +137,9 @@ export function LoginPage() {
                 {...register('email')}
               />
             </span>
-            {errors.email ? <span className="login-field-error">{errors.email.message}</span> : null}
+            {errors.email ? (
+              <span className="login-field-error">{errors.email.message}</span>
+            ) : null}
           </label>
 
           <label className="login-field">
@@ -158,16 +171,10 @@ export function LoginPage() {
           </label>
 
           <div className="login-forgot-row">
-            {/* No password-reset flow exists in this application yet — this
-                link is a visual placeholder only, matching the reference
-                design, and intentionally does not navigate anywhere. */}
-            <a
-              className="login-forgot-link"
-              href="#"
-              onClick={(e) => e.preventDefault()}
-            >
+            {/* Phase 6B — wired to the real forgot-password flow. */}
+            <Link className="login-forgot-link" to="/forgot-password">
               Forgot password?
-            </a>
+            </Link>
           </div>
 
           <Button type="submit" size="lg" loading={isSubmitting} className="login-submit">
@@ -186,7 +193,9 @@ export function LoginPage() {
           </p>
         </form>
 
-        <p className="login-footer">© {new Date().getFullYear()} Truck Master. All rights reserved.</p>
+        <p className="login-footer">
+          © {new Date().getFullYear()} Truck Master. All rights reserved.
+        </p>
       </div>
     </div>
   );

@@ -9,6 +9,7 @@ import { AuthService } from './services/auth.service';
 import { TokenService } from './services/token.service';
 import { PasswordService } from './services/password.service';
 import { SessionRegistryService } from './services/session-registry.service';
+import { PasswordResetService } from './services/password-reset.service';
 import { AuthController } from './controllers/auth.controller';
 import { OrganizationsController } from './controllers/organizations.controller';
 import { OrganizationSettingsController } from './controllers/organization-settings.controller';
@@ -41,6 +42,7 @@ import { PlatformSuperAdminGuard } from './guards/platform-super-admin.guard';
     TokenService,
     PasswordService,
     SessionRegistryService,
+    PasswordResetService,
     PlatformSuperAdminGuard,
   ],
   exports: [UserService, MembershipService, AuthService, OrganizationSequenceService],

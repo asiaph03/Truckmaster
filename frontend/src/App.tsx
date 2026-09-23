@@ -3,6 +3,8 @@ import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { useSessionStore } from './auth/session-store';
 import { LoginPage } from './routes/LoginPage';
 import { ActivateAccountPage } from './routes/ActivateAccountPage';
+import { ForgotPasswordPage } from './routes/ForgotPasswordPage';
+import { ResetPasswordPage } from './routes/ResetPasswordPage';
 import { SelectOrganizationPage } from './routes/SelectOrganizationPage';
 import { DashboardPage } from './routes/DashboardPage';
 import { CustomerListPage } from './routes/customers/CustomerListPage';
@@ -91,6 +93,26 @@ function App() {
     return (
       <>
         <ActivateAccountPage />
+        <ToastViewport />
+      </>
+    );
+  }
+
+  // Phase 6B — public, session-independent, same reasoning as the
+  // invitation/verification routes above: a locked-out user has no
+  // session, so these must render before the loading/auth-status gates.
+  if (location.pathname === '/forgot-password') {
+    return (
+      <>
+        <ForgotPasswordPage />
+        <ToastViewport />
+      </>
+    );
+  }
+  if (location.pathname === '/reset-password') {
+    return (
+      <>
+        <ResetPasswordPage />
         <ToastViewport />
       </>
     );

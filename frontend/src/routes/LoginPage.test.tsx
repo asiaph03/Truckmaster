@@ -1,9 +1,19 @@
 import { describe, expect, it, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import { http, HttpResponse } from 'msw';
 import { server } from '../test/mswServer';
 import { LoginPage } from './LoginPage';
 import { useSessionStore } from '../auth/session-store';
+
+/** Phase 6B — the "Forgot password?" link is now a real react-router Link, so every render needs a Router ancestor. */
+function renderLoginPage() {
+  return render(
+    <MemoryRouter>
+      <LoginPage />
+    </MemoryRouter>,
+  );
+}
 
 describe('LoginPage — Truck Master logo branding', () => {
   beforeEach(() => {
@@ -21,7 +31,7 @@ describe('LoginPage — Truck Master logo branding', () => {
   });
 
   it('renders the TruckMaster logo using the provided asset, with descriptive alt text', () => {
-    render(<LoginPage />);
+    renderLoginPage();
 
     const logo = screen.getByAltText(
       'TruckMaster — Transportation Management System',
@@ -32,7 +42,7 @@ describe('LoginPage — Truck Master logo branding', () => {
   });
 
   it('places the logo above the login form fields', () => {
-    render(<LoginPage />);
+    renderLoginPage();
 
     const logo = screen.getByAltText('TruckMaster — Transportation Management System');
     const emailField = screen.getByLabelText('Email Address');
@@ -44,7 +54,7 @@ describe('LoginPage — Truck Master logo branding', () => {
   });
 
   it('still renders the existing email/password fields and Log In button, unchanged', () => {
-    render(<LoginPage />);
+    renderLoginPage();
 
     expect(screen.getByText('Welcome Back')).toBeInTheDocument();
     expect(screen.getByText('Log in to your Truck Master account')).toBeInTheDocument();
@@ -54,7 +64,7 @@ describe('LoginPage — Truck Master logo branding', () => {
   });
 
   it('still validates required fields client-side, unchanged by the redesign', async () => {
-    render(<LoginPage />);
+    renderLoginPage();
 
     fireEvent.click(screen.getByRole('button', { name: /Log In/ }));
 
@@ -63,7 +73,7 @@ describe('LoginPage — Truck Master logo branding', () => {
   });
 
   it('toggles password visibility without affecting the field value', () => {
-    render(<LoginPage />);
+    renderLoginPage();
 
     const passwordInput = screen.getByLabelText('Password') as HTMLInputElement;
     expect(passwordInput.type).toBe('password');
@@ -93,7 +103,7 @@ describe('LoginPage — Truck Master logo branding', () => {
         }),
       ),
     );
-    render(<LoginPage />);
+    renderLoginPage();
 
     fireEvent.change(screen.getByLabelText('Email Address'), {
       target: { value: 'jane@example.com' },
@@ -140,9 +150,11 @@ describe('LoginPage — Platform Super Admin session propagation', () => {
         }),
       ),
     );
-    render(<LoginPage />);
+    renderLoginPage();
 
-    fireEvent.change(screen.getByLabelText('Email Address'), { target: { value: 'jane@example.com' } });
+    fireEvent.change(screen.getByLabelText('Email Address'), {
+      target: { value: 'jane@example.com' },
+    });
     fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'secret123' } });
     fireEvent.click(screen.getByRole('button', { name: /Log In/ }));
 
@@ -166,13 +178,38 @@ describe('LoginPage — Platform Super Admin session propagation', () => {
         }),
       ),
     );
-    render(<LoginPage />);
+    renderLoginPage();
 
-    fireEvent.change(screen.getByLabelText('Email Address'), { target: { value: 'sam@example.com' } });
+    fireEvent.change(screen.getByLabelText('Email Address'), {
+      target: { value: 'sam@example.com' },
+    });
     fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'secret123' } });
     fireEvent.click(screen.getByRole('button', { name: /Log In/ }));
 
     await waitFor(() => expect(useSessionStore.getState().status).toBe('authenticated'));
     expect(useSessionStore.getState().isPlatformSuperAdmin).toBeFalsy();
+  });
+});
+
+describe('LoginPage — Phase 6B forgot-password link', () => {
+  beforeEach(() => {
+    useSessionStore.setState({
+      status: 'unauthenticated',
+      userId: undefined,
+      organizationId: undefined,
+      roles: [],
+      name: undefined,
+      email: undefined,
+      isPlatformSuperAdmin: undefined,
+      pendingOrganizations: [],
+      availableOrganizations: [],
+    });
+  });
+
+  it('renders a real link to /forgot-password, no longer a disabled placeholder', () => {
+    renderLoginPage();
+
+    const link = screen.getByRole('link', { name: 'Forgot password?' });
+    expect(link).toHaveAttribute('href', '/forgot-password');
   });
 });

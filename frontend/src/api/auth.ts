@@ -53,6 +53,16 @@ export interface UpdateProfileRequest {
   password?: string;
 }
 
+/** Phase 6B — always `{ success: true }` regardless of whether the email matched an account. */
+export interface ForgotPasswordRequest {
+  email: string;
+}
+
+export interface ResetPasswordRequest {
+  token: string;
+  password: string;
+}
+
 export const authApi = {
   login: (body: LoginRequest) => apiRequest<LoginResponse>('/auth/login', { method: 'POST', body }),
 
@@ -71,4 +81,10 @@ export const authApi = {
 
   updateMe: (body: UpdateProfileRequest) =>
     apiRequest<{ success: boolean }>('/auth/me', { method: 'PATCH', body }),
+
+  forgotPassword: (body: ForgotPasswordRequest) =>
+    apiRequest<{ success: boolean }>('/auth/forgot-password', { method: 'POST', body }),
+
+  resetPassword: (body: ResetPasswordRequest) =>
+    apiRequest<{ success: boolean }>('/auth/reset-password', { method: 'POST', body }),
 };

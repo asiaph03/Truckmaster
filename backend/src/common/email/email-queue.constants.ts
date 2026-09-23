@@ -10,7 +10,7 @@ export const EMAIL_QUEUE_NAME = 'email-send';
  * InvoiceJobData/SettlementJobData each carry their own entity
  * reference for their own worker's audit writes.
  */
-export interface EmailJobData {
+export interface OrganizationScopedEmailJobData {
   to: string;
   subject: string;
   body: string;
@@ -27,6 +27,25 @@ export interface EmailJobData {
    */
   attachmentDocumentId?: string;
 }
+
+/**
+ * Phase 6B — identity-level emails (password reset) have no organization
+ * to scope to: the recipient user may belong to zero, one, or several
+ * organizations, and the action itself (resetting a forgotten password)
+ * precedes any org context. Deliberately excludes
+ * organizationId/entityType/entityId/attachmentDocumentId rather than
+ * making them optional on the same interface — every existing call site
+ * keeps sending its full OrganizationScopedEmailJobData unchanged, and
+ * EmailSendWorker discriminates the two branches via
+ * `'organizationId' in job.data`.
+ */
+export interface IdentityScopedEmailJobData {
+  to: string;
+  subject: string;
+  body: string;
+}
+
+export type EmailJobData = OrganizationScopedEmailJobData | IdentityScopedEmailJobData;
 
 /**
  * Monitoring Phase 4A-6 — retention only; no change to attempts/backoff.

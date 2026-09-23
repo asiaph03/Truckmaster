@@ -7,7 +7,11 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { StorageService } from '../storage/storage.service';
 import { EMAIL_SENDER, EmailAttachment, IEmailSender } from './email-sender.interface';
-import { EMAIL_QUEUE_NAME, EmailJobData } from './email-queue.constants';
+import {
+  EMAIL_QUEUE_NAME,
+  EmailJobData,
+  OrganizationScopedEmailJobData,
+} from './email-queue.constants';
 
 /**
  * Monitoring Phase 4A-15 — a class-name-only error identifier, never
@@ -56,7 +60,10 @@ export class EmailSendWorker implements OnModuleInit, OnModuleDestroy {
       EMAIL_QUEUE_NAME,
       async (job) => {
         try {
-          const attachments = await this.resolveAttachment(job.data, job.id!);
+          const attachments =
+            'organizationId' in job.data
+              ? await this.resolveAttachment(job.data, job.id!)
+              : undefined;
           await this.emailSender.send(
             {
               to: job.data.to,
@@ -64,7 +71,9 @@ export class EmailSendWorker implements OnModuleInit, OnModuleDestroy {
               body: job.data.body,
               ...(attachments ? { attachments } : {}),
             },
-            { organizationId: job.data.organizationId, jobId: job.id! },
+            'organizationId' in job.data
+              ? { organizationId: job.data.organizationId, jobId: job.id! }
+              : undefined,
           );
         } catch (error) {
           // Frontend Phase 16 — same retry-then-terminal-outcome pattern
@@ -85,8 +94,10 @@ export class EmailSendWorker implements OnModuleInit, OnModuleDestroy {
             // timestamp for when the job became active; no timing state of
             // our own to maintain. Optional per BullMQ's types.
             const durationMs = job.processedOn ? Date.now() - job.processedOn : undefined;
+            const orgLabel =
+              'organizationId' in job.data ? job.data.organizationId : 'identity-scoped';
             this.logger.error(
-              `Email job ${job.id} (org ${job.data.organizationId}) failed after ${maxAttempts} attempts${durationMs !== undefined ? ` (${durationMs}ms)` : ''}. errorType=${errorTypeOf(error)}`,
+              `Email job ${job.id} (org ${orgLabel}) failed after ${maxAttempts} attempts${durationMs !== undefined ? ` (${durationMs}ms)` : ''}. errorType=${errorTypeOf(error)}`,
             );
             await this.recordFailure(job.data, error);
             return;
@@ -104,7 +115,8 @@ export class EmailSendWorker implements OnModuleInit, OnModuleDestroy {
       // which can echo back an invalid recipient address.
       const parts = ['event=job_failed', 'worker=email-send-worker', `queue=${EMAIL_QUEUE_NAME}`];
       if (job?.id) parts.push(`jobId=${job.id}`);
-      if (job?.data?.organizationId) parts.push(`organizationId=${job.data.organizationId}`);
+      if (job?.data && 'organizationId' in job.data)
+        parts.push(`organizationId=${job.data.organizationId}`);
       parts.push(
         `attempt=${job?.attemptsMade ?? 'unknown'}`,
         `maxAttempts=${job?.opts?.attempts ?? 'unknown'}`,
@@ -116,8 +128,9 @@ export class EmailSendWorker implements OnModuleInit, OnModuleDestroy {
     this.worker.on('active', () => this.heartbeat.recordActivity('email-send-worker', 'active'));
     this.worker.on('completed', (job) => {
       const durationMs = job.processedOn ? Date.now() - job.processedOn : undefined;
+      const orgLabel = 'organizationId' in job.data ? job.data.organizationId : 'identity-scoped';
       this.logger.log(
-        `Email job ${job.id} (org ${job.data.organizationId}) completed${durationMs !== undefined ? ` in ${durationMs}ms` : ''}.`,
+        `Email job ${job.id} (org ${orgLabel}) completed${durationMs !== undefined ? ` in ${durationMs}ms` : ''}.`,
       );
       this.heartbeat.recordActivity('email-send-worker', 'completed');
     });
@@ -154,7 +167,7 @@ export class EmailSendWorker implements OnModuleInit, OnModuleDestroy {
    * sent without its required attachment.
    */
   private async resolveAttachment(
-    data: EmailJobData,
+    data: OrganizationScopedEmailJobData,
     jobId: string,
   ): Promise<EmailAttachment[] | undefined> {
     if (!data.attachmentDocumentId) return undefined;
@@ -175,7 +188,22 @@ export class EmailSendWorker implements OnModuleInit, OnModuleDestroy {
     return [{ filename: document.fileName, content, contentType: document.mimeType }];
   }
 
+  /**
+   * Phase 6B — an identity-scoped job (no organizationId) has no tenant to
+   * write an RLS-protected AuditLog against, so its terminal failure is
+   * recorded via the structured Logger pattern instead (same class of
+   * decision already made for `worker.on('error', ...)` above, which also
+   * has no organization to attribute to) — never a second, parallel audit
+   * subsystem. Never logs `to`/`subject`/`error.message` here (PII/error
+   * text) — only what the existing 'failed' handler already logs safely.
+   */
   private async recordFailure(data: EmailJobData, error: unknown): Promise<void> {
+    if (!('organizationId' in data)) {
+      this.logger.error(
+        `event=identity_email_failed worker=email-send-worker queue=${EMAIL_QUEUE_NAME} errorType=${errorTypeOf(error)}`,
+      );
+      return;
+    }
     await this.prisma.withTenantTransaction(data.organizationId, (tx) =>
       this.audit.record(tx, {
         organizationId: data.organizationId,

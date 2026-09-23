@@ -155,7 +155,31 @@ model User {
   // Rate Confirmation → New Load auto-populate feature reverse relation
   loadDraftsCreated LoadDraft[] @relation("LoadDraftCreatedBy")
 
+  // Phase 6B reverse relation
+  passwordResetTokens PasswordResetToken[]
+
   @@map("user")
+}
+
+/// Phase 6B — forgot-password / password-reset. Global, User-scoped (no
+/// organization_id, no RLS policy) — identical exemption rationale to
+/// User/Organization above (DATABASE_DESIGN.md §1, §26): a password reset
+/// is an identity-level operation, not a tenant-scoped one. Only
+/// `tokenHash` (SHA-256, via the existing TokenService) is ever stored —
+/// the raw token exists only in the outbound email and is never persisted,
+/// same convention as OrganizationMembership.invitationTokenHash.
+model PasswordResetToken {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  user      User      @relation(fields: [userId], references: [id])
+  tokenHash String    @map("token_hash")
+  expiresAt DateTime  @map("expires_at")
+  usedAt    DateTime? @map("used_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  @@index([userId])
+  @@index([tokenHash])
+  @@map("password_reset_token")
 }
 
 /// Tenant root. No organization_id on itself (it IS the tenant boundary);

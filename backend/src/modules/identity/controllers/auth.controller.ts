@@ -4,10 +4,13 @@ import { Request } from 'express';
 import { AuthService } from '../services/auth.service';
 import { MembershipService } from '../services/membership.service';
 import { SessionRegistryService } from '../services/session-registry.service';
+import { PasswordResetService } from '../services/password-reset.service';
 import { LoginDto } from '../dto/login.dto';
 import { SelectOrganizationDto } from '../dto/select-organization.dto';
 import { ActivateMembershipDto } from '../dto/activate-membership.dto';
 import { UpdateProfileDto } from '../dto/update-profile.dto';
+import { ForgotPasswordDto } from '../dto/forgot-password.dto';
+import { ResetPasswordDto } from '../dto/reset-password.dto';
 import { Public } from '../../../common/decorators/public.decorator';
 import { AuthenticationError } from '../../../common/errors/app-error';
 
@@ -33,6 +36,7 @@ export class AuthController {
     private readonly authService: AuthService,
     private readonly membershipService: MembershipService,
     private readonly sessionRegistry: SessionRegistryService,
+    private readonly passwordResetService: PasswordResetService,
   ) {}
 
   @Public()
@@ -42,6 +46,11 @@ export class AuthController {
   async login(@Body() dto: LoginDto, @Req() req: Request) {
     const result = await this.authService.login(dto.email, dto.password);
     req.session.auth = result.session;
+    // Phase 6B — indexes this session against the user unconditionally,
+    // covering all three login branches (auto-select, org-pending,
+    // no-workspace), so a password-reset invalidation can find it
+    // regardless of organization-selection state.
+    await this.sessionRegistry.recordSession(req.sessionID, result.session.userId);
     // Auto-select case only (single active membership) — the org-pending
     // case has no organizationId yet, nothing to index.
     if (result.session.organizationId) {
@@ -64,6 +73,32 @@ export class AuthController {
   async activate(@Body() dto: ActivateMembershipDto) {
     const membership = await this.membershipService.activate(dto.token, dto.password);
     return { membershipId: membership.id, organizationId: membership.organizationId };
+  }
+
+  /**
+   * Phase 6B §5 — always the same response, regardless of whether `email`
+   * matches a qualifying account. PasswordResetService.requestReset never
+   * throws for a non-qualifying email (no such user, no password set,
+   * not ACTIVE) — it simply returns without enqueueing anything — so
+   * there is no branch here that could leak account existence via status
+   * code, body, or error message.
+   */
+  @Public()
+  @Throttle(AUTH_THROTTLE)
+  @Post('forgot-password')
+  @HttpCode(200)
+  async forgotPassword(@Body() dto: ForgotPasswordDto) {
+    await this.passwordResetService.requestReset(dto.email);
+    return { success: true };
+  }
+
+  @Public()
+  @Throttle(AUTH_THROTTLE)
+  @Post('reset-password')
+  @HttpCode(200)
+  async resetPassword(@Body() dto: ResetPasswordDto) {
+    await this.passwordResetService.resetPassword(dto.token, dto.password);
+    return { success: true };
   }
 
   @Post('select-organization')

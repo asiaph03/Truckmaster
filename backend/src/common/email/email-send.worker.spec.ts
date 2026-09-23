@@ -342,6 +342,130 @@ describe('EmailSendWorker', () => {
   });
 });
 
+describe('EmailSendWorker — Phase 6B (identity-scoped jobs, no organizationId)', () => {
+  const IDENTITY_JOB_DATA = {
+    to: 'user@test.test',
+    subject: 'Reset your Truck Master TMS password',
+    body: 'Reset link: https://www.truckmasterdispatch.com/reset-password?token=abc',
+  };
+
+  function buildWorker(sendImpl: jest.Mock) {
+    capturedProcessor = undefined;
+    const redis = { duplicate: jest.fn().mockReturnValue({ on: jest.fn(), quit: jest.fn() }) };
+    const emailSender = { send: sendImpl };
+    const audit = { record: jest.fn().mockResolvedValue(undefined) };
+    const prisma = { withTenantTransaction: jest.fn() };
+    const storage = { getObject: jest.fn() };
+    const heartbeat = {
+      register: jest.fn(),
+      unregister: jest.fn(),
+      recordActivity: jest.fn(),
+      recordError: jest.fn(),
+    };
+    new EmailSendWorker(
+      redis as never,
+      emailSender as never,
+      prisma as never,
+      audit as never,
+      storage as never,
+      heartbeat as never,
+    ).onModuleInit();
+    if (!capturedProcessor) throw new Error('Worker processor was not captured');
+    return { processor: capturedProcessor as Processor, emailSender, audit, prisma };
+  }
+
+  it('sends with no organizationId in the IEmailSender call context', async () => {
+    const sendImpl = jest.fn().mockResolvedValue(undefined);
+    const { processor, emailSender } = buildWorker(sendImpl);
+
+    await processor({ data: IDENTITY_JOB_DATA, attemptsMade: 0, opts: { attempts: 3 } });
+
+    expect(emailSender.send).toHaveBeenCalledWith(
+      {
+        to: IDENTITY_JOB_DATA.to,
+        subject: IDENTITY_JOB_DATA.subject,
+        body: IDENTITY_JOB_DATA.body,
+      },
+      undefined,
+    );
+  });
+
+  it('never attempts attachment resolution (no organizationId to scope a tenant transaction to)', async () => {
+    const sendImpl = jest.fn().mockResolvedValue(undefined);
+    const { processor, prisma } = buildWorker(sendImpl);
+
+    await processor({ data: IDENTITY_JOB_DATA, attemptsMade: 0, opts: { attempts: 3 } });
+
+    expect(prisma.withTenantTransaction).not.toHaveBeenCalled();
+  });
+
+  it('on final-attempt failure, logs via Logger instead of writing an AuditLog — no organization exists to scope an RLS-protected audit write to', async () => {
+    const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const sendImpl = jest.fn().mockRejectedValue(new Error('provider unavailable'));
+    const { processor, audit } = buildWorker(sendImpl);
+
+    await processor({
+      id: 'job-1',
+      data: IDENTITY_JOB_DATA,
+      attemptsMade: 2,
+      opts: { attempts: 3 },
+    });
+
+    expect(audit.record).not.toHaveBeenCalled();
+    const call = errorSpy.mock.calls.find((c) =>
+      String(c[0]).startsWith('event=identity_email_failed'),
+    );
+    expect(call).toBeDefined();
+    errorSpy.mockRestore();
+  });
+
+  it("the 'completed' log shows 'identity-scoped' in place of an organization id", () => {
+    const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+    buildWorker(jest.fn());
+    const completedHandler = capturedOn!.mock.calls.find((c) => c[0] === 'completed')?.[1];
+
+    completedHandler({ id: 'job-1', data: IDENTITY_JOB_DATA, processedOn: Date.now() - 50 });
+
+    const call = logSpy.mock.calls.find((c) => String(c[0]).startsWith('Email job'));
+    expect(call![0]).toContain('identity-scoped');
+    logSpy.mockRestore();
+  });
+
+  it("the generic worker.on('failed') log omits organizationId entirely for an identity-scoped job", () => {
+    const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    buildWorker(jest.fn());
+    const failedHandler = capturedOn!.mock.calls.find((c) => c[0] === 'failed')?.[1];
+
+    failedHandler(
+      { id: 'job-1', data: IDENTITY_JOB_DATA, attemptsMade: 1, opts: { attempts: 3 } },
+      new Error('boom'),
+    );
+
+    expect(errorSpy).toHaveBeenCalledWith(
+      'event=job_failed worker=email-send-worker queue=email-send jobId=job-1 attempt=1 maxAttempts=3 errorType=Error',
+    );
+    errorSpy.mockRestore();
+  });
+
+  it('existing organization-scoped jobs remain completely unaffected (regression)', async () => {
+    const sendImpl = jest.fn().mockResolvedValue(undefined);
+    const { processor, emailSender } = buildWorker(sendImpl);
+    const orgData = {
+      ...IDENTITY_JOB_DATA,
+      organizationId: 'org-1',
+      entityType: 'OrganizationMembership',
+      entityId: 'membership-1',
+    };
+
+    await processor({ data: orgData, attemptsMade: 0, opts: { attempts: 3 } });
+
+    expect(emailSender.send).toHaveBeenCalledWith(expect.anything(), {
+      organizationId: 'org-1',
+      jobId: undefined,
+    });
+  });
+});
+
 describe('EmailSendWorker — Monitoring Phase 4A-4 (job duration logging)', () => {
   const JOB_DATA = {
     to: 'user@test.test',
@@ -412,7 +536,9 @@ describe('EmailSendWorker — Monitoring Phase 4A-4 (job duration logging)', () 
 
   it('includes duration in the final-attempt failure log, still without recipient/subject', async () => {
     const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
-    const { processor } = buildWorker(jest.fn().mockRejectedValue(new Error('provider unavailable')));
+    const { processor } = buildWorker(
+      jest.fn().mockRejectedValue(new Error('provider unavailable')),
+    );
 
     await processor({
       id: 'job-1',
