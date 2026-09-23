@@ -111,9 +111,7 @@ export function OverviewTab({ load, onChanged }: { load: Load; onChanged: () => 
                 {stop.city}, {stop.state}
               </span>
               <span className="load-stop-mini-time">
-                {formatBusinessDateTime(
-                  stop.actualDeparture ?? stop.actualArrival ?? stop.appointmentDatetime ?? null,
-                )}
+                {formatBusinessDateTime(stop.appointmentDatetime ?? null)}
               </span>
               <Badge
                 label={stop.status}
