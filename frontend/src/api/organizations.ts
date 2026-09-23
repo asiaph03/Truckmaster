@@ -43,12 +43,20 @@ export interface UpdateOrganizationRequest {
 }
 
 /**
+ * Phase 5 — the only lever a caller has over demo/trial provisioning.
+ * Omitted (or STANDARD) preserves the exact pre-Phase-5 behavior; the
+ * resulting subscription/trial values are always server-computed, never
+ * client-supplied.
+ */
+export type ProvisioningMode = 'STANDARD' | 'DEMO';
+
+/**
  * Platform-console org creation (`POST /platform/organizations`,
  * PlatformSuperAdminGuard). Deliberately NOT the same shape as
  * `UpdateOrganizationRequest` — `CreateOrganizationDto` has no
  * `defaultPaymentTerms` field at all (it defaults to NET_30 server-side,
  * editable afterward only via `update()` above), and every field except
- * `country` is required at creation time.
+ * `country` and `provisioningMode` is required at creation time.
  */
 export interface CreateOrganizationRequest {
   legalName: string;
@@ -60,6 +68,7 @@ export interface CreateOrganizationRequest {
   primaryContactName: string;
   primaryContactEmail: string;
   primaryContactPhone: string;
+  provisioningMode?: ProvisioningMode;
 }
 
 /** Phase 4 — subscriptionStatus values. Deliberately separate from Organization.status (access/suspension), unchanged by this phase. */

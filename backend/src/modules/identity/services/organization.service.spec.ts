@@ -1,5 +1,11 @@
 import { OrganizationService } from './organization.service';
-import { BusinessRuleError, NotFoundError, PermissionError } from '../../../common/errors/app-error';
+import { ProvisioningMode } from '../dto/create-organization.dto';
+import { EntitlementService } from '../../../common/entitlement/entitlement.service';
+import {
+  BusinessRuleError,
+  NotFoundError,
+  PermissionError,
+} from '../../../common/errors/app-error';
 
 /**
  * Existing-global-User reuse on Organization creation (Phase 1 report §11.1,
@@ -57,6 +63,7 @@ describe('OrganizationService.createOrganization', () => {
       audit as never,
       emailQueue as never,
       { get: jest.fn().mockReturnValue('https://www.truckmasterdispatch.com') } as never,
+      new EntitlementService(),
     );
 
     return { service, tx, userService, audit, emailQueue, createdOrganization, createdUser };
@@ -146,6 +153,91 @@ describe('OrganizationService.createOrganization', () => {
     expect(dataArg).not.toHaveProperty('subscriptionConvertedByUserId');
     expect(dataArg).not.toHaveProperty('isDemo');
   });
+
+  /**
+   * Phase 5 — demo/trial provisioning. `provisioningMode` is a request-only
+   * field (see create-organization.dto.ts) — it never reaches
+   * `tx.organization.create`'s `data` object itself, only the 5 subscription
+   * fields it causes to be computed.
+   */
+  describe('Phase 5 — provisioningMode: DEMO', () => {
+    it('an explicit STANDARD mode behaves identically to omitting the field — no subscription fields set', async () => {
+      const { service, tx } = buildService({ existingUser: null });
+
+      await service.createOrganization(
+        { ...DTO, provisioningMode: ProvisioningMode.STANDARD },
+        SUPER_ADMIN_ID,
+      );
+
+      const dataArg = (tx.organization.create as jest.Mock).mock.calls[0][0].data;
+      expect(dataArg).not.toHaveProperty('subscriptionStatus');
+      expect(dataArg).not.toHaveProperty('trialStartedAt');
+      expect(dataArg).not.toHaveProperty('trialEndsAt');
+      expect(dataArg).not.toHaveProperty('maxCarriers');
+      expect(dataArg).not.toHaveProperty('maxDrivers');
+    });
+
+    it('sets subscriptionStatus=TRIAL, maxCarriers=1, maxDrivers=5', async () => {
+      const { service, tx } = buildService({ existingUser: null });
+
+      await service.createOrganization(
+        { ...DTO, provisioningMode: ProvisioningMode.DEMO },
+        SUPER_ADMIN_ID,
+      );
+
+      const dataArg = (tx.organization.create as jest.Mock).mock.calls[0][0].data;
+      expect(dataArg).toMatchObject({
+        subscriptionStatus: 'TRIAL',
+        maxCarriers: 1,
+        maxDrivers: 5,
+      });
+      expect(dataArg.trialStartedAt).toBeInstanceOf(Date);
+      expect(dataArg.trialEndsAt).toBeInstanceOf(Date);
+    });
+
+    it('sets trialEndsAt to exactly trialStartedAt + 7×24×60×60×1000 ms — elapsed-duration math, not calendar-day arithmetic', async () => {
+      const fixedNow = new Date('2026-09-23T04:00:00.000Z');
+      jest.useFakeTimers().setSystemTime(fixedNow);
+      try {
+        const { service, tx } = buildService({ existingUser: null });
+
+        await service.createOrganization(
+          { ...DTO, provisioningMode: ProvisioningMode.DEMO },
+          SUPER_ADMIN_ID,
+        );
+
+        const dataArg = (tx.organization.create as jest.Mock).mock.calls[0][0].data;
+        expect(dataArg.trialStartedAt.getTime()).toBe(fixedNow.getTime());
+        expect(dataArg.trialEndsAt.getTime() - dataArg.trialStartedAt.getTime()).toBe(
+          7 * 24 * 60 * 60 * 1000,
+        );
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('still creates the admin User/OrganizationMembership/ADMIN role exactly as STANDARD does', async () => {
+      const { service, tx, userService } = buildService({ existingUser: null });
+
+      await service.createOrganization(
+        { ...DTO, provisioningMode: ProvisioningMode.DEMO },
+        SUPER_ADMIN_ID,
+      );
+
+      expect(userService.create).toHaveBeenCalledWith(
+        { email: DTO.primaryContactEmail, name: DTO.primaryContactName },
+        tx,
+      );
+      expect(tx.organizationMembership.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ status: 'PENDING_VERIFICATION' }),
+        }),
+      );
+      expect(tx.membershipRole.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ role: 'ADMIN' }) }),
+      );
+    });
+  });
 });
 
 /**
@@ -198,6 +290,7 @@ describe('OrganizationService.getCurrent / update', () => {
       audit as never,
       {} as never,
       {} as never,
+      new EntitlementService(),
     );
 
     return { service, tx, prisma, audit };
@@ -308,11 +401,13 @@ describe('OrganizationService — Phase 4 platform-admin subscription conversion
     };
   }
 
-  function buildService(opts: {
-    org?: ReturnType<typeof makeOrg> | null;
-    carrierCount?: number;
-    driverCount?: number;
-  } = {}) {
+  function buildService(
+    opts: {
+      org?: ReturnType<typeof makeOrg> | null;
+      carrierCount?: number;
+      driverCount?: number;
+    } = {},
+  ) {
     const org = 'org' in opts ? opts.org : makeOrg();
 
     const tx = {
@@ -344,6 +439,7 @@ describe('OrganizationService — Phase 4 platform-admin subscription conversion
       audit as never,
       {} as never,
       {} as never,
+      new EntitlementService(),
     );
 
     return { service, tx, prisma, audit, org };
@@ -368,6 +464,48 @@ describe('OrganizationService — Phase 4 platform-admin subscription conversion
           },
         }),
       );
+    });
+
+    /**
+     * Phase 5 §10/§11 — the response reports EFFECTIVE status
+     * (EntitlementService.resolveEffectiveStatus), not the raw stored
+     * column, and never writes anything back to the database.
+     */
+    it('reports EXPIRED for a TRIAL row whose trialEndsAt has already passed — stored value is never touched', async () => {
+      const expiredRow = {
+        id: 'org-2',
+        legalName: 'Expired Demo Org',
+        subscriptionStatus: 'TRIAL',
+        trialStartedAt: new Date('2020-01-01T00:00:00.000Z'),
+        trialEndsAt: new Date('2020-01-08T00:00:00.000Z'),
+        maxCarriers: 1,
+        maxDrivers: 5,
+      };
+      const { service, prisma } = buildService();
+      (prisma.organization.findMany as jest.Mock).mockResolvedValue([expiredRow]);
+
+      const [result] = await service.findAllForPlatformAdmin();
+
+      expect(result.subscriptionStatus).toBe('EXPIRED');
+      expect(prisma.organization).not.toHaveProperty('update');
+    });
+
+    it('reports TRIAL for a TRIAL row whose trialEndsAt is still in the future', async () => {
+      const futureRow = {
+        id: 'org-3',
+        legalName: 'Active Demo Org',
+        subscriptionStatus: 'TRIAL',
+        trialStartedAt: new Date(),
+        trialEndsAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+        maxCarriers: 1,
+        maxDrivers: 5,
+      };
+      const { service, prisma } = buildService();
+      (prisma.organization.findMany as jest.Mock).mockResolvedValue([futureRow]);
+
+      const [result] = await service.findAllForPlatformAdmin();
+
+      expect(result.subscriptionStatus).toBe('TRIAL');
     });
   });
 
@@ -395,6 +533,20 @@ describe('OrganizationService — Phase 4 platform-admin subscription conversion
       expect(result).toBeNull();
       expect(prisma.carrier.count).not.toHaveBeenCalled();
       expect(prisma.driver.count).not.toHaveBeenCalled();
+    });
+
+    it('reports EFFECTIVE status (EXPIRED) for a stored-TRIAL organization past its trialEndsAt, leaving the stored value untouched', async () => {
+      const { service, prisma } = buildService({
+        org: makeOrg({
+          subscriptionStatus: 'TRIAL',
+          trialEndsAt: new Date('2020-01-08T00:00:00.000Z'),
+        }),
+      });
+
+      const result = await service.findByIdForPlatformAdmin(ORG_ID);
+
+      expect(result?.subscriptionStatus).toBe('EXPIRED');
+      expect(prisma.organization).not.toHaveProperty('update');
     });
   });
 
@@ -444,7 +596,9 @@ describe('OrganizationService — Phase 4 platform-admin subscription conversion
     });
 
     it('rejects conversion of an already-ACTIVE organization — no update, no audit', async () => {
-      const { service, tx, audit } = buildService({ org: makeOrg({ subscriptionStatus: 'ACTIVE' }) });
+      const { service, tx, audit } = buildService({
+        org: makeOrg({ subscriptionStatus: 'ACTIVE' }),
+      });
 
       await expect(
         service.convertSubscription(ORG_ID, { maxCarriers: 5, maxDrivers: 20 }, ADMIN_ID),

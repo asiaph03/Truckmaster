@@ -1,7 +1,25 @@
-import { IsEmail, IsOptional, IsString, MinLength } from 'class-validator';
+import { IsEmail, IsEnum, IsOptional, IsString, MinLength } from 'class-validator';
 
 /**
- * Workflow 1 §1.1 required fields exactly — no additional fields.
+ * Phase 5 — the only two ways an organization can be provisioned. Not a
+ * Prisma-backed enum (no `isDemo`/provisioning-mode column exists or is
+ * added — `subscriptionStatus: TRIAL` plus the trial timestamps remain the
+ * sole source of truth once the organization exists); this is a
+ * request-only discriminator consumed entirely inside
+ * `OrganizationService.createOrganization()`.
+ */
+export enum ProvisioningMode {
+  STANDARD = 'STANDARD',
+  DEMO = 'DEMO',
+}
+
+/**
+ * Workflow 1 §1.1 required fields exactly, plus Phase 5's optional
+ * provisioning mode — no other additional fields. `provisioningMode` is
+ * the only lever a caller has; the resulting subscription/trial values
+ * (`subscriptionStatus`, `trialStartedAt`, `trialEndsAt`, `maxCarriers`,
+ * `maxDrivers`) are always server-computed inside the service, never
+ * accepted directly from the client.
  */
 export class CreateOrganizationDto {
   @IsString()
@@ -38,4 +56,9 @@ export class CreateOrganizationDto {
   @IsString()
   @MinLength(1)
   primaryContactPhone!: string;
+
+  /** Omitted (or STANDARD) preserves the exact pre-Phase-5 behavior. */
+  @IsOptional()
+  @IsEnum(ProvisioningMode)
+  provisioningMode?: ProvisioningMode;
 }

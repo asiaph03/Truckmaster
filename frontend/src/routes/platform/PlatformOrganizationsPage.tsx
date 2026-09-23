@@ -5,7 +5,7 @@ import { useForm } from 'react-hook-form';
 import { useQuery } from '@tanstack/react-query';
 import { organizationsApi, type CreateOrganizationRequest } from '../../api';
 import { ApiError } from '../../api/errors';
-import { Badge, Button, DataTable, EmptyState, TextField } from '../../components/ui';
+import { Badge, Button, DataTable, EmptyState, Select, TextField } from '../../components/ui';
 import { getStatusBadgeColor } from '../../components/ui/statusBadgeMap';
 import { useToast } from '../../components/ui/toastStore';
 import { useSessionStore } from '../../auth/session-store';
@@ -50,8 +50,10 @@ export function PlatformOrganizationsPage() {
     register,
     handleSubmit,
     reset,
+    watch,
     formState: { errors, isSubmitting },
-  } = useForm<CreateOrganizationRequest>();
+  } = useForm<CreateOrganizationRequest>({ defaultValues: { provisioningMode: 'STANDARD' } });
+  const provisioningMode = watch('provisioningMode');
 
   async function onSubmit(values: CreateOrganizationRequest) {
     try {
@@ -121,7 +123,10 @@ export function PlatformOrganizationsPage() {
               render: (o) => (
                 <Badge
                   label={o.subscriptionStatus}
-                  color={getStatusBadgeColor('Organization.subscriptionStatus', o.subscriptionStatus) ?? 'neutral'}
+                  color={
+                    getStatusBadgeColor('Organization.subscriptionStatus', o.subscriptionStatus) ??
+                    'neutral'
+                  }
                 />
               ),
             },
@@ -157,6 +162,30 @@ export function PlatformOrganizationsPage() {
               become its first Admin. Default Payment Terms starts at NET_30 and can be changed
               afterward in Organization Settings.
             </p>
+
+            <div className="detail-card-grid" style={{ marginBottom: 'var(--space-3)' }}>
+              <Select
+                label="Provisioning Mode"
+                options={[
+                  { value: 'STANDARD', label: 'Standard Organization' },
+                  { value: 'DEMO', label: 'Demo / Trial Organization' },
+                ]}
+                {...register('provisioningMode')}
+              />
+            </div>
+            {provisioningMode === 'DEMO' ? (
+              <p
+                style={{
+                  margin: '0 0 var(--space-3)',
+                  padding: 'var(--space-2) var(--space-3)',
+                  color: 'var(--info-700)',
+                  background: 'var(--info-50)',
+                  borderRadius: 'var(--radius-2)',
+                }}
+              >
+                This organization will start a 7-day trial limited to 1 carrier and 5 drivers.
+              </p>
+            ) : null}
 
             <h2 className="detail-card-title">Organization</h2>
             <div className="detail-card-grid">

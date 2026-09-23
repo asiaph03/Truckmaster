@@ -25,9 +25,7 @@ const CREATED_ORGANIZATION = {
 };
 
 function renderPage() {
-  server.use(
-    http.get('/api/v1/platform/organizations', () => HttpResponse.json([])),
-  );
+  server.use(http.get('/api/v1/platform/organizations', () => HttpResponse.json([])));
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={queryClient}>
@@ -118,6 +116,7 @@ describe('PlatformOrganizationsPage — Platform Super Admin org creation', () =
       primaryContactName: CREATED_ORGANIZATION.primaryContactName,
       primaryContactEmail: CREATED_ORGANIZATION.primaryContactEmail,
       primaryContactPhone: CREATED_ORGANIZATION.primaryContactPhone,
+      provisioningMode: 'STANDARD',
     });
     expect(receivedBody).not.toHaveProperty('defaultPaymentTerms');
   });
@@ -226,7 +225,7 @@ describe('PlatformOrganizationsPage — Phase 4 organization list', () => {
     expect(await screen.findByText('No organizations yet.')).toBeInTheDocument();
   });
 
-  it('clicking a row navigates to that organization\'s detail page', async () => {
+  it("clicking a row navigates to that organization's detail page", async () => {
     useSessionStore.setState({ isPlatformSuperAdmin: true });
     server.use(
       http.get('/api/v1/platform/organizations', () =>
@@ -259,5 +258,60 @@ describe('PlatformOrganizationsPage — Phase 4 organization list', () => {
     fireEvent.click(await screen.findByText('Acme Freight LLC'));
 
     expect(await screen.findByText('Detail page for org-1')).toBeInTheDocument();
+  });
+});
+
+describe('PlatformOrganizationsPage — Phase 5 demo/trial provisioning', () => {
+  afterEach(() => {
+    useSessionStore.setState({ roles: [], isPlatformSuperAdmin: undefined });
+    useToastStore.setState({ toasts: [] });
+  });
+
+  it('defaults the provisioning mode selector to Standard Organization, with no demo notice shown', async () => {
+    useSessionStore.setState({ isPlatformSuperAdmin: true });
+    renderPage();
+
+    fireEvent.click(screen.getByText('+ Create Organization'));
+
+    expect(await screen.findByLabelText('Provisioning Mode')).toHaveValue('STANDARD');
+    expect(screen.queryByText(/7-day trial/)).not.toBeInTheDocument();
+  });
+
+  it('shows the 7-day/1-carrier/5-driver notice only after switching to Demo / Trial Organization', async () => {
+    useSessionStore.setState({ isPlatformSuperAdmin: true });
+    renderPage();
+
+    fireEvent.click(screen.getByText('+ Create Organization'));
+    fireEvent.change(await screen.findByLabelText('Provisioning Mode'), {
+      target: { value: 'DEMO' },
+    });
+
+    expect(
+      await screen.findByText(
+        'This organization will start a 7-day trial limited to 1 carrier and 5 drivers.',
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it('submits provisioningMode: DEMO when Demo / Trial Organization is selected', async () => {
+    useSessionStore.setState({ isPlatformSuperAdmin: true });
+    let receivedBody: Record<string, unknown> | undefined;
+    server.use(
+      http.post('/api/v1/platform/organizations', async ({ request }) => {
+        receivedBody = (await request.json()) as Record<string, unknown>;
+        return HttpResponse.json({ organization: CREATED_ORGANIZATION }, { status: 201 });
+      }),
+    );
+
+    renderPage();
+    fireEvent.click(screen.getByText('+ Create Organization'));
+    fireEvent.change(await screen.findByLabelText('Provisioning Mode'), {
+      target: { value: 'DEMO' },
+    });
+    fillRequiredFields();
+    fireEvent.click(screen.getByText('Create Organization'));
+
+    await waitFor(() => expect(receivedBody).toBeDefined());
+    expect(receivedBody?.provisioningMode).toBe('DEMO');
   });
 });

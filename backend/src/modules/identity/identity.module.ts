@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { EmailModule } from '../../common/email/email.module';
+import { EntitlementModule } from '../../common/entitlement/entitlement.module';
 import { UserService } from './services/user.service';
 import { OrganizationService } from './services/organization.service';
 import { OrganizationSequenceService } from './services/organization-sequence.service';
@@ -24,7 +25,7 @@ import { PlatformSuperAdminGuard } from './guards/platform-super-admin.guard';
  * level even though they share one NestJS module wrapper.
  */
 @Module({
-  imports: [EmailModule],
+  imports: [EmailModule, EntitlementModule],
   controllers: [
     AuthController,
     OrganizationsController,

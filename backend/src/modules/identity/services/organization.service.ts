@@ -5,13 +5,18 @@ import { Organization } from '@prisma/client';
 import { Queue } from 'bullmq';
 import { PrismaService } from '../../../common/prisma/prisma.service';
 import { AuditService } from '../../../common/audit/audit.service';
+import { EntitlementService } from '../../../common/entitlement/entitlement.service';
 import { AppConfig } from '../../../config/configuration';
 import { TokenService } from './token.service';
 import { UserService } from './user.service';
-import { CreateOrganizationDto } from '../dto/create-organization.dto';
+import { CreateOrganizationDto, ProvisioningMode } from '../dto/create-organization.dto';
 import { UpdateOrganizationDto } from '../dto/update-organization.dto';
 import { ConvertOrganizationSubscriptionDto } from '../dto/convert-organization-subscription.dto';
-import { BusinessRuleError, NotFoundError, PermissionError } from '../../../common/errors/app-error';
+import {
+  BusinessRuleError,
+  NotFoundError,
+  PermissionError,
+} from '../../../common/errors/app-error';
 import {
   EMAIL_QUEUE,
   EmailJobData,
@@ -19,6 +24,17 @@ import {
 } from '../../../common/email/email-queue.constants';
 
 const INVITATION_EXPIRY_DAYS = 7;
+
+/**
+ * Phase 5 — demo/trial provisioning. Elapsed-duration (millisecond) math,
+ * deliberately not `setDate(+7)` — see EntitlementService.resolveEffectiveStatus's
+ * own doc comment: expiration is evaluated from the timestamp, not by
+ * calendar-day counting, so the same arithmetic style is used here to
+ * produce it.
+ */
+const DEMO_TRIAL_DURATION_MS = 7 * 24 * 60 * 60 * 1000;
+const DEMO_MAX_CARRIERS = 1;
+const DEMO_MAX_DRIVERS = 5;
 
 /**
  * Frontend Phase 14 — the exact, explicitly-approved editable field set.
@@ -59,6 +75,7 @@ export class OrganizationService {
     private readonly audit: AuditService,
     @Inject(EMAIL_QUEUE) private readonly emailQueue: Queue,
     private readonly config: ConfigService<AppConfig>,
+    private readonly entitlement: EntitlementService,
   ) {}
 
   async createOrganization(
@@ -92,6 +109,17 @@ export class OrganizationService {
     const invitationExpiresAt = new Date();
     invitationExpiresAt.setDate(invitationExpiresAt.getDate() + INVITATION_EXPIRY_DAYS);
 
+    // Phase 5 — DEMO is the only branch that ever sets subscription/trial
+    // fields explicitly. STANDARD (the default, including every caller
+    // that predates this field) sends none of them, so the schema-level
+    // ACTIVE/null defaults apply exactly as before — preserving the exact
+    // pre-Phase-5 behavior byte-for-byte, not just in effect.
+    const isDemo = dto.provisioningMode === ProvisioningMode.DEMO;
+    const trialStartedAt = isDemo ? new Date() : null;
+    const trialEndsAt = isDemo
+      ? new Date(trialStartedAt!.getTime() + DEMO_TRIAL_DURATION_MS)
+      : null;
+
     const result = await this.prisma.$transaction(async (tx) => {
       const organization = await tx.organization.create({
         data: {
@@ -107,6 +135,15 @@ export class OrganizationService {
           // defaultPaymentTerms defaults to NET_30 at the schema level
           // (Workflow 1 §1.1) — not set explicitly here.
           createdByUserId: actingUserId,
+          ...(isDemo
+            ? {
+                subscriptionStatus: 'TRIAL' as const,
+                trialStartedAt,
+                trialEndsAt,
+                maxCarriers: DEMO_MAX_CARRIERS,
+                maxDrivers: DEMO_MAX_DRIVERS,
+              }
+            : {}),
         },
       });
 
@@ -207,8 +244,8 @@ export class OrganizationService {
    * requirement. No pagination: current scale (single digits of
    * organizations) doesn't need it yet, per the locked design.
    */
-  findAllForPlatformAdmin() {
-    return this.prisma.organization.findMany({
+  async findAllForPlatformAdmin() {
+    const organizations = await this.prisma.organization.findMany({
       select: {
         id: true,
         legalName: true,
@@ -220,6 +257,20 @@ export class OrganizationService {
       },
       orderBy: { legalName: 'asc' },
     });
+
+    // Phase 5 — the platform console reports the EFFECTIVE status
+    // (TRIAL/ACTIVE/EXPIRED/CANCELLED derived live from `trialEndsAt`),
+    // never the raw stored column, so a trial that has elapsed shows as
+    // EXPIRED immediately rather than staying "TRIAL" until an admin
+    // happens to convert it. The stored value itself is never written
+    // here — this is a response-shaping read, not a mutation. Reuses
+    // EntitlementService.resolveEffectiveStatus() rather than a second
+    // expiration calculation, per the locked decision.
+    const now = new Date();
+    return organizations.map((organization) => ({
+      ...organization,
+      subscriptionStatus: this.entitlement.resolveEffectiveStatus(organization, now),
+    }));
   }
 
   /**
@@ -259,11 +310,20 @@ export class OrganizationService {
     if (!organization) return null;
 
     const [qualifyingCarrierCount, qualifyingDriverCount] = await Promise.all([
-      this.prisma.carrier.count({ where: { organizationId: id, status: { in: ['PENDING', 'ACTIVE'] } } }),
+      this.prisma.carrier.count({
+        where: { organizationId: id, status: { in: ['PENDING', 'ACTIVE'] } },
+      }),
       this.prisma.driver.count({ where: { organizationId: id, active: true } }),
     ]);
 
-    return { ...organization, qualifyingCarrierCount, qualifyingDriverCount };
+    // Phase 5 — same effective-status substitution as findAllForPlatformAdmin
+    // above; see that method's doc comment.
+    return {
+      ...organization,
+      subscriptionStatus: this.entitlement.resolveEffectiveStatus(organization, new Date()),
+      qualifyingCarrierCount,
+      qualifyingDriverCount,
+    };
   }
 
   /**
