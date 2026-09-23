@@ -10,7 +10,8 @@ import { TokenService } from './token.service';
 import { UserService } from './user.service';
 import { CreateOrganizationDto } from '../dto/create-organization.dto';
 import { UpdateOrganizationDto } from '../dto/update-organization.dto';
-import { PermissionError } from '../../../common/errors/app-error';
+import { ConvertOrganizationSubscriptionDto } from '../dto/convert-organization-subscription.dto';
+import { BusinessRuleError, NotFoundError, PermissionError } from '../../../common/errors/app-error';
 import {
   EMAIL_QUEUE,
   EmailJobData,
@@ -199,8 +200,140 @@ export class OrganizationService {
     return { organization: result.organization, verificationTokenIssued: true };
   }
 
-  findById(id: string): Promise<Organization | null> {
-    return this.prisma.organization.findUnique({ where: { id } });
+  /**
+   * Phase 4 — platform-console org list (`GET /platform/organizations`).
+   * Summary projection only — no address/contact/payment-terms fields,
+   * per the locked "no unnecessary organization-sensitive fields"
+   * requirement. No pagination: current scale (single digits of
+   * organizations) doesn't need it yet, per the locked design.
+   */
+  findAllForPlatformAdmin() {
+    return this.prisma.organization.findMany({
+      select: {
+        id: true,
+        legalName: true,
+        subscriptionStatus: true,
+        trialStartedAt: true,
+        trialEndsAt: true,
+        maxCarriers: true,
+        maxDrivers: true,
+      },
+      orderBy: { legalName: 'asc' },
+    });
+  }
+
+  /**
+   * Phase 4 — platform-console org detail (`GET /platform/organizations/:id`).
+   * `findById` had zero callers anywhere in the codebase before this
+   * change (confirmed by a full-repo search), so its return shape is
+   * extended in place rather than adding a parallel method. Adds the two
+   * "current qualifying usage" counts the admin UI needs for the
+   * below-limit warning (§4/§9 of the locked design) — computed with the
+   * exact same `where` clauses EntitlementService's own count checks use
+   * (`status IN (PENDING, ACTIVE)` for carriers, `active: true` for
+   * drivers), so "qualifying" means identically the same thing here as it
+   * does for enforcement. This is a plain read, no transaction/lock
+   * needed — an admin viewing a snapshot doesn't need the same
+   * consistency guarantee the conversion mutation itself does (see
+   * `convertSubscription` below).
+   */
+  async findByIdForPlatformAdmin(id: string) {
+    const organization = await this.prisma.organization.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        legalName: true,
+        primaryContactName: true,
+        primaryContactEmail: true,
+        status: true,
+        createdAt: true,
+        subscriptionStatus: true,
+        trialStartedAt: true,
+        trialEndsAt: true,
+        maxCarriers: true,
+        maxDrivers: true,
+        subscriptionConvertedAt: true,
+        subscriptionConvertedByUserId: true,
+      },
+    });
+    if (!organization) return null;
+
+    const [qualifyingCarrierCount, qualifyingDriverCount] = await Promise.all([
+      this.prisma.carrier.count({ where: { organizationId: id, status: { in: ['PENDING', 'ACTIVE'] } } }),
+      this.prisma.driver.count({ where: { organizationId: id, active: true } }),
+    ]);
+
+    return { ...organization, qualifyingCarrierCount, qualifyingDriverCount };
+  }
+
+  /**
+   * Phase 4 — TRIAL/EXPIRED → ACTIVE conversion
+   * (`PATCH /platform/organizations/:id/subscription`). Platform-console
+   * operation, no organization session — `organizationId` comes from the
+   * controller's path param, never `RequestContextStore`.
+   *
+   * `SELECT ... FOR UPDATE` on the Organization row (via a minimal raw
+   * query locking on `id` alone, then a normal Prisma read in the same
+   * transaction) serializes this against a concurrent conversion/edit of
+   * the same org. It does NOT close the narrow, pre-existing Phase 2 race
+   * where a carrier/driver-creation request's own *unlocked* quick read
+   * (EntitlementService's optimization for the common unlimited case)
+   * happens to land before this transaction commits — that gap is
+   * inherent to Phase 2's own locking strategy and is not redesigned
+   * here, per explicit instruction.
+   */
+  async convertSubscription(
+    organizationId: string,
+    dto: ConvertOrganizationSubscriptionDto,
+    actingUserId: string,
+  ): Promise<Organization> {
+    return this.prisma.withTenantTransaction(organizationId, async (tx) => {
+      await tx.$queryRaw`SELECT id FROM organization WHERE id = ${organizationId}::uuid FOR UPDATE`;
+
+      const existing = await tx.organization.findUnique({ where: { id: organizationId } });
+      if (!existing) throw new NotFoundError('Organization not found.');
+
+      if (existing.subscriptionStatus !== 'TRIAL' && existing.subscriptionStatus !== 'EXPIRED') {
+        throw new BusinessRuleError(
+          'Only a Trial or Expired organization can be converted to an active subscription.',
+        );
+      }
+
+      const updated = await tx.organization.update({
+        where: { id: organizationId },
+        data: {
+          subscriptionStatus: 'ACTIVE',
+          maxCarriers: dto.maxCarriers,
+          maxDrivers: dto.maxDrivers,
+          subscriptionConvertedAt: new Date(),
+          subscriptionConvertedByUserId: actingUserId,
+        },
+      });
+
+      await this.audit.record(tx, {
+        organizationId,
+        action: 'Organization Subscription Converted',
+        entityType: 'Organization',
+        entityId: organizationId,
+        previousValue: {
+          subscriptionStatus: existing.subscriptionStatus,
+          maxCarriers: existing.maxCarriers,
+          maxDrivers: existing.maxDrivers,
+          subscriptionConvertedAt: existing.subscriptionConvertedAt,
+          subscriptionConvertedByUserId: existing.subscriptionConvertedByUserId,
+        },
+        newValue: {
+          subscriptionStatus: updated.subscriptionStatus,
+          maxCarriers: updated.maxCarriers,
+          maxDrivers: updated.maxDrivers,
+          subscriptionConvertedAt: updated.subscriptionConvertedAt,
+          subscriptionConvertedByUserId: updated.subscriptionConvertedByUserId,
+        },
+        actorUserId: actingUserId,
+      });
+
+      return updated;
+    });
   }
 
   /**

@@ -1,5 +1,5 @@
 import { OrganizationService } from './organization.service';
-import { PermissionError } from '../../../common/errors/app-error';
+import { BusinessRuleError, NotFoundError, PermissionError } from '../../../common/errors/app-error';
 
 /**
  * Existing-global-User reuse on Organization creation (Phase 1 report §11.1,
@@ -275,5 +275,291 @@ describe('OrganizationService.getCurrent / update', () => {
     expect(dataArg).not.toHaveProperty('id');
     expect(dataArg).not.toHaveProperty('status');
     expect(dataArg).not.toHaveProperty('createdByUserId');
+  });
+});
+
+/**
+ * Phase 4 — platform-admin subscription conversion
+ * (findAllForPlatformAdmin / findByIdForPlatformAdmin / convertSubscription).
+ * No organization session exists for these calls (PlatformSuperAdminGuard
+ * never populates RequestContextStore.organizationId) — organizationId is
+ * always an explicit parameter, never derived from context.
+ */
+describe('OrganizationService — Phase 4 platform-admin subscription conversion', () => {
+  const ORG_ID = 'org-1';
+  const ADMIN_ID = 'platform-admin-1';
+
+  function makeOrg(overrides: Record<string, unknown> = {}) {
+    return {
+      id: ORG_ID,
+      legalName: 'Acme Freight LLC',
+      primaryContactName: 'Jane Admin',
+      primaryContactEmail: 'jane@acme-freight.test',
+      status: 'ACTIVE',
+      createdAt: new Date('2026-01-01'),
+      subscriptionStatus: 'TRIAL',
+      trialStartedAt: new Date('2026-09-01T00:00:00.000Z'),
+      trialEndsAt: new Date('2026-09-08T00:00:00.000Z'),
+      maxCarriers: 1,
+      maxDrivers: 5,
+      subscriptionConvertedAt: null,
+      subscriptionConvertedByUserId: null,
+      ...overrides,
+    };
+  }
+
+  function buildService(opts: {
+    org?: ReturnType<typeof makeOrg> | null;
+    carrierCount?: number;
+    driverCount?: number;
+  } = {}) {
+    const org = 'org' in opts ? opts.org : makeOrg();
+
+    const tx = {
+      $queryRaw: jest.fn().mockResolvedValue(undefined),
+      organization: {
+        findUnique: jest.fn().mockResolvedValue(org),
+        update: jest.fn().mockImplementation(({ data }) => ({ ...org, ...data })),
+      },
+    };
+
+    const prisma = {
+      organization: {
+        findMany: jest.fn().mockResolvedValue([]),
+        findUnique: jest.fn().mockResolvedValue(org),
+      },
+      carrier: { count: jest.fn().mockResolvedValue(opts.carrierCount ?? 0) },
+      driver: { count: jest.fn().mockResolvedValue(opts.driverCount ?? 0) },
+      withTenantTransaction: jest
+        .fn()
+        .mockImplementation((_orgId: string, fn: (tx: unknown) => unknown) => fn(tx)),
+    };
+
+    const audit = { record: jest.fn().mockResolvedValue(undefined) };
+
+    const service = new OrganizationService(
+      prisma as never,
+      {} as never,
+      {} as never,
+      audit as never,
+      {} as never,
+      {} as never,
+    );
+
+    return { service, tx, prisma, audit, org };
+  }
+
+  describe('findAllForPlatformAdmin', () => {
+    it('returns only the summary fields, no address/contact/payment-terms data', async () => {
+      const { service, prisma } = buildService();
+
+      await service.findAllForPlatformAdmin();
+
+      expect(prisma.organization.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          select: {
+            id: true,
+            legalName: true,
+            subscriptionStatus: true,
+            trialStartedAt: true,
+            trialEndsAt: true,
+            maxCarriers: true,
+            maxDrivers: true,
+          },
+        }),
+      );
+    });
+  });
+
+  describe('findByIdForPlatformAdmin', () => {
+    it('includes the current qualifying carrier/driver counts, using the exact Phase 2 qualifying definitions', async () => {
+      const { service, prisma } = buildService({ carrierCount: 1, driverCount: 4 });
+
+      const result = await service.findByIdForPlatformAdmin(ORG_ID);
+
+      expect(prisma.carrier.count).toHaveBeenCalledWith({
+        where: { organizationId: ORG_ID, status: { in: ['PENDING', 'ACTIVE'] } },
+      });
+      expect(prisma.driver.count).toHaveBeenCalledWith({
+        where: { organizationId: ORG_ID, active: true },
+      });
+      expect(result?.qualifyingCarrierCount).toBe(1);
+      expect(result?.qualifyingDriverCount).toBe(4);
+    });
+
+    it('returns null for a nonexistent organization, without counting anything', async () => {
+      const { service, prisma } = buildService({ org: null });
+
+      const result = await service.findByIdForPlatformAdmin('nonexistent');
+
+      expect(result).toBeNull();
+      expect(prisma.carrier.count).not.toHaveBeenCalled();
+      expect(prisma.driver.count).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('convertSubscription', () => {
+    it('locks the Organization row (FOR UPDATE) before reading/updating it', async () => {
+      const { service, tx } = buildService({ org: makeOrg({ subscriptionStatus: 'TRIAL' }) });
+
+      await service.convertSubscription(ORG_ID, { maxCarriers: 5, maxDrivers: 20 }, ADMIN_ID);
+
+      expect(tx.$queryRaw).toHaveBeenCalled();
+      const callOrder = (tx.$queryRaw as jest.Mock).mock.invocationCallOrder[0];
+      const updateOrder = (tx.organization.update as jest.Mock).mock.invocationCallOrder[0];
+      expect(callOrder).toBeLessThan(updateOrder);
+    });
+
+    it('converts a TRIAL organization to ACTIVE with the requested limits', async () => {
+      const { service, tx } = buildService({ org: makeOrg({ subscriptionStatus: 'TRIAL' }) });
+
+      const result = await service.convertSubscription(
+        ORG_ID,
+        { maxCarriers: 5, maxDrivers: 20 },
+        ADMIN_ID,
+      );
+
+      expect(tx.organization.update).toHaveBeenCalledWith({
+        where: { id: ORG_ID },
+        data: expect.objectContaining({
+          subscriptionStatus: 'ACTIVE',
+          maxCarriers: 5,
+          maxDrivers: 20,
+          subscriptionConvertedAt: expect.any(Date),
+          subscriptionConvertedByUserId: ADMIN_ID,
+        }),
+      });
+      expect(result.subscriptionStatus).toBe('ACTIVE');
+    });
+
+    it('converts an EXPIRED organization to ACTIVE with the requested limits', async () => {
+      const { service, tx } = buildService({ org: makeOrg({ subscriptionStatus: 'EXPIRED' }) });
+
+      await service.convertSubscription(ORG_ID, { maxCarriers: null, maxDrivers: null }, ADMIN_ID);
+
+      expect(tx.organization.update).toHaveBeenCalledWith({
+        where: { id: ORG_ID },
+        data: expect.objectContaining({ subscriptionStatus: 'ACTIVE' }),
+      });
+    });
+
+    it('rejects conversion of an already-ACTIVE organization — no update, no audit', async () => {
+      const { service, tx, audit } = buildService({ org: makeOrg({ subscriptionStatus: 'ACTIVE' }) });
+
+      await expect(
+        service.convertSubscription(ORG_ID, { maxCarriers: 5, maxDrivers: 20 }, ADMIN_ID),
+      ).rejects.toThrow(BusinessRuleError);
+      expect(tx.organization.update).not.toHaveBeenCalled();
+      expect(audit.record).not.toHaveBeenCalled();
+    });
+
+    it('rejects conversion of a CANCELLED organization — no update, no audit, never reactivates', async () => {
+      const { service, tx, audit } = buildService({
+        org: makeOrg({ subscriptionStatus: 'CANCELLED' }),
+      });
+
+      await expect(
+        service.convertSubscription(ORG_ID, { maxCarriers: 5, maxDrivers: 20 }, ADMIN_ID),
+      ).rejects.toThrow(BusinessRuleError);
+      expect(tx.organization.update).not.toHaveBeenCalled();
+      expect(audit.record).not.toHaveBeenCalled();
+    });
+
+    it('throws NotFoundError for a nonexistent organization', async () => {
+      const { service } = buildService({ org: null });
+
+      await expect(
+        service.convertSubscription('nonexistent', { maxCarriers: 1, maxDrivers: 1 }, ADMIN_ID),
+      ).rejects.toThrow(NotFoundError);
+    });
+
+    it('preserves trialStartedAt and trialEndsAt — never clears or modifies them', async () => {
+      const trialStartedAt = new Date('2026-09-01T00:00:00.000Z');
+      const trialEndsAt = new Date('2026-09-08T00:00:00.000Z');
+      const { service, tx } = buildService({
+        org: makeOrg({ subscriptionStatus: 'EXPIRED', trialStartedAt, trialEndsAt }),
+      });
+
+      await service.convertSubscription(ORG_ID, { maxCarriers: 5, maxDrivers: 20 }, ADMIN_ID);
+
+      const dataArg = (tx.organization.update as jest.Mock).mock.calls[0][0].data;
+      expect(dataArg).not.toHaveProperty('trialStartedAt');
+      expect(dataArg).not.toHaveProperty('trialEndsAt');
+    });
+
+    it('accepts 0 as a valid limit — blocks all new qualifying resources, not a separate status', async () => {
+      const { service, tx } = buildService({ org: makeOrg({ subscriptionStatus: 'TRIAL' }) });
+
+      await service.convertSubscription(ORG_ID, { maxCarriers: 0, maxDrivers: 0 }, ADMIN_ID);
+
+      expect(tx.organization.update).toHaveBeenCalledWith({
+        where: { id: ORG_ID },
+        data: expect.objectContaining({ maxCarriers: 0, maxDrivers: 0 }),
+      });
+    });
+
+    it('allows a limit below current qualifying usage — never touches existing carriers/drivers', async () => {
+      const { service, tx } = buildService({ org: makeOrg({ subscriptionStatus: 'TRIAL' }) });
+
+      await service.convertSubscription(ORG_ID, { maxCarriers: 5, maxDrivers: 3 }, ADMIN_ID);
+
+      expect(tx.organization.update).toHaveBeenCalledWith({
+        where: { id: ORG_ID },
+        data: expect.objectContaining({ maxCarriers: 5, maxDrivers: 3 }),
+      });
+      // Only the Organization row is ever touched — this tx mock has no
+      // carrier/driver mutation methods defined at all, so any attempt to
+      // modify existing resources would throw, not silently pass.
+      expect(Object.keys(tx)).toEqual(['$queryRaw', 'organization']);
+    });
+
+    it('does not accept subscriptionStatus from the caller — always converts to ACTIVE regardless', async () => {
+      const { service, tx } = buildService({ org: makeOrg({ subscriptionStatus: 'TRIAL' }) });
+
+      await service.convertSubscription(
+        ORG_ID,
+        { maxCarriers: 5, maxDrivers: 20, subscriptionStatus: 'CANCELLED' } as never,
+        ADMIN_ID,
+      );
+
+      expect(tx.organization.update).toHaveBeenCalledWith({
+        where: { id: ORG_ID },
+        data: expect.objectContaining({ subscriptionStatus: 'ACTIVE' }),
+      });
+    });
+
+    it('creates exactly one audit record with the correct actor, organization, and before/after subscription state', async () => {
+      const { service, tx, audit } = buildService({
+        org: makeOrg({
+          subscriptionStatus: 'TRIAL',
+          maxCarriers: 1,
+          maxDrivers: 5,
+        }),
+      });
+
+      await service.convertSubscription(ORG_ID, { maxCarriers: 10, maxDrivers: 50 }, ADMIN_ID);
+
+      expect(audit.record).toHaveBeenCalledTimes(1);
+      expect(audit.record).toHaveBeenCalledWith(
+        tx,
+        expect.objectContaining({
+          organizationId: ORG_ID,
+          action: 'Organization Subscription Converted',
+          entityType: 'Organization',
+          entityId: ORG_ID,
+          actorUserId: ADMIN_ID,
+          previousValue: expect.objectContaining({
+            subscriptionStatus: 'TRIAL',
+            maxCarriers: 1,
+            maxDrivers: 5,
+          }),
+          newValue: expect.objectContaining({
+            subscriptionStatus: 'ACTIVE',
+            maxCarriers: 10,
+            maxDrivers: 50,
+          }),
+        }),
+      );
+    });
   });
 });

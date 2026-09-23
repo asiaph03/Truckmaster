@@ -90,6 +90,14 @@ export const STATUS_BADGE_MAP: Record<string, BadgeColor> = {
   // badge is the "normal" state, per §5.2.1)
   'Load.riskStatus:AT_RISK': 'warning',
   'Load.riskStatus:DELAYED': 'danger',
+
+  // Organization.subscriptionStatus (Phase 4 — platform-admin only,
+  // separate from the existing Organization.status access/suspension
+  // badge, which has no entry here and is unaffected by this phase)
+  'Organization.subscriptionStatus:TRIAL': 'info',
+  'Organization.subscriptionStatus:ACTIVE': 'success',
+  'Organization.subscriptionStatus:EXPIRED': 'danger',
+  'Organization.subscriptionStatus:CANCELLED': 'neutral',
 };
 
 export function getStatusBadgeColor(entityField: string, value: string): BadgeColor | undefined {

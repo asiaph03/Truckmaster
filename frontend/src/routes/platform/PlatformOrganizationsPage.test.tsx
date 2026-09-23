@@ -1,6 +1,6 @@
 import { describe, expect, it, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { http, HttpResponse } from 'msw';
 import { server } from '../../test/mswServer';
@@ -25,6 +25,9 @@ const CREATED_ORGANIZATION = {
 };
 
 function renderPage() {
+  server.use(
+    http.get('/api/v1/platform/organizations', () => HttpResponse.json([])),
+  );
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={queryClient}>
@@ -164,5 +167,97 @@ describe('PlatformOrganizationsPage — Platform Super Admin org creation', () =
           `An invitation has been sent to ${CREATED_ORGANIZATION.primaryContactEmail}.`,
       ),
     ).toBeInTheDocument();
+  });
+});
+
+describe('PlatformOrganizationsPage — Phase 4 organization list', () => {
+  afterEach(() => {
+    useSessionStore.setState({ roles: [], isPlatformSuperAdmin: undefined });
+    useToastStore.setState({ toasts: [] });
+  });
+
+  it('renders each organization with its subscription status, trial expiry, and limits', async () => {
+    useSessionStore.setState({ isPlatformSuperAdmin: true });
+    server.use(
+      http.get('/api/v1/platform/organizations', () =>
+        HttpResponse.json([
+          {
+            id: 'org-1',
+            legalName: 'Acme Freight LLC',
+            subscriptionStatus: 'TRIAL',
+            trialStartedAt: '2026-09-01T00:00:00.000Z',
+            trialEndsAt: '2026-09-08T00:00:00.000Z',
+            maxCarriers: 1,
+            maxDrivers: 5,
+          },
+          {
+            id: 'org-2',
+            legalName: 'Unlimited Freight Co',
+            subscriptionStatus: 'ACTIVE',
+            trialStartedAt: null,
+            trialEndsAt: null,
+            maxCarriers: null,
+            maxDrivers: null,
+          },
+        ]),
+      ),
+    );
+
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter>
+          <PlatformOrganizationsPage />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByText('Acme Freight LLC')).toBeInTheDocument();
+    expect(screen.getByText('Unlimited Freight Co')).toBeInTheDocument();
+    expect(screen.getByText('TRIAL')).toBeInTheDocument();
+    expect(screen.getByText('ACTIVE')).toBeInTheDocument();
+    expect(screen.getAllByText('Unlimited')).toHaveLength(2);
+  });
+
+  it('shows an empty message when there are no organizations yet', async () => {
+    useSessionStore.setState({ isPlatformSuperAdmin: true });
+    renderPage();
+
+    expect(await screen.findByText('No organizations yet.')).toBeInTheDocument();
+  });
+
+  it('clicking a row navigates to that organization\'s detail page', async () => {
+    useSessionStore.setState({ isPlatformSuperAdmin: true });
+    server.use(
+      http.get('/api/v1/platform/organizations', () =>
+        HttpResponse.json([
+          {
+            id: 'org-1',
+            legalName: 'Acme Freight LLC',
+            subscriptionStatus: 'TRIAL',
+            trialStartedAt: null,
+            trialEndsAt: null,
+            maxCarriers: 1,
+            maxDrivers: 5,
+          },
+        ]),
+      ),
+    );
+
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter initialEntries={['/platform/organizations']}>
+          <Routes>
+            <Route path="/platform/organizations" element={<PlatformOrganizationsPage />} />
+            <Route path="/platform/organizations/:id" element={<div>Detail page for org-1</div>} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    fireEvent.click(await screen.findByText('Acme Freight LLC'));
+
+    expect(await screen.findByText('Detail page for org-1')).toBeInTheDocument();
   });
 });

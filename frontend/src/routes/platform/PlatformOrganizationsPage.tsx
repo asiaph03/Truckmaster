@@ -1,11 +1,15 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Lock } from 'lucide-react';
 import { useForm } from 'react-hook-form';
+import { useQuery } from '@tanstack/react-query';
 import { organizationsApi, type CreateOrganizationRequest } from '../../api';
 import { ApiError } from '../../api/errors';
-import { Button, EmptyState, TextField } from '../../components/ui';
+import { Badge, Button, DataTable, EmptyState, TextField } from '../../components/ui';
+import { getStatusBadgeColor } from '../../components/ui/statusBadgeMap';
 import { useToast } from '../../components/ui/toastStore';
 import { useSessionStore } from '../../auth/session-store';
+import { formatBusinessDateTime } from '../loads/businessTimezone';
 import '../shared/ListPage.css';
 import '../shared/DetailPage.css';
 
@@ -15,19 +19,32 @@ interface CreatedOrganizationResult {
 }
 
 /**
- * Platform-console org creation (`POST /platform/organizations`,
+ * Platform-console org list + creation (`GET`/`POST /platform/organizations`,
  * PlatformSuperAdminGuard). Gated on `isPlatformSuperAdmin` specifically —
  * a User-level flag, never an OrganizationMembership role — so a normal
  * org Admin never gains access here just because their membership role
- * happens to be named "ADMIN". No list of past organizations is shown:
- * no `GET /platform/organizations` endpoint exists, and adding one is out
- * of scope for this screen.
+ * happens to be named "ADMIN".
+ *
+ * Phase 4 adds the list (the original create-only screen's own comment
+ * previously noted no `GET` endpoint existed yet). No pagination — current
+ * scale doesn't need it, per the locked Phase 4 design.
  */
 export function PlatformOrganizationsPage() {
   const isPlatformSuperAdmin = useSessionStore((s) => s.isPlatformSuperAdmin);
+  const navigate = useNavigate();
   const toast = useToast();
   const [creating, setCreating] = useState(false);
   const [created, setCreated] = useState<CreatedOrganizationResult | null>(null);
+
+  const {
+    data: organizations = [],
+    isLoading,
+    refetch,
+  } = useQuery({
+    queryKey: ['platform-organizations'],
+    queryFn: () => organizationsApi.list(),
+    enabled: isPlatformSuperAdmin,
+  });
 
   const {
     register,
@@ -46,6 +63,7 @@ export function PlatformOrganizationsPage() {
       toast.success('Organization created successfully.');
       setCreating(false);
       reset();
+      await refetch();
     } catch (error) {
       toast.danger(error instanceof ApiError ? error.message : 'Something went wrong.');
     }
@@ -91,6 +109,44 @@ export function PlatformOrganizationsPage() {
             An invitation has been sent to <strong>{created.primaryContactEmail}</strong>.
           </p>
         </div>
+      ) : null}
+
+      {!creating ? (
+        <DataTable
+          columns={[
+            { key: 'legalName', header: 'Organization', render: (o) => o.legalName },
+            {
+              key: 'subscriptionStatus',
+              header: 'Subscription',
+              render: (o) => (
+                <Badge
+                  label={o.subscriptionStatus}
+                  color={getStatusBadgeColor('Organization.subscriptionStatus', o.subscriptionStatus) ?? 'neutral'}
+                />
+              ),
+            },
+            {
+              key: 'trialEndsAt',
+              header: 'Trial Expires',
+              render: (o) => (o.trialEndsAt ? formatBusinessDateTime(o.trialEndsAt) : '—'),
+            },
+            {
+              key: 'maxCarriers',
+              header: 'Carrier Limit',
+              render: (o) => (o.maxCarriers === null ? 'Unlimited' : o.maxCarriers),
+            },
+            {
+              key: 'maxDrivers',
+              header: 'Driver Limit',
+              render: (o) => (o.maxDrivers === null ? 'Unlimited' : o.maxDrivers),
+            },
+          ]}
+          rows={organizations}
+          rowKey={(o) => o.id}
+          loading={isLoading}
+          emptyMessage="No organizations yet."
+          onRowClick={(o) => navigate(`/platform/organizations/${o.id}`)}
+        />
       ) : null}
 
       {creating ? (

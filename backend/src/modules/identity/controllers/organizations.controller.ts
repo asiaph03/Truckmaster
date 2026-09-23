@@ -1,8 +1,10 @@
-import { Body, Controller, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, UseGuards } from '@nestjs/common';
 import { OrganizationService } from '../services/organization.service';
 import { CreateOrganizationDto } from '../dto/create-organization.dto';
+import { ConvertOrganizationSubscriptionDto } from '../dto/convert-organization-subscription.dto';
 import { PlatformSuperAdminGuard } from '../guards/platform-super-admin.guard';
 import { RequestContextStore } from '../../../common/tenant-context/request-context';
+import { NotFoundError } from '../../../common/errors/app-error';
 
 /**
  * Platform-console route (ARCHITECTURE.md §1.1) — not part of the
@@ -26,5 +28,32 @@ export class OrganizationsController {
     const actingUserId = RequestContextStore.requireUserId();
     const result = await this.organizationService.createOrganization(dto, actingUserId);
     return { organization: result.organization };
+  }
+
+  /** Phase 4 — platform-console org list. Summary projection only. */
+  @Get()
+  list() {
+    return this.organizationService.findAllForPlatformAdmin();
+  }
+
+  /**
+   * Phase 4 — platform-console org detail, including subscription state
+   * and current qualifying carrier/driver counts.
+   */
+  @Get(':id')
+  async findById(@Param('id', ParseUUIDPipe) id: string) {
+    const organization = await this.organizationService.findByIdForPlatformAdmin(id);
+    if (!organization) throw new NotFoundError('Organization not found.');
+    return organization;
+  }
+
+  /** Phase 4 — TRIAL/EXPIRED → ACTIVE conversion. */
+  @Patch(':id/subscription')
+  convertSubscription(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: ConvertOrganizationSubscriptionDto,
+  ) {
+    const actingUserId = RequestContextStore.requireUserId();
+    return this.organizationService.convertSubscription(id, dto, actingUserId);
   }
 }
