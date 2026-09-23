@@ -87,6 +87,8 @@ export class DispatchTrackingService {
         throw new InvalidTransitionError('No Rate Confirmation is on file for this Load.');
       }
 
+      await this.validateSourceResources(tx, organizationId, load.assignedCarrierId, dto);
+
       await tx.dispatchRecord.create({
         data: {
           loadId,
@@ -142,6 +144,8 @@ export class DispatchTrackingService {
       const existing = await tx.dispatchRecord.findFirst({ where: { loadId, organizationId } });
       if (!existing) throw new NotFoundError('Dispatch record not found.');
 
+      await this.validateSourceResources(tx, organizationId, load.assignedCarrierId, dto);
+
       const fieldChanges: { field: string; previous: unknown; new: unknown }[] = [];
       for (const [field, newValue] of Object.entries(dto)) {
         if (newValue === undefined) continue;
@@ -169,6 +173,58 @@ export class DispatchTrackingService {
 
       return updated;
     });
+  }
+
+  /**
+   * Re-validates client-supplied `sourceDriverId`/`sourceTruckId`/
+   * `sourceTrailerId` against this organization and the Load's assigned
+   * carrier before they're persisted onto the DispatchRecord — the DTOs
+   * only enforce UUID format, not that the id resolves to a real,
+   * active, in-scope resource. Same shape as
+   * `CarrierSourcingService.resolveDriverDispatchContext`'s driver
+   * lookup: `organizationId` + `carrierId` + `active: true`, applied
+   * identically to Driver/Truck/Trailer since all three share that
+   * shape in the schema.
+   */
+  private async validateSourceResources(
+    tx: Prisma.TransactionClient,
+    organizationId: string,
+    carrierId: string | null,
+    dto: { sourceDriverId?: string; sourceTruckId?: string; sourceTrailerId?: string },
+  ): Promise<void> {
+    if (dto.sourceDriverId) {
+      const driver = await tx.driver.findFirst({
+        where: {
+          id: dto.sourceDriverId,
+          organizationId,
+          carrierId: carrierId ?? undefined,
+          active: true,
+        },
+      });
+      if (!driver) throw new NotFoundError('Driver not found.');
+    }
+    if (dto.sourceTruckId) {
+      const truck = await tx.truck.findFirst({
+        where: {
+          id: dto.sourceTruckId,
+          organizationId,
+          carrierId: carrierId ?? undefined,
+          active: true,
+        },
+      });
+      if (!truck) throw new NotFoundError('Truck not found.');
+    }
+    if (dto.sourceTrailerId) {
+      const trailer = await tx.trailer.findFirst({
+        where: {
+          id: dto.sourceTrailerId,
+          organizationId,
+          carrierId: carrierId ?? undefined,
+          active: true,
+        },
+      });
+      if (!trailer) throw new NotFoundError('Trailer not found.');
+    }
   }
 
   private async reEvaluateLoadStatus(

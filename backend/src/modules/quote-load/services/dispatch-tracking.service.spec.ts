@@ -11,6 +11,25 @@ const ORG_ID = 'org-1';
 const LOAD_ID = 'load-1';
 const USER_ID = 'user-1';
 
+/**
+ * Simulates Prisma's `findFirst({ where })` against an in-memory fixture
+ * array — every `where` key must match the record exactly (`undefined`
+ * values, e.g. an omitted `carrierId`, are skipped). Used for
+ * driver/truck/trailer so P1-B's wrong-carrier/wrong-org/inactive tests
+ * can each construct a fixture that genuinely fails to match, the same
+ * way the real scoped query would return no row.
+ */
+function scopedFindFirst(records: Record<string, unknown>[] | undefined) {
+  return jest
+    .fn()
+    .mockImplementation(
+      ({ where }: { where: Record<string, unknown> }) =>
+        (records ?? []).find((r) =>
+          Object.entries(where).every(([key, value]) => value === undefined || r[key] === value),
+        ) ?? null,
+    );
+}
+
 function buildService(opts: {
   load?: Record<string, unknown> | null;
   stops?: Record<string, unknown>[];
@@ -18,6 +37,9 @@ function buildService(opts: {
   rateConfirmationDoc?: Record<string, unknown> | null;
   eligibility?: { eligible: boolean; reasons: string[] };
   membership?: Record<string, unknown> | null;
+  drivers?: Record<string, unknown>[];
+  trucks?: Record<string, unknown>[];
+  trailers?: Record<string, unknown>[];
 }) {
   const defaultLoad = {
     id: LOAD_ID,
@@ -86,6 +108,9 @@ function buildService(opts: {
         .fn()
         .mockResolvedValue('membership' in opts ? opts.membership : { id: 'membership-1' }),
     },
+    driver: { findFirst: scopedFindFirst(opts.drivers) },
+    truck: { findFirst: scopedFindFirst(opts.trucks) },
+    trailer: { findFirst: scopedFindFirst(opts.trailers) },
   };
 
   const prisma = {
@@ -180,6 +205,157 @@ describe('DispatchTrackingService.dispatch — Workflow 6 §6.1', () => {
   });
 });
 
+describe('DispatchTrackingService.dispatch — source resource validation (P1-B)', () => {
+  const VALID_DRIVER = {
+    id: 'driver-1',
+    organizationId: ORG_ID,
+    carrierId: 'carrier-1',
+    active: true,
+  };
+  const VALID_TRUCK = {
+    id: 'truck-1',
+    organizationId: ORG_ID,
+    carrierId: 'carrier-1',
+    active: true,
+  };
+  const VALID_TRAILER = {
+    id: 'trailer-1',
+    organizationId: ORG_ID,
+    carrierId: 'carrier-1',
+    active: true,
+  };
+
+  it('A. dispatches successfully when sourceDriverId resolves to an active driver on the assigned carrier', async () => {
+    const { service, tx } = buildService({ drivers: [VALID_DRIVER] });
+
+    await service.dispatch(
+      ORG_ID,
+      LOAD_ID,
+      { ...DISPATCH_DTO, sourceDriverId: 'driver-1' },
+      USER_ID,
+    );
+
+    expect(tx.dispatchRecord.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ sourceDriverId: 'driver-1' }) }),
+    );
+  });
+
+  it('B. rejects sourceDriverId belonging to a different carrier', async () => {
+    const { service } = buildService({
+      drivers: [{ ...VALID_DRIVER, carrierId: 'carrier-999' }],
+    });
+
+    await expect(
+      service.dispatch(ORG_ID, LOAD_ID, { ...DISPATCH_DTO, sourceDriverId: 'driver-1' }, USER_ID),
+    ).rejects.toThrow(NotFoundError);
+  });
+
+  it('C. rejects sourceDriverId belonging to a different organization', async () => {
+    const { service } = buildService({
+      drivers: [{ ...VALID_DRIVER, organizationId: 'org-999' }],
+    });
+
+    await expect(
+      service.dispatch(ORG_ID, LOAD_ID, { ...DISPATCH_DTO, sourceDriverId: 'driver-1' }, USER_ID),
+    ).rejects.toThrow(NotFoundError);
+  });
+
+  it('D. rejects sourceDriverId belonging to an inactive driver', async () => {
+    const { service } = buildService({
+      drivers: [{ ...VALID_DRIVER, active: false }],
+    });
+
+    await expect(
+      service.dispatch(ORG_ID, LOAD_ID, { ...DISPATCH_DTO, sourceDriverId: 'driver-1' }, USER_ID),
+    ).rejects.toThrow(NotFoundError);
+  });
+
+  it('E. dispatches successfully when sourceTruckId resolves to an active truck on the assigned carrier', async () => {
+    const { service, tx } = buildService({ trucks: [VALID_TRUCK] });
+
+    await service.dispatch(ORG_ID, LOAD_ID, { ...DISPATCH_DTO, sourceTruckId: 'truck-1' }, USER_ID);
+
+    expect(tx.dispatchRecord.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ sourceTruckId: 'truck-1' }) }),
+    );
+  });
+
+  it('F. rejects sourceTruckId belonging to a different carrier', async () => {
+    const { service } = buildService({
+      trucks: [{ ...VALID_TRUCK, carrierId: 'carrier-999' }],
+    });
+
+    await expect(
+      service.dispatch(ORG_ID, LOAD_ID, { ...DISPATCH_DTO, sourceTruckId: 'truck-1' }, USER_ID),
+    ).rejects.toThrow(NotFoundError);
+  });
+
+  it('G. rejects sourceTruckId belonging to a different organization', async () => {
+    const { service } = buildService({
+      trucks: [{ ...VALID_TRUCK, organizationId: 'org-999' }],
+    });
+
+    await expect(
+      service.dispatch(ORG_ID, LOAD_ID, { ...DISPATCH_DTO, sourceTruckId: 'truck-1' }, USER_ID),
+    ).rejects.toThrow(NotFoundError);
+  });
+
+  it('H. rejects sourceTruckId belonging to an inactive truck', async () => {
+    const { service } = buildService({
+      trucks: [{ ...VALID_TRUCK, active: false }],
+    });
+
+    await expect(
+      service.dispatch(ORG_ID, LOAD_ID, { ...DISPATCH_DTO, sourceTruckId: 'truck-1' }, USER_ID),
+    ).rejects.toThrow(NotFoundError);
+  });
+
+  it('I. dispatches successfully when sourceTrailerId resolves to an active trailer on the assigned carrier', async () => {
+    const { service, tx } = buildService({ trailers: [VALID_TRAILER] });
+
+    await service.dispatch(
+      ORG_ID,
+      LOAD_ID,
+      { ...DISPATCH_DTO, sourceTrailerId: 'trailer-1' },
+      USER_ID,
+    );
+
+    expect(tx.dispatchRecord.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ sourceTrailerId: 'trailer-1' }) }),
+    );
+  });
+
+  it('J. rejects sourceTrailerId belonging to a different carrier', async () => {
+    const { service } = buildService({
+      trailers: [{ ...VALID_TRAILER, carrierId: 'carrier-999' }],
+    });
+
+    await expect(
+      service.dispatch(ORG_ID, LOAD_ID, { ...DISPATCH_DTO, sourceTrailerId: 'trailer-1' }, USER_ID),
+    ).rejects.toThrow(NotFoundError);
+  });
+
+  it('K. rejects sourceTrailerId belonging to a different organization', async () => {
+    const { service } = buildService({
+      trailers: [{ ...VALID_TRAILER, organizationId: 'org-999' }],
+    });
+
+    await expect(
+      service.dispatch(ORG_ID, LOAD_ID, { ...DISPATCH_DTO, sourceTrailerId: 'trailer-1' }, USER_ID),
+    ).rejects.toThrow(NotFoundError);
+  });
+
+  it('L. rejects sourceTrailerId belonging to an inactive trailer', async () => {
+    const { service } = buildService({
+      trailers: [{ ...VALID_TRAILER, active: false }],
+    });
+
+    await expect(
+      service.dispatch(ORG_ID, LOAD_ID, { ...DISPATCH_DTO, sourceTrailerId: 'trailer-1' }, USER_ID),
+    ).rejects.toThrow(NotFoundError);
+  });
+});
+
 describe('DispatchTrackingService.updateDispatch — Workflow 6 §6.9', () => {
   it('audits a field-level diff when values actually change', async () => {
     const { service, audit } = buildService({
@@ -201,6 +377,157 @@ describe('DispatchTrackingService.updateDispatch — Workflow 6 §6.9', () => {
     await expect(
       service.updateDispatch(ORG_ID, LOAD_ID, { driverName: 'New Name' }, USER_ID),
     ).rejects.toThrow(InvalidTransitionError);
+  });
+});
+
+describe('DispatchTrackingService.updateDispatch — source resource validation (P1-B)', () => {
+  const DISPATCHED_LOAD = { id: LOAD_ID, status: 'DISPATCHED', assignedCarrierId: 'carrier-1' };
+  const VALID_DRIVER = {
+    id: 'driver-1',
+    organizationId: ORG_ID,
+    carrierId: 'carrier-1',
+    active: true,
+  };
+  const VALID_TRUCK = {
+    id: 'truck-1',
+    organizationId: ORG_ID,
+    carrierId: 'carrier-1',
+    active: true,
+  };
+  const VALID_TRAILER = {
+    id: 'trailer-1',
+    organizationId: ORG_ID,
+    carrierId: 'carrier-1',
+    active: true,
+  };
+
+  it('A. updates successfully when sourceDriverId resolves to an active driver on the assigned carrier', async () => {
+    const { service, tx } = buildService({ load: DISPATCHED_LOAD, drivers: [VALID_DRIVER] });
+
+    await service.updateDispatch(ORG_ID, LOAD_ID, { sourceDriverId: 'driver-1' }, USER_ID);
+
+    expect(tx.dispatchRecord.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ sourceDriverId: 'driver-1' }) }),
+    );
+  });
+
+  it('B. rejects sourceDriverId belonging to a different carrier', async () => {
+    const { service } = buildService({
+      load: DISPATCHED_LOAD,
+      drivers: [{ ...VALID_DRIVER, carrierId: 'carrier-999' }],
+    });
+
+    await expect(
+      service.updateDispatch(ORG_ID, LOAD_ID, { sourceDriverId: 'driver-1' }, USER_ID),
+    ).rejects.toThrow(NotFoundError);
+  });
+
+  it('C. rejects sourceDriverId belonging to a different organization', async () => {
+    const { service } = buildService({
+      load: DISPATCHED_LOAD,
+      drivers: [{ ...VALID_DRIVER, organizationId: 'org-999' }],
+    });
+
+    await expect(
+      service.updateDispatch(ORG_ID, LOAD_ID, { sourceDriverId: 'driver-1' }, USER_ID),
+    ).rejects.toThrow(NotFoundError);
+  });
+
+  it('D. rejects sourceDriverId belonging to an inactive driver', async () => {
+    const { service } = buildService({
+      load: DISPATCHED_LOAD,
+      drivers: [{ ...VALID_DRIVER, active: false }],
+    });
+
+    await expect(
+      service.updateDispatch(ORG_ID, LOAD_ID, { sourceDriverId: 'driver-1' }, USER_ID),
+    ).rejects.toThrow(NotFoundError);
+  });
+
+  it('E. updates successfully when sourceTruckId resolves to an active truck on the assigned carrier', async () => {
+    const { service, tx } = buildService({ load: DISPATCHED_LOAD, trucks: [VALID_TRUCK] });
+
+    await service.updateDispatch(ORG_ID, LOAD_ID, { sourceTruckId: 'truck-1' }, USER_ID);
+
+    expect(tx.dispatchRecord.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ sourceTruckId: 'truck-1' }) }),
+    );
+  });
+
+  it('F. rejects sourceTruckId belonging to a different carrier', async () => {
+    const { service } = buildService({
+      load: DISPATCHED_LOAD,
+      trucks: [{ ...VALID_TRUCK, carrierId: 'carrier-999' }],
+    });
+
+    await expect(
+      service.updateDispatch(ORG_ID, LOAD_ID, { sourceTruckId: 'truck-1' }, USER_ID),
+    ).rejects.toThrow(NotFoundError);
+  });
+
+  it('G. rejects sourceTruckId belonging to a different organization', async () => {
+    const { service } = buildService({
+      load: DISPATCHED_LOAD,
+      trucks: [{ ...VALID_TRUCK, organizationId: 'org-999' }],
+    });
+
+    await expect(
+      service.updateDispatch(ORG_ID, LOAD_ID, { sourceTruckId: 'truck-1' }, USER_ID),
+    ).rejects.toThrow(NotFoundError);
+  });
+
+  it('H. rejects sourceTruckId belonging to an inactive truck', async () => {
+    const { service } = buildService({
+      load: DISPATCHED_LOAD,
+      trucks: [{ ...VALID_TRUCK, active: false }],
+    });
+
+    await expect(
+      service.updateDispatch(ORG_ID, LOAD_ID, { sourceTruckId: 'truck-1' }, USER_ID),
+    ).rejects.toThrow(NotFoundError);
+  });
+
+  it('I. updates successfully when sourceTrailerId resolves to an active trailer on the assigned carrier', async () => {
+    const { service, tx } = buildService({ load: DISPATCHED_LOAD, trailers: [VALID_TRAILER] });
+
+    await service.updateDispatch(ORG_ID, LOAD_ID, { sourceTrailerId: 'trailer-1' }, USER_ID);
+
+    expect(tx.dispatchRecord.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ sourceTrailerId: 'trailer-1' }) }),
+    );
+  });
+
+  it('J. rejects sourceTrailerId belonging to a different carrier', async () => {
+    const { service } = buildService({
+      load: DISPATCHED_LOAD,
+      trailers: [{ ...VALID_TRAILER, carrierId: 'carrier-999' }],
+    });
+
+    await expect(
+      service.updateDispatch(ORG_ID, LOAD_ID, { sourceTrailerId: 'trailer-1' }, USER_ID),
+    ).rejects.toThrow(NotFoundError);
+  });
+
+  it('K. rejects sourceTrailerId belonging to a different organization', async () => {
+    const { service } = buildService({
+      load: DISPATCHED_LOAD,
+      trailers: [{ ...VALID_TRAILER, organizationId: 'org-999' }],
+    });
+
+    await expect(
+      service.updateDispatch(ORG_ID, LOAD_ID, { sourceTrailerId: 'trailer-1' }, USER_ID),
+    ).rejects.toThrow(NotFoundError);
+  });
+
+  it('L. rejects sourceTrailerId belonging to an inactive trailer', async () => {
+    const { service } = buildService({
+      load: DISPATCHED_LOAD,
+      trailers: [{ ...VALID_TRAILER, active: false }],
+    });
+
+    await expect(
+      service.updateDispatch(ORG_ID, LOAD_ID, { sourceTrailerId: 'trailer-1' }, USER_ID),
+    ).rejects.toThrow(NotFoundError);
   });
 });
 

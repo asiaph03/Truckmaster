@@ -794,6 +794,28 @@ describe('Sourcing & Dispatch (e2e)', () => {
       const loadAfter = await adminAgent.get(`${API}/loads/${loadId}`).expect(200);
       expect(loadAfter.body.dispatchRecord.driverName).toBe('Original Driver');
     });
+
+    it('P1-B: rejects dispatch when sourceDriverId belongs to a different carrier than the one assigned to this Load', async () => {
+      const assignedCarrierId = await createEligibleCarrier('dispatch-driver-wrong-carrier');
+      const otherCarrierId = await createEligibleCarrier('dispatch-driver-other-carrier');
+      const otherCarrierDriver = await adminAgent
+        .post(`${API}/carriers/${otherCarrierId}/drivers`)
+        .send({ firstName: 'Other', lastName: 'Driver', phone: '555-2222' })
+        .expect(201);
+
+      const loadId = await createBookedLoad('dispatch-driver-wrong-carrier');
+      await progressToRateConfirmation(loadId, assignedCarrierId);
+
+      const res = await adminAgent
+        .post(`${API}/loads/${loadId}/dispatch`)
+        .send({ ...DISPATCH_BODY, sourceDriverId: otherCarrierDriver.body.id })
+        .expect(404);
+      expect(res.body.error.code).toBe('NOT_FOUND');
+
+      const loadAfter = await adminAgent.get(`${API}/loads/${loadId}`).expect(200);
+      expect(loadAfter.body.status).toBe('RATE_CONFIRMATION');
+      expect(loadAfter.body.dispatchRecord).toBeFalsy();
+    });
   });
 
   describe('Post-Dispatch Editing — Workflow 6 §6.9', () => {
