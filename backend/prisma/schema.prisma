@@ -44,6 +44,13 @@ enum OrganizationStatus {
   SUSPENDED
 }
 
+enum SubscriptionStatus {
+  TRIAL
+  ACTIVE
+  EXPIRED
+  CANCELLED
+}
+
 enum PaymentTerms {
   DUE_ON_RECEIPT
   NET_15
@@ -167,6 +174,19 @@ model Organization {
   primaryContactPhone String             @map("primary_contact_phone")
   defaultPaymentTerms PaymentTerms       @default(NET_30) @map("default_payment_terms")
   status              OrganizationStatus @default(ACTIVE)
+
+  // Subscription/entitlement lifecycle — deliberately separate from
+  // `status` above, which remains the org's access/suspension state.
+  // `subscriptionStatus: TRIAL` is itself the discriminator for a demo/
+  // trial organization; no separate `isDemo` field is introduced.
+  subscriptionStatus            SubscriptionStatus @default(ACTIVE) @map("subscription_status")
+  trialStartedAt                DateTime?          @map("trial_started_at")
+  trialEndsAt                   DateTime?          @map("trial_ends_at")
+  maxCarriers                   Int?               @map("max_carriers")
+  maxDrivers                    Int?               @map("max_drivers")
+  subscriptionConvertedAt       DateTime?          @map("subscription_converted_at")
+  subscriptionConvertedByUserId String?            @map("subscription_converted_by_user_id") @db.Uuid
+
   createdByUserId     String             @map("created_by_user_id") @db.Uuid
   createdBy           User               @relation("OrganizationCreatedBy", fields: [createdByUserId], references: [id])
   createdAt           DateTime           @default(now()) @map("created_at")

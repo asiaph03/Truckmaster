@@ -120,6 +120,32 @@ describe('OrganizationService.createOrganization', () => {
       expect.objectContaining({ action: 'Initial Admin Assigned (Existing Identity)' }),
     );
   });
+
+  /**
+   * Monitoring — subscription fields (Phase 1, data model only). A normal
+   * (non-demo) organization creation must keep relying on the schema-level
+   * defaults (`subscriptionStatus: ACTIVE`, `maxCarriers`/`maxDrivers:
+   * null` — unlimited) exactly like `defaultPaymentTerms` already does,
+   * rather than this call site ever setting them explicitly. No `isDemo`
+   * field/boolean exists or is introduced — `subscriptionStatus: TRIAL` is
+   * itself the future discriminator for a demo organization, set by a
+   * later, separate creation path, not here.
+   */
+  it('never sets subscription/entitlement fields — relies entirely on the schema-level ACTIVE/unlimited defaults', async () => {
+    const { service, tx } = buildService({ existingUser: null });
+
+    await service.createOrganization(DTO, SUPER_ADMIN_ID);
+
+    const dataArg = (tx.organization.create as jest.Mock).mock.calls[0][0].data;
+    expect(dataArg).not.toHaveProperty('subscriptionStatus');
+    expect(dataArg).not.toHaveProperty('trialStartedAt');
+    expect(dataArg).not.toHaveProperty('trialEndsAt');
+    expect(dataArg).not.toHaveProperty('maxCarriers');
+    expect(dataArg).not.toHaveProperty('maxDrivers');
+    expect(dataArg).not.toHaveProperty('subscriptionConvertedAt');
+    expect(dataArg).not.toHaveProperty('subscriptionConvertedByUserId');
+    expect(dataArg).not.toHaveProperty('isDemo');
+  });
 });
 
 /**
