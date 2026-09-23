@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { Carrier, Prisma } from '@prisma/client';
 import { PrismaService } from '../../../common/prisma/prisma.service';
 import { AuditService } from '../../../common/audit/audit.service';
+import { EntitlementService } from '../../../common/entitlement/entitlement.service';
 import { CarrierEligibilityService } from './carrier-eligibility.service';
 import { CreateCarrierDto } from '../dto/create-carrier.dto';
 import { UpdateCarrierDto } from '../dto/update-carrier.dto';
@@ -28,6 +29,7 @@ export class CarrierService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly eligibility: CarrierEligibilityService,
+    private readonly entitlement: EntitlementService,
   ) {}
 
   async findById(organizationId: string, id: string) {
@@ -107,6 +109,8 @@ export class CarrierService {
           existingCarrierId: duplicate.id,
         });
       }
+
+      await this.entitlement.assertCanCreateCarrier(tx, organizationId);
 
       const carrier = await tx.carrier.create({
         data: {
@@ -377,6 +381,8 @@ export class CarrierService {
         await this.assertNoDuplicateLicense(tx, organizationId, carrierId, dto.licenseNumber, null);
       }
 
+      await this.entitlement.assertCanCreateDriver(tx, organizationId);
+
       const driver = await tx.driver.create({
         data: { organizationId, carrierId, ...dto, active: true },
       });
@@ -570,8 +576,10 @@ export class CarrierService {
     dto: CarrierLifecycleReasonDto,
     actingUserId: string,
   ) {
-    return this.prisma.withTenantTransaction(organizationId, (tx) =>
-      this.transitionDriverActive(
+    return this.prisma.withTenantTransaction(organizationId, async (tx) => {
+      await this.entitlement.assertDriverSlotAvailable(tx, organizationId);
+
+      return this.transitionDriverActive(
         tx,
         organizationId,
         carrierId,
@@ -582,8 +590,8 @@ export class CarrierService {
         'Only an inactive driver can be reactivated.',
         dto.reason,
         actingUserId,
-      ),
-    );
+      );
+    });
   }
 
   async addTruck(
@@ -667,6 +675,8 @@ export class CarrierService {
           reasons: readiness.reasons,
         });
       }
+
+      await this.entitlement.assertCarrierSlotAvailable(tx, organizationId);
 
       const updated = await tx.carrier.update({
         where: { id: carrierId },
@@ -798,6 +808,8 @@ export class CarrierService {
     actingUserId: string,
   ): Promise<Carrier> {
     return this.prisma.withTenantTransaction(organizationId, async (tx) => {
+      await this.entitlement.assertCarrierSlotAvailable(tx, organizationId);
+
       const updated = await this.transitionStatus(
         tx,
         organizationId,

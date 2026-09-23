@@ -64,9 +64,20 @@ describe('CarrierService', () => {
         .mockResolvedValue(opts.activationReadiness ?? { eligible: true, reasons: [] }),
       recalculate: jest.fn().mockResolvedValue({ eligible: true, reasons: [] }),
     };
+    const entitlement = {
+      assertCanCreateCarrier: jest.fn().mockResolvedValue(undefined),
+      assertCarrierSlotAvailable: jest.fn().mockResolvedValue(undefined),
+      assertCanCreateDriver: jest.fn().mockResolvedValue(undefined),
+      assertDriverSlotAvailable: jest.fn().mockResolvedValue(undefined),
+    };
 
-    const service = new CarrierService(prisma as never, audit as never, eligibility as never);
-    return { service, tx, prisma, audit, eligibility, carrierRow };
+    const service = new CarrierService(
+      prisma as never,
+      audit as never,
+      eligibility as never,
+      entitlement as never,
+    );
+    return { service, tx, prisma, audit, eligibility, entitlement, carrierRow };
   }
 
   describe('create — Workflow 3 §3.2 MC/DOT duplicate hard block', () => {
@@ -103,6 +114,28 @@ describe('CarrierService', () => {
     });
   });
 
+  describe('create — Phase 2 entitlement enforcement', () => {
+    it('checks assertCanCreateCarrier (expired-trial + slot check) before creating', async () => {
+      const { service, tx, entitlement } = buildService({ duplicateCarrier: null });
+
+      await service.create(ORG_ID, CREATE_DTO, ACTING_USER);
+
+      expect(entitlement.assertCanCreateCarrier).toHaveBeenCalledWith(tx, ORG_ID);
+    });
+
+    it('propagates a BusinessRuleError from the entitlement check and never creates the carrier', async () => {
+      const { service, tx, entitlement } = buildService({ duplicateCarrier: null });
+      entitlement.assertCanCreateCarrier.mockRejectedValue(
+        new BusinessRuleError('This organization has reached its carrier limit (1).'),
+      );
+
+      await expect(service.create(ORG_ID, CREATE_DTO, ACTING_USER)).rejects.toThrow(
+        BusinessRuleError,
+      );
+      expect(tx.carrier.create).not.toHaveBeenCalled();
+    });
+  });
+
   describe('activate — Workflow 3 §3.7', () => {
     it('rejects activation when the carrier is not currently Pending', async () => {
       const { service } = buildService({ carrier: { id: 'c1', status: 'ACTIVE' } });
@@ -132,6 +165,31 @@ describe('CarrierService', () => {
         data: { status: 'ACTIVE' },
       });
       expect(eligibility.recalculate).toHaveBeenCalledWith(tx, ORG_ID, 'c1');
+    });
+
+    it('checks assertCarrierSlotAvailable (count only, no expired-trial block) before activating', async () => {
+      const { service, tx, entitlement } = buildService({
+        carrier: { id: 'c1', status: 'PENDING' },
+        activationReadiness: { eligible: true, reasons: [] },
+      });
+
+      await service.activate(ORG_ID, 'c1', ACTING_USER);
+
+      expect(entitlement.assertCarrierSlotAvailable).toHaveBeenCalledWith(tx, ORG_ID);
+      expect(entitlement.assertCanCreateCarrier).not.toHaveBeenCalled();
+    });
+
+    it('propagates a BusinessRuleError from the slot check and never activates the carrier', async () => {
+      const { service, tx, entitlement } = buildService({
+        carrier: { id: 'c1', status: 'PENDING' },
+        activationReadiness: { eligible: true, reasons: [] },
+      });
+      entitlement.assertCarrierSlotAvailable.mockRejectedValue(
+        new BusinessRuleError('This organization has reached its carrier limit (1).'),
+      );
+
+      await expect(service.activate(ORG_ID, 'c1', ACTING_USER)).rejects.toThrow(BusinessRuleError);
+      expect(tx.carrier.update).not.toHaveBeenCalled();
     });
   });
 
@@ -349,6 +407,53 @@ describe('CarrierService', () => {
     });
   });
 
+  describe('Phase 2 entitlement enforcement — blockCarrier/deactivateCarrier/reactivateCarrier', () => {
+    const REASON_DTO = { reason: 'Insurance lapsed' };
+
+    it('reactivateCarrier checks assertCarrierSlotAvailable before reactivating', async () => {
+      const { service, tx, entitlement } = buildService({
+        carrier: { id: 'c1', status: 'BLOCKED' },
+      });
+
+      await service.reactivateCarrier(ORG_ID, 'c1', REASON_DTO, ACTING_USER);
+
+      expect(entitlement.assertCarrierSlotAvailable).toHaveBeenCalledWith(tx, ORG_ID);
+      expect(entitlement.assertCanCreateCarrier).not.toHaveBeenCalled();
+    });
+
+    it('reactivateCarrier propagates a BusinessRuleError from the slot check and never reactivates', async () => {
+      const { service, tx, entitlement } = buildService({
+        carrier: { id: 'c1', status: 'BLOCKED' },
+      });
+      entitlement.assertCarrierSlotAvailable.mockRejectedValue(
+        new BusinessRuleError('This organization has reached its carrier limit (1).'),
+      );
+
+      await expect(
+        service.reactivateCarrier(ORG_ID, 'c1', REASON_DTO, ACTING_USER),
+      ).rejects.toThrow(BusinessRuleError);
+      expect(tx.carrier.update).not.toHaveBeenCalled();
+    });
+
+    it('blockCarrier never calls any entitlement check — only decreases the counted total', async () => {
+      const { service, entitlement } = buildService({ carrier: { id: 'c1', status: 'ACTIVE' } });
+
+      await service.blockCarrier(ORG_ID, 'c1', REASON_DTO, ACTING_USER);
+
+      expect(entitlement.assertCanCreateCarrier).not.toHaveBeenCalled();
+      expect(entitlement.assertCarrierSlotAvailable).not.toHaveBeenCalled();
+    });
+
+    it('deactivateCarrier never calls any entitlement check — only decreases the counted total', async () => {
+      const { service, entitlement } = buildService({ carrier: { id: 'c1', status: 'ACTIVE' } });
+
+      await service.deactivateCarrier(ORG_ID, 'c1', REASON_DTO, ACTING_USER);
+
+      expect(entitlement.assertCanCreateCarrier).not.toHaveBeenCalled();
+      expect(entitlement.assertCarrierSlotAvailable).not.toHaveBeenCalled();
+    });
+  });
+
   /**
    * Task #7 — a separate, local tx mock (carrier + driver) rather than
    * extending the shared buildService() above: the existing "never
@@ -421,9 +526,20 @@ describe('CarrierService', () => {
         checkActivationReadiness: jest.fn(),
         recalculate: jest.fn().mockResolvedValue({ eligible: true, reasons: [] }),
       };
+      const entitlement = {
+        assertCanCreateCarrier: jest.fn().mockResolvedValue(undefined),
+        assertCarrierSlotAvailable: jest.fn().mockResolvedValue(undefined),
+        assertCanCreateDriver: jest.fn().mockResolvedValue(undefined),
+        assertDriverSlotAvailable: jest.fn().mockResolvedValue(undefined),
+      };
 
-      const service = new CarrierService(prisma as never, audit as never, eligibility as never);
-      return { service, tx, audit, driverRow, carrierRow };
+      const service = new CarrierService(
+        prisma as never,
+        audit as never,
+        eligibility as never,
+        entitlement as never,
+      );
+      return { service, tx, audit, entitlement, driverRow, carrierRow };
     }
 
     describe('addDriver — duplicate license guard', () => {
@@ -454,6 +570,38 @@ describe('CarrierService', () => {
         );
 
         expect(tx.driver.create).toHaveBeenCalled();
+      });
+    });
+
+    describe('addDriver — Phase 2 entitlement enforcement', () => {
+      it('checks assertCanCreateDriver (expired-trial + slot check) before creating', async () => {
+        const { service, tx, entitlement } = buildDriverService({ duplicateDriver: null });
+
+        await service.addDriver(
+          ORG_ID,
+          CARRIER_ID,
+          { firstName: 'New', lastName: 'Driver', phone: '555-0101' },
+          ACTING_USER,
+        );
+
+        expect(entitlement.assertCanCreateDriver).toHaveBeenCalledWith(tx, ORG_ID);
+      });
+
+      it('propagates a BusinessRuleError from the entitlement check and never creates the driver', async () => {
+        const { service, tx, entitlement } = buildDriverService({ duplicateDriver: null });
+        entitlement.assertCanCreateDriver.mockRejectedValue(
+          new BusinessRuleError('This organization has reached its driver limit (5).'),
+        );
+
+        await expect(
+          service.addDriver(
+            ORG_ID,
+            CARRIER_ID,
+            { firstName: 'New', lastName: 'Driver', phone: '555-0101' },
+            ACTING_USER,
+          ),
+        ).rejects.toThrow(BusinessRuleError);
+        expect(tx.driver.create).not.toHaveBeenCalled();
       });
     });
 
@@ -615,6 +763,15 @@ describe('CarrierService', () => {
         ).rejects.toThrow(BusinessRuleError);
       });
 
+      it('deactivateDriver never calls any entitlement check — only decreases the counted total', async () => {
+        const { service, entitlement } = buildDriverService({});
+
+        await service.deactivateDriver(ORG_ID, CARRIER_ID, DRIVER_ID, REASON_DTO, ACTING_USER);
+
+        expect(entitlement.assertCanCreateDriver).not.toHaveBeenCalled();
+        expect(entitlement.assertDriverSlotAvailable).not.toHaveBeenCalled();
+      });
+
       it('reactivates an inactive driver, audits Driver Reactivated with reason', async () => {
         const { service, tx, audit } = buildDriverService({
           driver: { id: DRIVER_ID, organizationId: ORG_ID, carrierId: CARRIER_ID, active: false },
@@ -637,6 +794,31 @@ describe('CarrierService', () => {
             reason: 'No longer with the company',
           }),
         );
+      });
+
+      it('checks assertDriverSlotAvailable (count only, no expired-trial block) before reactivating', async () => {
+        const { service, tx, entitlement } = buildDriverService({
+          driver: { id: DRIVER_ID, organizationId: ORG_ID, carrierId: CARRIER_ID, active: false },
+        });
+
+        await service.reactivateDriver(ORG_ID, CARRIER_ID, DRIVER_ID, REASON_DTO, ACTING_USER);
+
+        expect(entitlement.assertDriverSlotAvailable).toHaveBeenCalledWith(tx, ORG_ID);
+        expect(entitlement.assertCanCreateDriver).not.toHaveBeenCalled();
+      });
+
+      it('propagates a BusinessRuleError from the slot check and never reactivates the driver', async () => {
+        const { service, tx, entitlement } = buildDriverService({
+          driver: { id: DRIVER_ID, organizationId: ORG_ID, carrierId: CARRIER_ID, active: false },
+        });
+        entitlement.assertDriverSlotAvailable.mockRejectedValue(
+          new BusinessRuleError('This organization has reached its driver limit (5).'),
+        );
+
+        await expect(
+          service.reactivateDriver(ORG_ID, CARRIER_ID, DRIVER_ID, REASON_DTO, ACTING_USER),
+        ).rejects.toThrow(BusinessRuleError);
+        expect(tx.driver.update).not.toHaveBeenCalled();
       });
 
       it('reactivation succeeds when no other active driver shares the license', async () => {
