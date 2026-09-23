@@ -14,6 +14,7 @@ import { AuditService } from '../../../common/audit/audit.service';
 import { NotificationService } from '../../notification/services/notification.service';
 import { parseBusinessDateTime } from '../../../common/timezone/business-timezone';
 import { OrganizationSequenceService } from '../../identity/services/organization-sequence.service';
+import { EntitlementService } from '../../../common/entitlement/entitlement.service';
 import { RateAgreementMatchingService } from './rate-agreement-matching.service';
 import { shapeFinancialFields, shapeFinancialFieldsList } from './financial-field-shaping';
 import { CreateLoadDto } from '../dto/create-load.dto';
@@ -108,6 +109,7 @@ export class LoadService {
     private readonly sequences: OrganizationSequenceService,
     private readonly rateAgreementMatching: RateAgreementMatchingService,
     private readonly notifications: NotificationService,
+    private readonly entitlement: EntitlementService,
   ) {}
 
   async findById(
@@ -325,6 +327,13 @@ export class LoadService {
     organizationId: string,
     params: CreateFromBookingParams,
   ): Promise<Load> {
+    // Phase 3 — the single enforcement point for both booking paths (§4.7
+    // Quote conversion, §4.8 Direct-to-Booked), per this method's own
+    // "shared Load-row creation for both booking paths" role above. Neither
+    // caller needs its own check — createDirect()/QuoteService.convert()
+    // both flow through here before any Load row is written.
+    await this.entitlement.assertCanCreateOperationalRecord(tx, organizationId);
+
     const nextNumber = await this.sequences.getNextNumber(tx, organizationId, 'LOAD');
     const loadNumber = this.sequences.format('LOAD', nextNumber);
 

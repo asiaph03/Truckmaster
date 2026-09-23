@@ -77,6 +77,7 @@ function buildService(opts: {
       customerRate: new Prisma.Decimal(params.customerRate),
     })),
   };
+  const entitlement = { assertCanCreateOperationalRecord: jest.fn().mockResolvedValue(undefined) };
 
   const service = new QuoteService(
     prisma as never,
@@ -84,9 +85,10 @@ function buildService(opts: {
     sequences as never,
     rateAgreementMatching as never,
     loadService as never,
+    entitlement as never,
   );
 
-  return { service, tx, audit, sequences, rateAgreementMatching, loadService };
+  return { service, tx, audit, sequences, rateAgreementMatching, loadService, entitlement };
 }
 
 describe('QuoteService.create — Workflow 4 §4.2', () => {
@@ -254,6 +256,44 @@ describe('QuoteService.create — Workflow 4 §4.2', () => {
   });
 });
 
+describe('QuoteService.create — Phase 3 expired-trial enforcement', () => {
+  const DTO = {
+    customerId: CUSTOMER_ID,
+    stops: BASE_STOPS as never,
+    equipmentType: 'DRY_VAN' as const,
+    customerRate: '1800.00',
+  };
+
+  it('checks assertCanCreateOperationalRecord before creating the Quote', async () => {
+    const { service, tx, entitlement } = buildService({});
+
+    await service.create(ORG_ID, DTO, USER_ID);
+
+    expect(entitlement.assertCanCreateOperationalRecord).toHaveBeenCalledWith(tx, ORG_ID);
+  });
+
+  it('propagates a BusinessRuleError from the entitlement check and never creates the Quote (ACTIVE/TRIAL/EXPIRED distinction owned by EntitlementService itself)', async () => {
+    const { service, tx, entitlement } = buildService({});
+    entitlement.assertCanCreateOperationalRecord.mockRejectedValue(
+      new BusinessRuleError(
+        'Your trial has expired. Convert to a paid subscription to create new operational records.',
+      ),
+    );
+
+    await expect(service.create(ORG_ID, DTO, USER_ID)).rejects.toThrow(BusinessRuleError);
+    expect(tx.quote.create).not.toHaveBeenCalled();
+  });
+
+  it('allows Quote creation when the entitlement check resolves (ACTIVE/TRIAL-before-expiry)', async () => {
+    const { service, entitlement } = buildService({});
+
+    const quote = await service.create(ORG_ID, DTO, USER_ID);
+
+    expect(quote.status).toBe('OPEN');
+    expect(entitlement.assertCanCreateOperationalRecord).toHaveBeenCalled();
+  });
+});
+
 describe('QuoteService.convert — Workflow 4 §4.7', () => {
   const OPEN_QUOTE = {
     id: 'quote-1',
@@ -387,6 +427,27 @@ describe('QuoteService.convert — Workflow 4 §4.7', () => {
       service.convert(ORG_ID, 'nonexistent', { confirmedCustomerRate: '100.00' }, USER_ID),
     ).rejects.toThrow(NotFoundError);
   });
+
+  it(
+    'Phase 3 — propagates an expired-trial BusinessRuleError from LoadService.createFromBooking ' +
+      '(the single authoritative Load-creation method conversion itself calls) and never flips the ' +
+      'Quote to WON — no separate entitlement check is added in QuoteService.convert() itself, since ' +
+      'createFromBooking already enforces it for both booking paths',
+    async () => {
+      const { service, tx, loadService } = buildService({});
+      tx.quote.findFirst.mockResolvedValue(OPEN_QUOTE);
+      loadService.createFromBooking.mockRejectedValue(
+        new BusinessRuleError(
+          'Your trial has expired. Convert to a paid subscription to create new operational records.',
+        ),
+      );
+
+      await expect(
+        service.convert(ORG_ID, 'quote-1', { confirmedCustomerRate: '2450.00' }, USER_ID),
+      ).rejects.toThrow(BusinessRuleError);
+      expect(tx.quote.update).not.toHaveBeenCalled();
+    },
+  );
 });
 
 describe('QuoteService.markLost — Workflow 4 §4.6', () => {

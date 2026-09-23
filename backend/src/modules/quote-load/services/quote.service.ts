@@ -3,6 +3,7 @@ import { Load, MembershipRoleName, Prisma, Quote } from '@prisma/client';
 import { PrismaService } from '../../../common/prisma/prisma.service';
 import { AuditService } from '../../../common/audit/audit.service';
 import { OrganizationSequenceService } from '../../identity/services/organization-sequence.service';
+import { EntitlementService } from '../../../common/entitlement/entitlement.service';
 import { RateAgreementMatchingService } from './rate-agreement-matching.service';
 import { LoadService } from './load.service';
 import { shapeFinancialFields, shapeFinancialFieldsList } from './financial-field-shaping';
@@ -30,6 +31,7 @@ export class QuoteService {
     private readonly sequences: OrganizationSequenceService,
     private readonly rateAgreementMatching: RateAgreementMatchingService,
     private readonly loadService: LoadService,
+    private readonly entitlement: EntitlementService,
   ) {}
 
   async findById(
@@ -100,6 +102,8 @@ export class QuoteService {
         dto.equipmentType,
         dto.customerRate,
       );
+
+      await this.entitlement.assertCanCreateOperationalRecord(tx, organizationId);
 
       const nextNumber = await this.sequences.getNextNumber(tx, organizationId, 'QUOTE');
       const quoteNumber = this.sequences.format('QUOTE', nextNumber);

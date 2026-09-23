@@ -64,6 +64,25 @@ export class EntitlementService {
     await this.assertCarrierCountWithinLimit(tx, organizationId, quick);
   }
 
+  /**
+   * Phase 3 — used by QuoteService.create() and LoadService.createFromBooking()
+   * (the single, shared creation method behind both direct Load booking and
+   * Quote → Load conversion — see that method's own doc comment). Quote and
+   * Load have no configured count limit (no maxQuotes/maxLoads field exists,
+   * and none is being added here) — this is a pure expired-trial status
+   * gate, reusing the same `resolveEffectiveStatus`/`assertNotExpired` this
+   * class already uses for carriers/drivers, with no row lock: there is no
+   * shared counted resource to protect against a race on, so
+   * `SELECT ... FOR UPDATE` would be pure overhead here.
+   */
+  async assertCanCreateOperationalRecord(
+    tx: Prisma.TransactionClient,
+    organizationId: string,
+  ): Promise<void> {
+    const quick = await this.readOrganizationSubscription(tx, organizationId);
+    this.assertNotExpired(quick, 'create new operational records');
+  }
+
   /** Used by CarrierService.addDriver() — expired-trial block + slot check. */
   async assertCanCreateDriver(tx: Prisma.TransactionClient, organizationId: string): Promise<void> {
     const quick = await this.readOrganizationSubscription(tx, organizationId);

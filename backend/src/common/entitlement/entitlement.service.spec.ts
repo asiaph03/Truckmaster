@@ -252,6 +252,80 @@ describe('EntitlementService — carrier/driver slot checks (mocked tx)', () => 
     });
   });
 
+  describe('assertCanCreateOperationalRecord — Phase 3 (Quote/Load expired-trial gate)', () => {
+    it('allows creation for an ACTIVE organization', async () => {
+      const service = new EntitlementService();
+      const { tx } = buildTx({ subscriptionStatus: 'ACTIVE' });
+
+      await expect(
+        service.assertCanCreateOperationalRecord(tx as never, ORG_ID),
+      ).resolves.toBeUndefined();
+    });
+
+    it('allows creation for a TRIAL organization before trialEndsAt', async () => {
+      const service = new EntitlementService();
+      const { tx } = buildTx({ subscriptionStatus: 'TRIAL', trialEndsAt: new Date('2099-01-01') });
+
+      await expect(
+        service.assertCanCreateOperationalRecord(tx as never, ORG_ID),
+      ).resolves.toBeUndefined();
+    });
+
+    it('rejects with BusinessRuleError for a TRIAL organization past trialEndsAt (effective EXPIRED)', async () => {
+      const service = new EntitlementService();
+      const { tx } = buildTx({ subscriptionStatus: 'TRIAL', trialEndsAt: new Date('2000-01-01') });
+
+      await expect(service.assertCanCreateOperationalRecord(tx as never, ORG_ID)).rejects.toThrow(
+        BusinessRuleError,
+      );
+    });
+
+    it('rejects with a message consistent with the existing Phase 2 convention', async () => {
+      const service = new EntitlementService();
+      const { tx } = buildTx({ subscriptionStatus: 'EXPIRED' });
+
+      await expect(service.assertCanCreateOperationalRecord(tx as never, ORG_ID)).rejects.toThrow(
+        'Your trial has expired. Convert to a paid subscription to create new operational records.',
+      );
+    });
+
+    it('rejects with BusinessRuleError for a stored EXPIRED organization', async () => {
+      const service = new EntitlementService();
+      const { tx } = buildTx({ subscriptionStatus: 'EXPIRED' });
+
+      await expect(service.assertCanCreateOperationalRecord(tx as never, ORG_ID)).rejects.toThrow(
+        BusinessRuleError,
+      );
+    });
+
+    it('does NOT reject a CANCELLED organization — preserves the existing Phase 2 policy (only EXPIRED is blocked)', async () => {
+      const service = new EntitlementService();
+      const { tx } = buildTx({ subscriptionStatus: 'CANCELLED' });
+
+      await expect(
+        service.assertCanCreateOperationalRecord(tx as never, ORG_ID),
+      ).resolves.toBeUndefined();
+    });
+
+    it('never takes the Organization row lock — a pure status gate, no counted resource to protect', async () => {
+      const service = new EntitlementService();
+      const { tx } = buildTx({ subscriptionStatus: 'ACTIVE' });
+
+      await service.assertCanCreateOperationalRecord(tx as never, ORG_ID);
+
+      expect(tx.$queryRaw).not.toHaveBeenCalled();
+    });
+
+    it('continues to behave normally for an existing ACTIVE organization with NULL carrier/driver limits (Phase 2 unaffected)', async () => {
+      const service = new EntitlementService();
+      const { tx } = buildTx({ subscriptionStatus: 'ACTIVE', maxCarriers: null, maxDrivers: null });
+
+      await expect(
+        service.assertCanCreateOperationalRecord(tx as never, ORG_ID),
+      ).resolves.toBeUndefined();
+    });
+  });
+
   describe('assertCanCreateDriver', () => {
     it('rejects with BusinessRuleError when the trial has expired, before ever counting', async () => {
       const service = new EntitlementService();

@@ -95,6 +95,7 @@ function buildService(opts: {
   };
 
   const notifications = { createForUserAndRoles: jest.fn().mockResolvedValue(undefined) };
+  const entitlement = { assertCanCreateOperationalRecord: jest.fn().mockResolvedValue(undefined) };
 
   const service = new LoadService(
     prisma as never,
@@ -102,9 +103,10 @@ function buildService(opts: {
     sequences as never,
     rateAgreementMatching as never,
     notifications as never,
+    entitlement as never,
   );
 
-  return { service, tx, audit, sequences, rateAgreementMatching, notifications };
+  return { service, tx, audit, sequences, rateAgreementMatching, notifications, entitlement };
 }
 
 describe('LoadService.list — Frontend Phase 3 gap-fix (Dispatch Board Table View)', () => {
@@ -497,6 +499,72 @@ describe('LoadService.createDirect — Workflow 4 §4.8', () => {
         USER_ID,
       ),
     ).rejects.toThrow(BusinessRuleError);
+  });
+});
+
+describe('LoadService.createDirect / createFromBooking — Phase 3 expired-trial enforcement', () => {
+  it('checks assertCanCreateOperationalRecord before creating the Load', async () => {
+    const { service, tx, entitlement } = buildService({});
+
+    await service.createDirect(
+      ORG_ID,
+      { customerId: CUSTOMER_ID, stops: BASE_STOPS as never, equipmentType: 'DRY_VAN', customerRate: '1800.00' },
+      USER_ID,
+    );
+
+    expect(entitlement.assertCanCreateOperationalRecord).toHaveBeenCalledWith(tx, ORG_ID);
+  });
+
+  it('propagates a BusinessRuleError from the entitlement check and never creates the Load (direct booking)', async () => {
+    const { service, tx, entitlement } = buildService({});
+    entitlement.assertCanCreateOperationalRecord.mockRejectedValue(
+      new BusinessRuleError('Your trial has expired. Convert to a paid subscription to create new operational records.'),
+    );
+
+    await expect(
+      service.createDirect(
+        ORG_ID,
+        { customerId: CUSTOMER_ID, stops: BASE_STOPS as never, equipmentType: 'DRY_VAN', customerRate: '1800.00' },
+        USER_ID,
+      ),
+    ).rejects.toThrow(BusinessRuleError);
+    expect(tx.load.create).not.toHaveBeenCalled();
+  });
+
+  it('propagates a BusinessRuleError from the entitlement check when called via the shared createFromBooking path directly (proves Quote → Load conversion is protected too, since QuoteService.convert() calls this exact method)', async () => {
+    const { service, tx, entitlement } = buildService({});
+    entitlement.assertCanCreateOperationalRecord.mockRejectedValue(
+      new BusinessRuleError('Your trial has expired. Convert to a paid subscription to create new operational records.'),
+    );
+
+    await expect(
+      service.createFromBooking(tx as never, ORG_ID, {
+        customerId: CUSTOMER_ID,
+        bookingSource: 'QUOTE',
+        quoteId: 'quote-1',
+        equipmentType: 'DRY_VAN',
+        customerRate: '1800.00' as never,
+        rateSource: 'MANUAL' as never,
+        rateAgreementId: null,
+        stops: BASE_STOPS as never,
+        actingUserId: USER_ID,
+        auditAction: 'Load Booked via Quote Conversion',
+      } as never),
+    ).rejects.toThrow(BusinessRuleError);
+    expect(tx.load.create).not.toHaveBeenCalled();
+  });
+
+  it('allows Load creation for an ACTIVE organization (entitlement check resolves, no restriction)', async () => {
+    const { service, entitlement } = buildService({});
+
+    const load = await service.createDirect(
+      ORG_ID,
+      { customerId: CUSTOMER_ID, stops: BASE_STOPS as never, equipmentType: 'DRY_VAN', customerRate: '1800.00' },
+      USER_ID,
+    );
+
+    expect(load.status).toBe('BOOKED');
+    expect(entitlement.assertCanCreateOperationalRecord).toHaveBeenCalled();
   });
 });
 
