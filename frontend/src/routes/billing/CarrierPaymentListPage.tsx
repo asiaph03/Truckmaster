@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { carrierPayApi, type CarrierPaymentStatus } from '../../api';
-import { Badge, DataTable } from '../../components/ui';
+import { Badge, DataTable, QueryErrorState } from '../../components/ui';
 import { getStatusBadgeColor } from '../../components/ui/statusBadgeMap';
 import { usePermissions } from '../../hooks/usePermissions';
 import '../shared/ListPage.css';
@@ -33,7 +33,12 @@ export function CarrierPaymentListPage() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(PAGE_SIZE_DEFAULT);
 
-  const { data: payments = [], isLoading } = useQuery({
+  const {
+    data: payments = [],
+    isLoading,
+    isError,
+    refetch,
+  } = useQuery({
     queryKey: ['carrier-payments', { status }],
     queryFn: () => carrierPayApi.list({ status: status || undefined }),
   });
@@ -42,6 +47,15 @@ export function CarrierPaymentListPage() {
     () => payments.slice((page - 1) * pageSize, page * pageSize),
     [payments, page, pageSize],
   );
+
+  if (isError) {
+    return (
+      <QueryErrorState
+        message="Couldn't load carrier payments. Please try again."
+        onRetry={() => refetch()}
+      />
+    );
+  }
 
   return (
     <div>

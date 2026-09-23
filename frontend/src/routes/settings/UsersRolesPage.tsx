@@ -19,6 +19,7 @@ import {
   EmptyState,
   Modal,
   ModalFooter,
+  QueryErrorState,
   TextField,
 } from '../../components/ui';
 import type { BadgeColor } from '../../components/ui/statusBadgeMap';
@@ -78,7 +79,12 @@ export function UsersRolesPage() {
 
   const canManage = can('manageMemberships');
 
-  const { data: memberships = [], isLoading } = useQuery({
+  const {
+    data: memberships = [],
+    isLoading,
+    isError,
+    refetch,
+  } = useQuery({
     queryKey: ['memberships'],
     queryFn: () => membershipsApi.list(),
     enabled: canManage,
@@ -174,6 +180,15 @@ export function UsersRolesPage() {
       <EmptyState
         icon={<Lock size={28} strokeWidth={1.5} color="var(--neutral-300)" />}
         message="You don't have access to this page."
+      />
+    );
+  }
+
+  if (isError) {
+    return (
+      <QueryErrorState
+        message="Couldn't load Users & Roles. Please try again."
+        onRetry={() => refetch()}
       />
     );
   }

@@ -748,3 +748,36 @@ describe('DispatchBoardPage — Unassign Dispatcher (Task #8)', () => {
     expect(screen.getByRole('dialog')).toBeInTheDocument();
   });
 });
+
+describe('DispatchBoardPage — query error state', () => {
+  beforeEach(() => {
+    useSessionStore.setState({ roles: ['ADMIN'] });
+  });
+
+  it('shows QueryErrorState with a working Retry when the loads query fails', async () => {
+    let attempts = 0;
+    server.use(
+      http.get('/api/v1/loads', () => {
+        attempts += 1;
+        if (attempts === 1) return HttpResponse.json(null, { status: 500 });
+        return HttpResponse.json([load()]);
+      }),
+      http.get('/api/v1/customers', () => HttpResponse.json([CUSTOMER])),
+      http.get('/api/v1/carriers', () => HttpResponse.json([CARRIER])),
+      http.get('/api/v1/memberships', () => HttpResponse.json([])),
+    );
+
+    renderPage();
+
+    expect(
+      await screen.findByText("Couldn't load the Dispatch Board. Please try again."),
+    ).toBeInTheDocument();
+    const retryButton = screen.getByRole('button', { name: 'Retry' });
+    expect(retryButton).toBeInTheDocument();
+
+    fireEvent.click(retryButton);
+
+    await waitFor(() => expect(screen.getByText('LOAD-000001')).toBeInTheDocument());
+    expect(attempts).toBe(2);
+  });
+});

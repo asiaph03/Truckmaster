@@ -63,3 +63,25 @@ describe('AgingReport — Phase 21 Export CSV addition', () => {
     await waitFor(() => expect(screen.getByText('Export CSV')).toBeInTheDocument());
   });
 });
+
+describe('AgingReport — query error state', () => {
+  it('renders QueryErrorState with a title-specific message and calls onRetry when isError is true', () => {
+    const onRetry = vi.fn();
+    render(
+      <AgingReport
+        title="AR Aging"
+        basisNote="basis"
+        data={undefined}
+        isLoading={false}
+        isError
+        onRetry={onRetry}
+      />,
+    );
+
+    expect(screen.getByText("Couldn't load AR Aging. Please try again.")).toBeInTheDocument();
+    expect(screen.queryByText('No outstanding balances.')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(onRetry).toHaveBeenCalledTimes(1);
+  });
+});

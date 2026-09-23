@@ -5,7 +5,15 @@ import { useForm } from 'react-hook-form';
 import { useQuery } from '@tanstack/react-query';
 import { organizationsApi, type CreateOrganizationRequest } from '../../api';
 import { ApiError } from '../../api/errors';
-import { Badge, Button, DataTable, EmptyState, Select, TextField } from '../../components/ui';
+import {
+  Badge,
+  Button,
+  DataTable,
+  EmptyState,
+  QueryErrorState,
+  Select,
+  TextField,
+} from '../../components/ui';
 import { getStatusBadgeColor } from '../../components/ui/statusBadgeMap';
 import { useToast } from '../../components/ui/toastStore';
 import { useSessionStore } from '../../auth/session-store';
@@ -39,6 +47,7 @@ export function PlatformOrganizationsPage() {
   const {
     data: organizations = [],
     isLoading,
+    isError,
     refetch,
   } = useQuery({
     queryKey: ['platform-organizations'],
@@ -76,6 +85,15 @@ export function PlatformOrganizationsPage() {
       <EmptyState
         icon={<Lock size={28} strokeWidth={1.5} color="var(--neutral-300)" />}
         message="You don't have access to this page."
+      />
+    );
+  }
+
+  if (isError) {
+    return (
+      <QueryErrorState
+        message="Couldn't load organizations. Please try again."
+        onRetry={() => refetch()}
       />
     );
   }

@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { billingApi, type InvoiceStatus } from '../../api';
-import { Badge, DataTable } from '../../components/ui';
+import { Badge, DataTable, QueryErrorState } from '../../components/ui';
 import { getStatusBadgeColor } from '../../components/ui/statusBadgeMap';
 import { usePermissions } from '../../hooks/usePermissions';
 import '../shared/ListPage.css';
@@ -33,7 +33,12 @@ export function InvoiceListPage() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(PAGE_SIZE_DEFAULT);
 
-  const { data: invoices = [], isLoading } = useQuery({
+  const {
+    data: invoices = [],
+    isLoading,
+    isError,
+    refetch,
+  } = useQuery({
     queryKey: ['invoices', { status }],
     queryFn: () => billingApi.listInvoices({ status: status || undefined }),
   });
@@ -42,6 +47,15 @@ export function InvoiceListPage() {
     () => invoices.slice((page - 1) * pageSize, page * pageSize),
     [invoices, page, pageSize],
   );
+
+  if (isError) {
+    return (
+      <QueryErrorState
+        message="Couldn't load invoices. Please try again."
+        onRetry={() => refetch()}
+      />
+    );
+  }
 
   return (
     <div>

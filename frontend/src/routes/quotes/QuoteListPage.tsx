@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { quotesApi, type QuoteStatus } from '../../api';
-import { Badge, Button, DataTable } from '../../components/ui';
+import { Badge, Button, DataTable, QueryErrorState } from '../../components/ui';
 import { getStatusBadgeColor } from '../../components/ui/statusBadgeMap';
 import { usePermissions } from '../../hooks/usePermissions';
 import '../shared/ListPage.css';
@@ -24,7 +24,12 @@ export function QuoteListPage() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(PAGE_SIZE_DEFAULT);
 
-  const { data: quotes = [], isLoading } = useQuery({
+  const {
+    data: quotes = [],
+    isLoading,
+    isError,
+    refetch,
+  } = useQuery({
     queryKey: ['quotes', { status }],
     queryFn: () => quotesApi.list({ status: status || undefined }),
   });
@@ -33,6 +38,15 @@ export function QuoteListPage() {
     () => quotes.slice((page - 1) * pageSize, page * pageSize),
     [quotes, page, pageSize],
   );
+
+  if (isError) {
+    return (
+      <QueryErrorState
+        message="Couldn't load quotes. Please try again."
+        onRetry={() => refetch()}
+      />
+    );
+  }
 
   return (
     <div>

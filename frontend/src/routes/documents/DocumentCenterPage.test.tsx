@@ -279,3 +279,26 @@ describe('DocumentCenterPage — Frontend Phase 20', () => {
     clickSpy.mockRestore();
   });
 });
+
+describe('DocumentCenterPage — query error state', () => {
+  it('shows QueryErrorState with a working Retry when the search query fails', async () => {
+    let attempts = 0;
+    mockBaseHandlers(() => {
+      attempts += 1;
+      if (attempts === 1) return HttpResponse.json(null, { status: 500 });
+      return HttpResponse.json({ items: [DOC_ROW], total: 1, page: 1, pageSize: 50 });
+    });
+
+    renderPage();
+
+    expect(
+      await screen.findByText("Couldn't load the Document Center. Please try again."),
+    ).toBeInTheDocument();
+    const retryButton = screen.getByRole('button', { name: 'Retry' });
+
+    fireEvent.click(retryButton);
+
+    await waitFor(() => expect(screen.getByText('w9.pdf')).toBeInTheDocument());
+    expect(attempts).toBe(2);
+  });
+});

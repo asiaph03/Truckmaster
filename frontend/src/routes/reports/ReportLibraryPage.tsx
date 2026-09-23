@@ -1,7 +1,7 @@
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { reportCatalogApi } from '../../api';
-import { EmptyState } from '../../components/ui';
+import { EmptyState, QueryErrorState } from '../../components/ui';
 import '../shared/ListPage.css';
 import './ReportLibraryPage.css';
 
@@ -15,10 +15,19 @@ import './ReportLibraryPage.css';
  * generic `/reports/:reportId` run screen.
  */
 export function ReportLibraryPage() {
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ['reports', 'catalog'],
     queryFn: () => reportCatalogApi.catalog(),
   });
+
+  if (isError) {
+    return (
+      <QueryErrorState
+        message="Couldn't load the Report Library. Please try again."
+        onRetry={() => refetch()}
+      />
+    );
+  }
 
   return (
     <div>

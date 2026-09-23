@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { http, HttpResponse } from 'msw';
@@ -76,5 +76,38 @@ describe('ReportLibraryPage — Frontend Phase 21', () => {
     renderPage();
 
     await waitFor(() => expect(screen.getByText(/no reports are available/i)).toBeInTheDocument());
+  });
+});
+
+describe('ReportLibraryPage — query error state', () => {
+  it('shows QueryErrorState with a working Retry when the catalog query fails', async () => {
+    let attempts = 0;
+    server.use(
+      http.get('/api/v1/reports/catalog', () => {
+        attempts += 1;
+        if (attempts === 1) return HttpResponse.json(null, { status: 500 });
+        return HttpResponse.json({
+          categories: [
+            {
+              key: 'OPERATIONS',
+              label: 'Operations',
+              reports: [{ id: 'load-volume', title: 'Load Volume' }],
+            },
+          ],
+        });
+      }),
+    );
+
+    renderPage();
+
+    expect(
+      await screen.findByText("Couldn't load the Report Library. Please try again."),
+    ).toBeInTheDocument();
+    const retryButton = screen.getByRole('button', { name: 'Retry' });
+
+    fireEvent.click(retryButton);
+
+    await waitFor(() => expect(screen.getByText('Load Volume')).toBeInTheDocument());
+    expect(attempts).toBe(2);
   });
 });

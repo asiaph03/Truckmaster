@@ -12,7 +12,7 @@ import {
   type LoadSearchSort,
   type LoadSummary,
 } from '../../api';
-import { Badge, Button, DataTable, type DataTableSort } from '../../components/ui';
+import { Badge, Button, DataTable, QueryErrorState, type DataTableSort } from '../../components/ui';
 import { getStatusBadgeColor } from '../../components/ui/statusBadgeMap';
 import { useToast } from '../../components/ui/toastStore';
 import {
@@ -112,7 +112,7 @@ export function LoadSearchPage() {
     ],
   );
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ['loads-search', filters],
     queryFn: () => loadsApi.search(filters),
   });
@@ -172,6 +172,15 @@ export function LoadSearchPage() {
     } finally {
       setExporting(false);
     }
+  }
+
+  if (isError) {
+    return (
+      <QueryErrorState
+        message="Couldn't load Load Search. Please try again."
+        onRetry={() => refetch()}
+      />
+    );
   }
 
   return (

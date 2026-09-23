@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { Search } from 'lucide-react';
 import { carriersApi, type CarrierStatus } from '../../api';
-import { Badge, Button, DataTable, EligibilityBadge } from '../../components/ui';
+import { Badge, Button, DataTable, EligibilityBadge, QueryErrorState } from '../../components/ui';
 import { getStatusBadgeColor } from '../../components/ui/statusBadgeMap';
 import { usePermissions } from '../../hooks/usePermissions';
 import '../shared/ListPage.css';
@@ -27,7 +27,12 @@ export function CarrierListPage() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(PAGE_SIZE_DEFAULT);
 
-  const { data: carriers = [], isLoading } = useQuery({
+  const {
+    data: carriers = [],
+    isLoading,
+    isError,
+    refetch,
+  } = useQuery({
     queryKey: ['carriers', { status }],
     queryFn: () => carriersApi.list({ status: status || undefined }),
   });
@@ -43,6 +48,15 @@ export function CarrierListPage() {
     () => filtered.slice((page - 1) * pageSize, page * pageSize),
     [filtered, page, pageSize],
   );
+
+  if (isError) {
+    return (
+      <QueryErrorState
+        message="Couldn't load carriers. Please try again."
+        onRetry={() => refetch()}
+      />
+    );
+  }
 
   return (
     <div>

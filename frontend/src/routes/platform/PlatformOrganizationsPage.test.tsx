@@ -315,3 +315,51 @@ describe('PlatformOrganizationsPage — Phase 5 demo/trial provisioning', () => 
     expect(receivedBody?.provisioningMode).toBe('DEMO');
   });
 });
+
+describe('PlatformOrganizationsPage — query error state', () => {
+  afterEach(() => {
+    useSessionStore.setState({ roles: [], isPlatformSuperAdmin: undefined });
+    useToastStore.setState({ toasts: [] });
+  });
+
+  it('shows QueryErrorState with a working Retry when the organizations query fails', async () => {
+    useSessionStore.setState({ isPlatformSuperAdmin: true });
+    let attempts = 0;
+    server.use(
+      http.get('/api/v1/platform/organizations', () => {
+        attempts += 1;
+        if (attempts === 1) return HttpResponse.json(null, { status: 500 });
+        return HttpResponse.json([
+          {
+            id: 'org-1',
+            legalName: 'Acme Freight LLC',
+            subscriptionStatus: 'TRIAL',
+            trialStartedAt: null,
+            trialEndsAt: null,
+            maxCarriers: 1,
+            maxDrivers: 5,
+          },
+        ]);
+      }),
+    );
+
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter>
+          <PlatformOrganizationsPage />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    expect(
+      await screen.findByText("Couldn't load organizations. Please try again."),
+    ).toBeInTheDocument();
+    const retryButton = screen.getByRole('button', { name: 'Retry' });
+
+    fireEvent.click(retryButton);
+
+    await waitFor(() => expect(screen.getByText('Acme Freight LLC')).toBeInTheDocument());
+    expect(attempts).toBe(2);
+  });
+});

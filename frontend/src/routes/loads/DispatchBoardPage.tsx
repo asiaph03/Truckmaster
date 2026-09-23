@@ -24,6 +24,7 @@ import {
   FilterChip,
   Modal,
   ModalFooter,
+  QueryErrorState,
   RowActionsMenu,
   SearchableCombobox,
   Select,
@@ -211,7 +212,12 @@ export function DispatchBoardPage() {
   // organizes by date, not status (§5.4.3) — the Status dropdown is
   // Table-only, so the server-side status filter never applies to those
   // two views, regardless of what it was last set to.
-  const { data: loads = [], isLoading } = useQuery({
+  const {
+    data: loads = [],
+    isLoading,
+    isError,
+    refetch,
+  } = useQuery({
     queryKey: [
       'loads',
       { status: view === 'table' ? status : '', equipmentType, carrierId, dispatcherId },
@@ -335,6 +341,15 @@ export function DispatchBoardPage() {
     } catch (error) {
       toast.danger(error instanceof ApiError ? error.message : 'Something went wrong.');
     }
+  }
+
+  if (isError) {
+    return (
+      <QueryErrorState
+        message="Couldn't load the Dispatch Board. Please try again."
+        onRetry={() => refetch()}
+      />
+    );
   }
 
   return (

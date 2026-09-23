@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { documentsApi, type PendingReviewDocument } from '../../api';
 import { ApiError } from '../../api/errors';
-import { Badge, Button, ConfirmDialog, DataTable } from '../../components/ui';
+import { Badge, Button, ConfirmDialog, DataTable, QueryErrorState } from '../../components/ui';
 import { useToast } from '../../components/ui/toastStore';
 import { useSessionStore } from '../../auth/session-store';
 import '../shared/ListPage.css';
@@ -26,7 +26,12 @@ export function ComplianceQueuePage() {
   const toast = useToast();
   const [rejecting, setRejecting] = useState<PendingReviewDocument | null>(null);
 
-  const { data: documents = [], isLoading } = useQuery({
+  const {
+    data: documents = [],
+    isLoading,
+    isError,
+    refetch,
+  } = useQuery({
     queryKey: ['documents', 'pending-review'],
     queryFn: () => documentsApi.listPendingReview(),
   });
@@ -55,6 +60,15 @@ export function ComplianceQueuePage() {
     } catch (error) {
       toast.danger(error instanceof ApiError ? error.message : 'Something went wrong.');
     }
+  }
+
+  if (isError) {
+    return (
+      <QueryErrorState
+        message="Couldn't load the Compliance Review Queue. Please try again."
+        onRetry={() => refetch()}
+      />
+    );
   }
 
   return (

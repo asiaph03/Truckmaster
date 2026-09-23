@@ -132,3 +132,33 @@ describe('UsersRolesPage — Frontend Phase 11 (role editing)', () => {
     expect(screen.queryByText('Edit Roles')).not.toBeInTheDocument();
   });
 });
+
+describe('UsersRolesPage — query error state', () => {
+  afterEach(() => {
+    useSessionStore.setState({ roles: [] });
+  });
+
+  it('shows QueryErrorState with a working Retry when the memberships query fails', async () => {
+    useSessionStore.setState({ roles: ['ADMIN'] });
+    let attempts = 0;
+    server.use(
+      http.get('/api/v1/memberships', () => {
+        attempts += 1;
+        if (attempts === 1) return HttpResponse.json(null, { status: 500 });
+        return HttpResponse.json(MEMBERSHIPS);
+      }),
+    );
+
+    renderPage();
+
+    expect(
+      await screen.findByText("Couldn't load Users & Roles. Please try again."),
+    ).toBeInTheDocument();
+    const retryButton = screen.getByRole('button', { name: 'Retry' });
+
+    fireEvent.click(retryButton);
+
+    await waitFor(() => expect(screen.getByText('Jane Admin')).toBeInTheDocument());
+    expect(attempts).toBe(2);
+  });
+});

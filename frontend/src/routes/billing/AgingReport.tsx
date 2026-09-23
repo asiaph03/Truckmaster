@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { AgingBuckets, AgingReport as AgingReportData } from '../../api';
-import { Button, DataTable } from '../../components/ui';
+import { Button, DataTable, QueryErrorState } from '../../components/ui';
 import { useToast } from '../../components/ui/toastStore';
 import '../shared/ListPage.css';
 import './AgingReport.css';
@@ -46,12 +46,16 @@ export function AgingReport({
   basisNote,
   data,
   isLoading,
+  isError,
+  onRetry,
   onExport,
 }: {
   title: string;
   basisNote: string;
   data: AgingReportData | undefined;
   isLoading: boolean;
+  isError?: boolean;
+  onRetry?: () => void;
   onExport?: () => Promise<void>;
 }) {
   const toast = useToast();
@@ -68,6 +72,15 @@ export function AgingReport({
     } finally {
       setExporting(false);
     }
+  }
+
+  if (isError) {
+    return (
+      <QueryErrorState
+        message={`Couldn't load ${title}. Please try again.`}
+        onRetry={() => onRetry?.()}
+      />
+    );
   }
 
   return (

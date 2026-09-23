@@ -12,7 +12,14 @@ import {
   type DocumentSearchSort,
 } from '../../api';
 import { ApiError } from '../../api/errors';
-import { Badge, Button, ConfirmDialog, DataTable, type DataTableSort } from '../../components/ui';
+import {
+  Badge,
+  Button,
+  ConfirmDialog,
+  DataTable,
+  QueryErrorState,
+  type DataTableSort,
+} from '../../components/ui';
 import { getStatusBadgeColor } from '../../components/ui/statusBadgeMap';
 import { useToast } from '../../components/ui/toastStore';
 import { usePermissions } from '../../hooks/usePermissions';
@@ -185,7 +192,7 @@ export function DocumentCenterPage() {
     ],
   );
 
-  const { data, isLoading, refetch } = useQuery({
+  const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ['documents-search', filters],
     queryFn: () => documentsApi.search(filters),
   });
@@ -260,6 +267,15 @@ export function DocumentCenterPage() {
     } catch (error) {
       toast.danger(error instanceof ApiError ? error.message : 'Something went wrong.');
     }
+  }
+
+  if (isError) {
+    return (
+      <QueryErrorState
+        message="Couldn't load the Document Center. Please try again."
+        onRetry={() => refetch()}
+      />
+    );
   }
 
   return (
