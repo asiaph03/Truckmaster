@@ -102,6 +102,33 @@ describe('buildFleetMapData — Dashboard Map Phase (pure logic)', () => {
     expect(markers[0].popupHtml).not.toContain('<img src=x onerror=alert(1)>');
     expect(markers[0].popupHtml).toContain('&lt;img src=x onerror=alert(1)&gt;');
   });
+
+  it('shows the assigned driver prominently in the popup and in the hover tooltip — same marker, not a second position', () => {
+    const { markers } = buildFleetMapData([TRUCK_WITH_LOCATION]);
+
+    expect(markers[0].popupHtml).toContain('map-popup-subtitle">Jane Driver<');
+    expect(markers[0].popupHtml).toContain('Driver</span><span>Jane Driver<');
+    expect(markers[0].ariaLabel).toContain('Jane Driver');
+    expect(markers).toHaveLength(1); // still exactly one marker — no separate driver marker
+  });
+
+  it('shows "Unassigned" rather than a blank driver when no driver is on the DispatchRecord', () => {
+    const truck = { ...TRUCK_WITH_LOCATION, driverName: '' };
+
+    const { markers } = buildFleetMapData([truck]);
+
+    expect(markers[0].popupHtml).toContain('map-popup-subtitle">Unassigned<');
+    expect(markers[0].popupHtml).toContain('Driver</span><span>Unassigned<');
+    expect(markers[0].ariaLabel).toContain('Unassigned');
+  });
+
+  it('shows "Unassigned" (not blank) for an unresolved truck with no driver on the DispatchRecord', () => {
+    const truck = { ...TRUCK_WITH_LOCATION, driverName: '   ', lastKnownLocation: null };
+
+    const { unresolvedTrucks } = buildFleetMapData([truck]);
+
+    expect(unresolvedTrucks[0].driverName).toBe('Unassigned');
+  });
 });
 
 function renderFleetMap() {

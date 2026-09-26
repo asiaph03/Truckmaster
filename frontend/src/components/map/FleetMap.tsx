@@ -50,7 +50,8 @@ export function FleetMap() {
       <div className="fleet-map-header">
         <h2 className="fleet-map-title">Truck Locations &amp; Destinations</h2>
         <span className="fleet-map-subtitle">
-          Positions reflect each Load's most recent logged Check Call — not live GPS.
+          Each marker is a Truck / Driver — last known location, from the Load's most recent logged
+          Check Call. Not live GPS, and not independent driver tracking.
         </span>
       </div>
 

@@ -16,6 +16,17 @@ export interface UnresolvedTruck {
 }
 
 /**
+ * Every truck marker represents the truck itself at its last-known
+ * Check Call location — we have no independent driver GPS, so the
+ * driver shown here is only "whoever this Load's DispatchRecord says
+ * is assigned," never a tracked position of their own. A blank name
+ * (no driver assigned) reads as "Unassigned" rather than a blank line.
+ */
+function resolveDriverLabel(driverName: string): string {
+  return driverName.trim() || 'Unassigned';
+}
+
+/**
  * Pure, independently testable — turns the API response into map-ready
  * markers/lines plus the unresolved (unmappable) list. Kept in its own
  * (non-component) file so `FleetMap.tsx` only exports the component
@@ -33,13 +44,14 @@ export function buildFleetMapData(activeTrucks: FleetMapActiveTruck[]): {
   for (const truck of activeTrucks) {
     const destination = destinationCityState(truck.stops);
     const destinationLabel = destination ? `${destination.city}, ${destination.state}` : null;
+    const driverName = resolveDriverLabel(truck.driverName);
 
     if (!truck.lastKnownLocation) {
       unresolvedTrucks.push({
         loadId: truck.loadId,
         loadNumber: truck.loadNumber,
         truckNumber: truck.truckNumber,
-        driverName: truck.driverName,
+        driverName,
         lastKnownLocation: null,
         destinationLabel,
       });
@@ -52,7 +64,7 @@ export function buildFleetMapData(activeTrucks: FleetMapActiveTruck[]): {
         loadId: truck.loadId,
         loadNumber: truck.loadNumber,
         truckNumber: truck.truckNumber,
-        driverName: truck.driverName,
+        driverName,
         lastKnownLocation: truck.lastKnownLocation,
         destinationLabel,
       });
@@ -65,8 +77,11 @@ export function buildFleetMapData(activeTrucks: FleetMapActiveTruck[]): {
       lat: point.lat,
       lng: point.lng,
       color,
-      ariaLabel: `${truck.truckNumber} — ${truck.loadNumber}`,
-      popupHtml: buildTruckPopupHtml(truck, destinationLabel),
+      // Truck + assigned driver together — this is still one physical
+      // vehicle's last-known location, never a second, independent
+      // driver position.
+      ariaLabel: `${escapeHtml(truck.truckNumber)} — ${escapeHtml(driverName)} — Load ${escapeHtml(truck.loadNumber)}`,
+      popupHtml: buildTruckPopupHtml(truck, driverName, destinationLabel),
     });
 
     if (destination) {
@@ -87,7 +102,11 @@ export function buildFleetMapData(activeTrucks: FleetMapActiveTruck[]): {
   return { markers, lines, unresolvedTrucks };
 }
 
-function buildTruckPopupHtml(truck: FleetMapActiveTruck, destinationLabel: string | null): string {
+function buildTruckPopupHtml(
+  truck: FleetMapActiveTruck,
+  driverName: string,
+  destinationLabel: string | null,
+): string {
   const loc = truck.lastKnownLocation;
   const locationText = loc
     ? `${escapeHtml(loc.city)}, ${escapeHtml(loc.state)} — ${escapeHtml(formatRelativeTime(loc.updatedAt))}`
@@ -95,7 +114,7 @@ function buildTruckPopupHtml(truck: FleetMapActiveTruck, destinationLabel: strin
 
   const rows = [
     ['Truck', escapeHtml(truck.truckNumber)],
-    ['Driver', escapeHtml(truck.driverName)],
+    ['Driver', escapeHtml(driverName)],
     ['Load', escapeHtml(truck.loadNumber)],
     ['Last Known Location', locationText],
     ['Destination', destinationLabel ? escapeHtml(destinationLabel) : '—'],
@@ -116,7 +135,12 @@ function buildTruckPopupHtml(truck: FleetMapActiveTruck, destinationLabel: strin
     : '';
 
   return (
+    // Truck + driver together in the title — the marker is one truck's
+    // last-known location; the driver name is surfaced prominently here
+    // (not as a separate marker/position) since that's the person
+    // physically at this location right now.
     `<div class="map-popup-title">${escapeHtml(truck.truckNumber)}</div>` +
+    `<div class="map-popup-subtitle">${escapeHtml(driverName)}</div>` +
     rows +
     `<div class="map-popup-actions"><a href="/loads/${escapeHtml(truck.loadId)}">View Load</a>${carrierLink}</div>`
   );

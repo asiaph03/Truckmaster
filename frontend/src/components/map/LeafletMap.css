@@ -22,6 +22,14 @@
 .map-popup-title {
   font-size: var(--text-body-medium-size);
   font-weight: var(--text-body-medium-weight);
+}
+
+/* The assigned driver's name — shown right under the truck number so
+   it's identifiable at a glance, without a second marker or a new
+   popup section. */
+.map-popup-subtitle {
+  font-size: var(--text-small-size);
+  color: var(--neutral-700);
   margin-bottom: var(--space-2);
 }
 
