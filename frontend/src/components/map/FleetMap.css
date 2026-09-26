@@ -1,0 +1,60 @@
+.fleet-map {
+  background: var(--neutral-0);
+  border: 1px solid var(--neutral-200);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+}
+
+.fleet-map-header {
+  margin-bottom: var(--space-3);
+}
+
+.fleet-map-title {
+  font-size: var(--text-h2-size);
+  font-weight: var(--text-h2-weight);
+  margin: 0;
+}
+
+.fleet-map-subtitle {
+  display: block;
+  color: var(--neutral-500);
+  font-size: var(--text-small-size);
+  margin-top: 2px;
+}
+
+.fleet-map-loading {
+  padding: var(--space-6);
+  text-align: center;
+  color: var(--neutral-500);
+}
+
+.fleet-map-section-title {
+  font-size: var(--text-caption-size);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--neutral-500);
+  font-weight: var(--text-caption-weight);
+  margin: var(--space-4) 0 var(--space-2);
+}
+
+.fleet-map-unresolved ul,
+.fleet-map-available ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.fleet-map-unresolved li,
+.fleet-map-available li {
+  font-size: var(--text-small-size);
+  padding: var(--space-2) var(--space-3);
+  background: var(--neutral-50);
+  border-radius: var(--radius-sm);
+}
+
+.fleet-map-unresolved-reason {
+  color: var(--neutral-500);
+}

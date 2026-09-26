@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { reportingApi } from '../api';
 import { EmptyState, QueryErrorState } from '../components/ui';
+import { FleetMap, NeedsAttentionList } from '../components/map';
 import './shared/ListPage.css';
 import './DashboardPage.css';
 
@@ -79,6 +80,13 @@ export function DashboardPage() {
             />
             <KpiCard label="Overdue Check Calls" value={data.dispatcher.overdueCheckCalls} />
           </div>
+        </div>
+      ) : null}
+
+      {data.dispatcher ? (
+        <div className="dashboard-map-row">
+          <FleetMap />
+          <NeedsAttentionList />
         </div>
       ) : null}
 

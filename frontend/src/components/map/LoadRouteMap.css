@@ -1,0 +1,23 @@
+.load-route-map-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-top: var(--space-2);
+}
+
+.load-route-map-truck {
+  font-size: var(--text-small-size);
+  color: var(--neutral-700);
+}
+
+.load-route-map-truck-unavailable {
+  color: var(--neutral-500);
+  font-style: italic;
+}
+
+.load-route-map-unresolved {
+  margin: var(--space-2) 0 0;
+  font-size: var(--text-caption-size);
+  color: var(--neutral-500);
+}

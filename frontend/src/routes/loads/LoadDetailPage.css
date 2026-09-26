@@ -36,6 +36,14 @@
   background: var(--neutral-50);
 }
 
+/* Dashboard Map Phase — Load Overview's Stops list and Route Map stay
+   in sync; this is the "a stop is the one currently selected" state,
+   set by clicking either the row or its matching map marker. */
+.load-stop-mini-row-selected {
+  background: var(--brand-50);
+  border-radius: var(--radius-sm);
+}
+
 .load-stop-mini-company {
   color: var(--neutral-800);
   font-size: var(--text-small-size);

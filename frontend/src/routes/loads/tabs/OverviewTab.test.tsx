@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeEach } from 'vitest';
+import { describe, expect, it, beforeEach, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -7,6 +7,19 @@ import { server } from '../../../test/mswServer';
 import { OverviewTab } from './OverviewTab';
 import { useSessionStore } from '../../../auth/session-store';
 import type { Load, Stop } from '../../../api';
+
+// Dashboard Map Phase — `LoadRouteMap` mounts a real Leaflet map, which
+// (like every Leaflet consumer) cannot run in jsdom: Leaflet expects real
+// browser layout/canvas APIs jsdom doesn't implement, a well-known,
+// industry-wide limitation of testing map libraries outside a real
+// browser — not specific to this component. Stubbed here so this file's
+// existing Overview-tab assertions (unrelated to the map) keep working;
+// the map's own logic (geocoding, marker/line derivation, popup
+// escaping) is unit-tested directly in `components/map/*.test.ts(x)`,
+// and its visual behavior is verified in a real browser instead.
+vi.mock('../../../components/map', () => ({
+  LoadRouteMap: () => <div data-testid="load-route-map-stub" />,
+}));
 
 const CUSTOMER = { id: 'cust-1', legalName: 'Acme Freight' };
 

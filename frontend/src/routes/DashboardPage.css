@@ -43,3 +43,15 @@ a.dashboard-kpi-card:hover {
   font-weight: var(--text-h2-weight);
   color: var(--neutral-900);
 }
+
+/* Dashboard Map Phase — the map is one of the primary Dashboard
+   elements (per the approved layout), so it takes the wider column;
+   Needs Attention Today sits beside it, narrower. */
+.dashboard-map-row {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: var(--space-4);
+  margin-bottom: var(--space-6);
+  align-items: start;
+}
+

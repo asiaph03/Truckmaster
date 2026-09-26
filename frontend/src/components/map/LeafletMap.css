@@ -1,0 +1,79 @@
+.leaflet-map-container {
+  width: 100%;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--neutral-200);
+  overflow: hidden;
+}
+
+/* Leaflet's own popup chrome, restyled to match this app's card/typography
+   tokens rather than the library's default look. */
+.leaflet-popup-content-wrapper {
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+}
+
+.leaflet-popup-content {
+  font-family: var(--font-ui);
+  font-size: var(--text-small-size);
+  line-height: var(--text-small-line);
+  margin: var(--space-3) var(--space-4);
+}
+
+.map-popup-title {
+  font-size: var(--text-body-medium-size);
+  font-weight: var(--text-body-medium-weight);
+  margin-bottom: var(--space-2);
+}
+
+.map-popup-row {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: 2px 0;
+}
+
+.map-popup-label {
+  color: var(--neutral-500);
+}
+
+.map-popup-actions {
+  display: flex;
+  gap: var(--space-3);
+  margin-top: var(--space-2);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--neutral-200);
+}
+
+.map-popup-actions a {
+  color: var(--brand-600);
+  font-weight: var(--text-body-medium-weight);
+  text-decoration: none;
+}
+
+.map-popup-actions a:hover {
+  text-decoration: underline;
+}
+
+.map-popup-multi {
+  display: flex;
+  flex-direction: column;
+  min-width: 160px;
+}
+
+.map-popup-multi-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: var(--space-2) 0;
+  border: none;
+  border-top: 1px solid var(--neutral-200);
+  background: none;
+  font: inherit;
+  font-size: var(--text-small-size);
+  color: var(--brand-600);
+  cursor: pointer;
+}
+
+.map-popup-multi-item:hover {
+  text-decoration: underline;
+}

@@ -70,4 +70,20 @@ export class ReportingController {
     const actingRoles = (RequestContextStore.current().roles ?? []) as MembershipRoleName[];
     return this.reportingService.dashboard(organizationId, actingUserId, actingRoles);
   }
+
+  @Get('dashboard/fleet-map')
+  fleetMap() {
+    const organizationId = RequestContextStore.requireOrganizationId();
+    const actingUserId = RequestContextStore.requireUserId();
+    const actingRoles = (RequestContextStore.current().roles ?? []) as MembershipRoleName[];
+    return this.reportingService.fleetMap(organizationId, actingUserId, actingRoles);
+  }
+
+  @Get('dashboard/needs-attention')
+  needsAttention() {
+    const organizationId = RequestContextStore.requireOrganizationId();
+    const actingUserId = RequestContextStore.requireUserId();
+    const actingRoles = (RequestContextStore.current().roles ?? []) as MembershipRoleName[];
+    return this.reportingService.needsAttention(organizationId, actingUserId, actingRoles);
+  }
 }

@@ -395,4 +395,186 @@ export class ReportingService {
       pendingCarrierPayments,
     };
   }
+
+  /**
+   * Dashboard Map Phase — "Truck Locations & Destinations". Reuses the
+   * exact dispatcher-scoping rule already approved for `dispatcherBlock`
+   * (org-wide for ADMIN/OPERATIONS_MANAGER, else scoped to the caller's
+   * own `assignedDispatcherId` loads) — this is Dispatch-domain data, not
+   * a new visibility decision. Returns raw stops per load rather than a
+   * pre-computed origin/destination string, so the frontend's existing
+   * `originDestination()` derivation (loadDerived.ts) is reused instead
+   * of being re-implemented here. Never returns a location for a truck
+   * that has none — `lastKnownLocation` is `null`, not a guessed value,
+   * whenever `Load.currentLocationCity/State` is unset (i.e. no Check
+   * Call has ever been logged for that Load).
+   */
+  async fleetMap(organizationId: string, actingUserId: string, actingRoles: MembershipRoleName[]) {
+    const isFullVisibility = actingRoles.some((r) => r === 'ADMIN' || r === 'OPERATIONS_MANAGER');
+    if (!isFullVisibility && !actingRoles.includes('DISPATCHER')) {
+      return { activeTrucks: [], availableTrucks: [] };
+    }
+
+    return this.prisma.withTenantTransaction(organizationId, async (tx) => {
+      const dispatcherFilter = isFullVisibility ? {} : { assignedDispatcherId: actingUserId };
+
+      const dispatchRecords = await tx.dispatchRecord.findMany({
+        where: {
+          organizationId,
+          load: { status: { in: ['DISPATCHED', 'PICKUP', 'IN_TRANSIT'] }, ...dispatcherFilter },
+        },
+        include: {
+          load: {
+            select: {
+              id: true,
+              loadNumber: true,
+              status: true,
+              riskStatus: true,
+              assignedCarrierId: true,
+              currentLocationCity: true,
+              currentLocationState: true,
+              currentLocationDescription: true,
+              currentLocationUpdatedAt: true,
+              currentEta: true,
+              stops: {
+                select: {
+                  sequence: true,
+                  stopType: true,
+                  stopPurpose: true,
+                  city: true,
+                  state: true,
+                },
+                orderBy: { sequence: 'asc' },
+              },
+            },
+          },
+        },
+      });
+
+      const activeTrucks = dispatchRecords.map((d) => ({
+        truckNumber: d.truckNumber,
+        driverName: d.driverName,
+        loadId: d.load.id,
+        loadNumber: d.load.loadNumber,
+        loadStatus: d.load.status,
+        riskStatus: d.load.riskStatus,
+        assignedCarrierId: d.load.assignedCarrierId,
+        lastKnownLocation:
+          d.load.currentLocationCity && d.load.currentLocationState
+            ? {
+                city: d.load.currentLocationCity,
+                state: d.load.currentLocationState,
+                description: d.load.currentLocationDescription,
+                updatedAt: d.load.currentLocationUpdatedAt,
+              }
+            : null,
+        currentEta: d.load.currentEta,
+        stops: d.load.stops,
+      }));
+
+      // "Available trucks" is an org-wide fleet fact, not a per-dispatcher
+      // one — only computed for full-visibility callers, same principle
+      // as every other org-wide-only block in this service.
+      let availableTrucks: {
+        truckId: string;
+        unitNumber: string;
+        carrierId: string;
+        carrierLegalName: string;
+      }[] = [];
+      if (isFullVisibility) {
+        const dispatchedTruckIds = (
+          await tx.dispatchRecord.findMany({
+            where: {
+              organizationId,
+              sourceTruckId: { not: null },
+              load: { status: { in: ['DISPATCHED', 'PICKUP', 'IN_TRANSIT'] } },
+            },
+            select: { sourceTruckId: true },
+          })
+        )
+          .map((d) => d.sourceTruckId)
+          .filter((id): id is string => id !== null);
+
+        const trucks = await tx.truck.findMany({
+          where: { organizationId, active: true, id: { notIn: dispatchedTruckIds } },
+          include: { carrier: { select: { legalName: true } } },
+        });
+
+        availableTrucks = trucks.map((t) => ({
+          truckId: t.id,
+          unitNumber: t.unitNumber,
+          carrierId: t.carrierId,
+          carrierLegalName: t.carrier.legalName,
+        }));
+      }
+
+      return { activeTrucks, availableTrucks };
+    });
+  }
+
+  /**
+   * Dashboard "Needs Attention Today" — reads existing, already-computed
+   * `Notification` rows (CHECK_CALL_OVERDUE, LOAD_LATE,
+   * CHECK_CALL_DUE_SOON) rather than introducing any new "what needs
+   * attention" logic; each notification already carries a
+   * `relatedEntityId` pointing at the Load. Same role-gate and
+   * per-recipient scoping as the rest of the Dispatch dashboard block.
+   */
+  async needsAttention(
+    organizationId: string,
+    actingUserId: string,
+    actingRoles: MembershipRoleName[],
+  ) {
+    const isFullVisibility = actingRoles.some((r) => r === 'ADMIN' || r === 'OPERATIONS_MANAGER');
+    if (!isFullVisibility && !actingRoles.includes('DISPATCHER')) {
+      return { items: [] };
+    }
+
+    return this.prisma.withTenantTransaction(organizationId, async (tx) => {
+      const notifications = await tx.notification.findMany({
+        where: {
+          organizationId,
+          type: { in: ['CHECK_CALL_OVERDUE', 'LOAD_LATE', 'CHECK_CALL_DUE_SOON'] },
+          read: false,
+          ...(isFullVisibility ? {} : { recipientUserId: actingUserId }),
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 25,
+      });
+
+      const loadIds = [
+        ...new Set(
+          notifications
+            .filter((n) => n.relatedEntityType === 'Load')
+            .map((n) => n.relatedEntityId)
+            .filter((id): id is string => id !== null),
+        ),
+      ];
+      const loads = loadIds.length
+        ? await tx.load.findMany({
+            where: { organizationId, id: { in: loadIds } },
+            select: { id: true, loadNumber: true },
+          })
+        : [];
+      const loadNumberById = new Map(loads.map((l) => [l.id, l.loadNumber]));
+
+      const items = notifications
+        .filter(
+          (n) =>
+            n.relatedEntityType === 'Load' &&
+            n.relatedEntityId !== null &&
+            loadNumberById.has(n.relatedEntityId),
+        )
+        .map((n) => ({
+          id: n.id,
+          type: n.type,
+          message: n.message,
+          loadId: n.relatedEntityId as string,
+          loadNumber: loadNumberById.get(n.relatedEntityId as string) as string,
+          createdAt: n.createdAt,
+        }));
+
+      return { items };
+    });
+  }
 }

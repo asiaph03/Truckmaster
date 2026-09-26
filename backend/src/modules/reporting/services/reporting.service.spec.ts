@@ -27,18 +27,26 @@ function buildService(
     loadCount?: number;
     quoteCount?: number;
     carrierPaymentCount?: number;
+    dispatchRecords?: Record<string, unknown>[];
+    trucks?: Record<string, unknown>[];
+    notifications?: Record<string, unknown>[];
+    loadsForNeedsAttention?: Record<string, unknown>[];
   } = {},
 ) {
   const tx = {
     load: {
-      findMany: jest
-        .fn()
-        .mockImplementation(({ where }: { where: Record<string, unknown> }) =>
-          Promise.resolve(
-            'assignedCarrierId' in where ? (opts.loadsForAging ?? []) : (opts.loads ?? []),
-          ),
-        ),
+      findMany: jest.fn().mockImplementation(({ where }: { where: Record<string, unknown> }) => {
+        if ('assignedCarrierId' in where) return Promise.resolve(opts.loadsForAging ?? []);
+        if ('id' in where) return Promise.resolve(opts.loadsForNeedsAttention ?? []);
+        return Promise.resolve(opts.loads ?? []);
+      }),
       count: jest.fn().mockResolvedValue(opts.loadCount ?? 0),
+    },
+    dispatchRecord: {
+      findMany: jest.fn().mockResolvedValue(opts.dispatchRecords ?? []),
+    },
+    truck: {
+      findMany: jest.fn().mockResolvedValue(opts.trucks ?? []),
     },
     customer: {
       findMany: jest.fn().mockResolvedValue(opts.customers ?? []),
@@ -64,6 +72,7 @@ function buildService(
     },
     notification: {
       count: jest.fn().mockResolvedValue(opts.notificationCount ?? 0),
+      findMany: jest.fn().mockResolvedValue(opts.notifications ?? []),
     },
     carrierPayment: {
       count: jest.fn().mockResolvedValue(opts.carrierPaymentCount ?? 0),
@@ -379,5 +388,200 @@ describe('ReportingService.dashboard — PRD §9 / Decision 3', () => {
     const result = await service.dashboard(ORG_ID, USER_ID, ['COMPLIANCE_REVIEWER']);
 
     expect(result).toEqual({});
+  });
+});
+
+describe('ReportingService.fleetMap — Dashboard Map Phase', () => {
+  const DISPATCH_RECORD = {
+    truckNumber: 'T-100',
+    driverName: 'Jane Driver',
+    sourceTruckId: 'truck-1',
+    load: {
+      id: 'load-1',
+      loadNumber: 'LOAD-000001',
+      status: 'IN_TRANSIT',
+      riskStatus: 'NORMAL',
+      assignedCarrierId: 'carrier-1',
+      currentLocationCity: 'St. Louis',
+      currentLocationState: 'MO',
+      currentLocationDescription: null,
+      currentLocationUpdatedAt: new Date('2026-09-25T12:00:00Z'),
+      currentEta: new Date('2026-09-26T18:00:00Z'),
+      stops: [
+        { sequence: 1, stopType: 'PICKUP', stopPurpose: 'STANDARD', city: 'Chicago', state: 'IL' },
+        { sequence: 2, stopType: 'DELIVERY', stopPurpose: 'STANDARD', city: 'Dallas', state: 'TX' },
+      ],
+    },
+  };
+
+  it('returns active trucks with their last known location for a full-visibility caller, org-wide', async () => {
+    const { service, tx } = buildService({ dispatchRecords: [DISPATCH_RECORD] });
+
+    const result = await service.fleetMap(ORG_ID, USER_ID, ['ADMIN']);
+
+    expect(result.activeTrucks).toHaveLength(1);
+    expect(result.activeTrucks[0]).toEqual(
+      expect.objectContaining({
+        truckNumber: 'T-100',
+        driverName: 'Jane Driver',
+        loadNumber: 'LOAD-000001',
+        lastKnownLocation: expect.objectContaining({ city: 'St. Louis', state: 'MO' }),
+      }),
+    );
+    expect(tx.dispatchRecord.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          load: expect.not.objectContaining({ assignedDispatcherId: USER_ID }),
+        }),
+      }),
+    );
+  });
+
+  it('scopes active trucks to the caller’s own assigned loads for a Dispatcher', async () => {
+    const { service, tx } = buildService({ dispatchRecords: [DISPATCH_RECORD] });
+
+    await service.fleetMap(ORG_ID, USER_ID, ['DISPATCHER']);
+
+    expect(tx.dispatchRecord.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          load: expect.objectContaining({ assignedDispatcherId: USER_ID }),
+        }),
+      }),
+    );
+  });
+
+  it('returns null lastKnownLocation — never a guessed location — when no Check Call has been logged', async () => {
+    const { service } = buildService({
+      dispatchRecords: [
+        {
+          ...DISPATCH_RECORD,
+          load: {
+            ...DISPATCH_RECORD.load,
+            currentLocationCity: null,
+            currentLocationState: null,
+          },
+        },
+      ],
+    });
+
+    const result = await service.fleetMap(ORG_ID, USER_ID, ['ADMIN']);
+
+    expect(result.activeTrucks[0].lastKnownLocation).toBeNull();
+  });
+
+  it('includes available (undispatched) trucks only for a full-visibility caller', async () => {
+    const { service } = buildService({
+      dispatchRecords: [DISPATCH_RECORD],
+      trucks: [
+        {
+          id: 'truck-2',
+          unitNumber: 'T-200',
+          carrierId: 'carrier-2',
+          carrier: { legalName: 'Nurana LLC' },
+        },
+      ],
+    });
+
+    const adminResult = await service.fleetMap(ORG_ID, USER_ID, ['ADMIN']);
+    expect(adminResult.availableTrucks).toEqual([
+      {
+        truckId: 'truck-2',
+        unitNumber: 'T-200',
+        carrierId: 'carrier-2',
+        carrierLegalName: 'Nurana LLC',
+      },
+    ]);
+
+    const dispatcherResult = await service.fleetMap(ORG_ID, USER_ID, ['DISPATCHER']);
+    expect(dispatcherResult.availableTrucks).toEqual([]);
+  });
+
+  it('excludes a currently-dispatched truck from the available list', async () => {
+    const { service, tx } = buildService({
+      dispatchRecords: [DISPATCH_RECORD],
+      trucks: [{ id: 'truck-2', unitNumber: 'T-200', carrier: { legalName: 'Nurana LLC' } }],
+    });
+
+    await service.fleetMap(ORG_ID, USER_ID, ['ADMIN']);
+
+    expect(tx.truck.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ id: { notIn: ['truck-1'] } }),
+      }),
+    );
+  });
+
+  it('gives an empty result to a role with no approved fleet-map visibility', async () => {
+    const { service } = buildService({ dispatchRecords: [DISPATCH_RECORD] });
+
+    const result = await service.fleetMap(ORG_ID, USER_ID, ['COMPLIANCE_REVIEWER']);
+
+    expect(result).toEqual({ activeTrucks: [], availableTrucks: [] });
+  });
+});
+
+describe('ReportingService.needsAttention — Dashboard "Needs Attention Today"', () => {
+  const NOTIFICATION = {
+    id: 'notif-1',
+    type: 'CHECK_CALL_OVERDUE',
+    message: 'Check call overdue for LOAD-000001',
+    relatedEntityType: 'Load',
+    relatedEntityId: 'load-1',
+    createdAt: new Date('2026-09-26T10:00:00Z'),
+  };
+
+  it('returns real Load-linked items for existing unread notifications, org-wide for full visibility', async () => {
+    const { service, tx } = buildService({
+      notifications: [NOTIFICATION],
+      loadsForNeedsAttention: [{ id: 'load-1', loadNumber: 'LOAD-000001' }],
+    });
+
+    const result = await service.needsAttention(ORG_ID, USER_ID, ['ADMIN']);
+
+    expect(result.items).toEqual([
+      expect.objectContaining({
+        id: 'notif-1',
+        type: 'CHECK_CALL_OVERDUE',
+        loadId: 'load-1',
+        loadNumber: 'LOAD-000001',
+      }),
+    ]);
+    expect(tx.notification.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.not.objectContaining({ recipientUserId: USER_ID }),
+      }),
+    );
+  });
+
+  it('scopes to the caller’s own notifications for a Dispatcher', async () => {
+    const { service, tx } = buildService({ notifications: [], loadsForNeedsAttention: [] });
+
+    await service.needsAttention(ORG_ID, USER_ID, ['DISPATCHER']);
+
+    expect(tx.notification.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ recipientUserId: USER_ID }),
+      }),
+    );
+  });
+
+  it('drops a notification whose related Load no longer resolves, rather than showing a broken link', async () => {
+    const { service } = buildService({
+      notifications: [NOTIFICATION],
+      loadsForNeedsAttention: [],
+    });
+
+    const result = await service.needsAttention(ORG_ID, USER_ID, ['ADMIN']);
+
+    expect(result.items).toEqual([]);
+  });
+
+  it('gives an empty result to a role with no approved visibility', async () => {
+    const { service } = buildService({ notifications: [NOTIFICATION] });
+
+    const result = await service.needsAttention(ORG_ID, USER_ID, ['COMPLIANCE_REVIEWER']);
+
+    expect(result).toEqual({ items: [] });
   });
 });

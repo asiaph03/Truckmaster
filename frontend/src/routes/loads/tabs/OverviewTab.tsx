@@ -5,6 +5,7 @@ import { useQuery } from '@tanstack/react-query';
 import { carriersApi, customersApi, loadsApi, membershipsApi, type Load } from '../../../api';
 import { Badge, Button, ChecklistItem } from '../../../components/ui';
 import { getStatusBadgeColor } from '../../../components/ui/statusBadgeMap';
+import { LoadRouteMap } from '../../../components/map';
 import { usePermissions } from '../../../hooks/usePermissions';
 import { formatBusinessDateTime } from '../businessTimezone';
 import { originDestination } from '../loadDerived';
@@ -36,6 +37,7 @@ export function OverviewTab({ load, onChanged }: { load: Load; onChanged: () => 
   const canEditStops = can('createQuoteOrLoad');
   const [editingStops, setEditingStops] = useState(false);
   const [linkingReturn, setLinkingReturn] = useState(false);
+  const [selectedStopId, setSelectedStopId] = useState<string | null>(null);
 
   const { data: closingChecklist } = useQuery({
     queryKey: ['loads', load.id, 'closing-checklist'],
@@ -102,7 +104,17 @@ export function OverviewTab({ load, onChanged }: { load: Load; onChanged: () => 
             ) : null}
           </div>
           {sortedStops.map((stop) => (
-            <div key={stop.id} className="load-stop-mini-row">
+            <div
+              key={stop.id}
+              className={[
+                'load-stop-mini-row',
+                'load-stop-mini-row-clickable',
+                stop.id === selectedStopId ? 'load-stop-mini-row-selected' : '',
+              ]
+                .filter(Boolean)
+                .join(' ')}
+              onClick={() => setSelectedStopId(stop.id)}
+            >
               <span>Stop {stop.sequence}</span>
               <Badge label={stop.stopType} color="neutral" />
               {stop.stopPurpose === 'RETURN' ? <Badge label="Return" color="warning" /> : null}
@@ -119,6 +131,29 @@ export function OverviewTab({ load, onChanged }: { load: Load; onChanged: () => 
               />
             </div>
           ))}
+        </div>
+
+        <div className="detail-card">
+          <h2 className="detail-card-title">Route Map</h2>
+          <LoadRouteMap
+            stops={load.stops}
+            truckLocation={
+              load.dispatchRecord &&
+              load.currentLocationCity &&
+              load.currentLocationState &&
+              load.currentLocationUpdatedAt
+                ? {
+                    truckNumber: load.dispatchRecord.truckNumber,
+                    city: load.currentLocationCity,
+                    state: load.currentLocationState,
+                    description: load.currentLocationDescription ?? null,
+                    updatedAt: load.currentLocationUpdatedAt,
+                  }
+                : null
+            }
+            selectedStopId={selectedStopId}
+            onSelectStop={setSelectedStopId}
+          />
         </div>
 
         {load.returnForLoadId || (load.returnLoads && load.returnLoads.length > 0) ? (

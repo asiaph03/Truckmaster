@@ -1,13 +1,21 @@
 import type { Stop } from '../../api';
 
 /**
+ * The minimal shape `originDestination` actually needs — satisfied by the
+ * full `Stop` (OverviewTab, using every field) and by the lighter
+ * per-load stop summary the fleet-map endpoint returns (FleetMap, which
+ * never fetches full Stop rows just to derive a lane string).
+ */
+export type StopLaneFields = Pick<Stop, 'sequence' | 'stopType' | 'stopPurpose' | 'city' | 'state'>;
+
+/**
  * First Pickup / last Delivery by sequence — matches the locked Table
  * View column derivation (§5.4.1). Return Product feature — filtered to
  * `stopPurpose: 'STANDARD'` (mirrors the exact same filter in the
  * backend's `load-search.service.ts` `pickStopDate`), so a return leg's
  * pickup/delivery never becomes the reported lane/date.
  */
-export function originDestination(stops: Stop[]): string {
+export function originDestination(stops: StopLaneFields[]): string {
   const pickups = stops
     .filter((s) => s.stopType === 'PICKUP' && s.stopPurpose === 'STANDARD')
     .sort((a, b) => a.sequence - b.sequence);
@@ -18,6 +26,17 @@ export function originDestination(stops: Stop[]): string {
   const destination = deliveries[deliveries.length - 1];
   if (!origin || !destination) return '—';
   return `${origin.city}, ${origin.state} → ${destination.city}, ${destination.state}`;
+}
+
+/** The final Delivery stop's raw city/state (for geocoding) — same STANDARD-only filter as `originDestination`. */
+export function destinationCityState(
+  stops: StopLaneFields[],
+): { city: string; state: string } | null {
+  const deliveries = stops
+    .filter((s) => s.stopType === 'DELIVERY' && s.stopPurpose === 'STANDARD')
+    .sort((a, b) => a.sequence - b.sequence);
+  const destination = deliveries[deliveries.length - 1];
+  return destination ? { city: destination.city, state: destination.state } : null;
 }
 
 export function firstPickupDate(stops: Stop[]): string | null {

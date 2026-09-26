@@ -149,6 +149,17 @@ export interface Load {
   podStatus: PodStatus;
   riskStatus: RiskStatus;
   riskReason?: string;
+  // Dashboard Map Phase — already returned by `GET /loads/:id` (a plain
+  // scalar Prisma field, never redacted by `shapeFinancialFields`), just
+  // never typed here before now. Set only by `logCheckCall` — `null`
+  // whenever no Check Call has ever been logged for this Load, which
+  // `LoadRouteMap` must render as "Truck location unavailable", never a
+  // guessed position.
+  currentLocationCity?: string | null;
+  currentLocationState?: string | null;
+  currentLocationDescription?: string | null;
+  currentLocationUpdatedAt?: string | null;
+  currentEta?: string | null;
   invoiced: boolean;
   closedAt?: string;
   closedByUserId?: string;

@@ -84,6 +84,67 @@ export interface DashboardResponse {
   accounting?: DashboardAccountingBlock;
 }
 
+/**
+ * Dashboard Map Phase — matches `ReportingService.fleetMap()`'s exact
+ * shape. `lastKnownLocation` is `null`, never a guessed value, whenever
+ * no Check Call has ever set `Load.currentLocationCity/State` — the
+ * frontend must render "Location unavailable" for that case, never a
+ * fabricated position (see `FleetMap`).
+ */
+export interface FleetMapStop {
+  sequence: number;
+  stopType: 'PICKUP' | 'DELIVERY' | 'OTHER';
+  stopPurpose: 'STANDARD' | 'RETURN';
+  city: string;
+  state: string;
+}
+
+export interface FleetMapLastKnownLocation {
+  city: string;
+  state: string;
+  description: string | null;
+  updatedAt: string;
+}
+
+export interface FleetMapActiveTruck {
+  truckNumber: string;
+  driverName: string;
+  loadId: string;
+  loadNumber: string;
+  loadStatus: string;
+  riskStatus: 'NORMAL' | 'AT_RISK' | 'DELAYED';
+  assignedCarrierId: string | null;
+  lastKnownLocation: FleetMapLastKnownLocation | null;
+  currentEta: string | null;
+  stops: FleetMapStop[];
+}
+
+export interface FleetMapAvailableTruck {
+  truckId: string;
+  unitNumber: string;
+  carrierId: string;
+  carrierLegalName: string;
+}
+
+export interface FleetMapResponse {
+  activeTrucks: FleetMapActiveTruck[];
+  availableTrucks: FleetMapAvailableTruck[];
+}
+
+/** Dashboard "Needs Attention Today" — matches `ReportingService.needsAttention()`'s exact shape. */
+export interface NeedsAttentionItem {
+  id: string;
+  type: string;
+  message: string;
+  loadId: string;
+  loadNumber: string;
+  createdAt: string;
+}
+
+export interface NeedsAttentionResponse {
+  items: NeedsAttentionItem[];
+}
+
 export const reportingApi = {
   search: (q: string) => apiRequest<GlobalSearchResult>('/search', { query: { q } }),
 
@@ -95,6 +156,12 @@ export const reportingApi = {
 
   /** PRD §9 role-aware Dashboard — open to any authenticated session; role-filtering happens entirely server-side. */
   dashboard: () => apiRequest<DashboardResponse>('/dashboard'),
+
+  /** Dashboard Map Phase — "Truck Locations & Destinations". Same role-gating as `dashboard`. */
+  fleetMap: () => apiRequest<FleetMapResponse>('/dashboard/fleet-map'),
+
+  /** Dashboard "Needs Attention Today". Same role-gating as `dashboard`. */
+  needsAttention: () => apiRequest<NeedsAttentionResponse>('/dashboard/needs-attention'),
 
   /** Phase 21 (Reports Library) — identical bucket data as `arAging`, as a CSV download. */
   arAgingExportCsv: () => downloadCsv('/reports/ar-aging/export', 'ar-aging.csv'),
