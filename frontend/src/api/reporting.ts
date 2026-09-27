@@ -139,18 +139,43 @@ export interface FleetMapResponse {
   availableTrucks: FleetMapAvailableTruck[];
 }
 
-/** Dashboard "Needs Attention Today" — matches `ReportingService.needsAttention()`'s exact shape. */
+/**
+ * Dashboard "Needs Attention Today" — B.5 combined source, matches
+ * `ReportingService.needsAttention()`'s exact shape. `source` tells the
+ * UI which fields are meaningful: a `NOTIFICATION` row has `message` and
+ * no `title`/`reason`/`impact`/`suggestedActions`/`metadata`/`status`; an
+ * `ATTENTION_ITEM` row has `title`/`reason`/etc. and no `message` — every
+ * field with no equivalent on that source is `null`, never invented.
+ */
+export type NeedsAttentionSource = 'NOTIFICATION' | 'ATTENTION_ITEM';
+export type NeedsAttentionSeverity = 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'INFO';
+export type NeedsAttentionStatus = 'ACTIVE' | 'RESOLVED';
+
 export interface NeedsAttentionItem {
   id: string;
+  source: NeedsAttentionSource;
   type: string;
-  message: string;
+  severity: NeedsAttentionSeverity;
+  status: NeedsAttentionStatus | null;
+  title: string | null;
+  message: string | null;
+  reason: string | null;
+  impact: string | null;
+  suggestedActions: unknown;
+  metadata: unknown;
   loadId: string;
   loadNumber: string;
-  createdAt: string;
+  createdAt: string | null;
+  detectedAt: string | null;
+  updatedAt: string | null;
+  resolvedAt: string | null;
 }
 
 export interface NeedsAttentionResponse {
   items: NeedsAttentionItem[];
+  total: number;
+  page: number;
+  pageSize: number;
 }
 
 export const reportingApi = {
@@ -169,7 +194,13 @@ export const reportingApi = {
   fleetMap: () => apiRequest<FleetMapResponse>('/dashboard/fleet-map'),
 
   /** Dashboard "Needs Attention Today". Same role-gating as `dashboard`. */
-  needsAttention: () => apiRequest<NeedsAttentionResponse>('/dashboard/needs-attention'),
+  needsAttention: (params: { page?: number; pageSize?: number } = {}) =>
+    apiRequest<NeedsAttentionResponse>('/dashboard/needs-attention', {
+      query: {
+        ...(params.page !== undefined ? { page: String(params.page) } : {}),
+        ...(params.pageSize !== undefined ? { pageSize: String(params.pageSize) } : {}),
+      },
+    }),
 
   /** Phase 21 (Reports Library) — identical bucket data as `arAging`, as a CSV download. */
   arAgingExportCsv: () => downloadCsv('/reports/ar-aging/export', 'ar-aging.csv'),

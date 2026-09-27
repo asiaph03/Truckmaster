@@ -1,11 +1,105 @@
 import { Injectable } from '@nestjs/common';
-import { MembershipRoleName, Prisma } from '@prisma/client';
+import { AttentionSeverity, AttentionStatus, MembershipRoleName, Prisma } from '@prisma/client';
 import { PrismaService } from '../../../common/prisma/prisma.service';
 import { shapeFinancialFieldsList } from '../../quote-load/services/financial-field-shaping';
 import { FINANCIAL_VIEW_ROLES } from '../../../common/authorization/financial-view-roles';
 import { toCsv } from '../../quote-load/utils/csv';
 
 const SEARCH_RESULT_LIMIT = 5;
+
+/**
+ * B.5 — Needs Attention combined source list. Both `Notification` and
+ * `AttentionItem` are fetched up to this cap, combined, sorted, then
+ * paginated in application code (see `needsAttention` below) — there is
+ * no single-query way to sort/paginate across two different Prisma
+ * models without raw SQL. 500 is a deliberate, generous safety ceiling
+ * given current org-scale volumes (low tens at most); it is not a
+ * literal "no limit," and should be revisited if any org's active
+ * unread-notification-or-active-AttentionItem count approaches it.
+ */
+const NEEDS_ATTENTION_SOURCE_FETCH_CAP = 500;
+
+const NEEDS_ATTENTION_NOTIFICATION_TYPES = [
+  'CHECK_CALL_OVERDUE',
+  'LOAD_LATE',
+  'CHECK_CALL_DUE_SOON',
+] as const;
+type NeedsAttentionNotificationType = (typeof NEEDS_ATTENTION_NOTIFICATION_TYPES)[number];
+
+/**
+ * B.5 — `Notification` has no severity field; this is the explicit,
+ * documented mapping onto `AttentionSeverity` so legacy signals sort
+ * sensibly alongside real AttentionItems, rather than an arbitrary
+ * default. Reasoning:
+ *  - CHECK_CALL_OVERDUE: an already-overdue condition — comparable
+ *    urgency to STALE_LOCATION's own HIGH tier.
+ *  - LOAD_LATE: an already-late Load with direct customer/financial
+ *    consequence — at least as urgent as an overdue check call.
+ *  - CHECK_CALL_DUE_SOON: a pre-emptive warning fired *before* the Load
+ *    actually becomes overdue (Operational Alerts feature, within 15
+ *    minutes of crossing the threshold) — a real but lesser concern,
+ *    mirroring the MEDIUM tier's "warning, not yet urgent" meaning
+ *    elsewhere in this codebase.
+ * None maps to CRITICAL — no existing Notification type represents a
+ * condition this codebase treats as more urgent than "already overdue."
+ */
+const NOTIFICATION_SEVERITY: Record<NeedsAttentionNotificationType, AttentionSeverity> = {
+  CHECK_CALL_OVERDUE: 'HIGH',
+  LOAD_LATE: 'HIGH',
+  CHECK_CALL_DUE_SOON: 'MEDIUM',
+};
+
+const SEVERITY_RANK: Record<AttentionSeverity, number> = {
+  CRITICAL: 4,
+  HIGH: 3,
+  MEDIUM: 2,
+  INFO: 1,
+};
+
+/**
+ * B.5 — normalized shape for both sources. Fields with no equivalent in
+ * the source row are `null` rather than invented (e.g. a Notification
+ * has no `title`/`reason`/`impact`; an AttentionItem has no `message`).
+ */
+export interface NeedsAttentionItem {
+  id: string;
+  source: 'NOTIFICATION' | 'ATTENTION_ITEM';
+  type: string;
+  severity: AttentionSeverity;
+  status: AttentionStatus | null;
+  title: string | null;
+  message: string | null;
+  reason: string | null;
+  impact: string | null;
+  suggestedActions: Prisma.JsonValue | null;
+  metadata: Prisma.JsonValue | null;
+  loadId: string;
+  loadNumber: string;
+  createdAt: Date | null;
+  detectedAt: Date | null;
+  updatedAt: Date | null;
+  resolvedAt: Date | null;
+}
+
+export interface NeedsAttentionResult {
+  items: NeedsAttentionItem[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+function needsAttentionTimestamp(item: NeedsAttentionItem): number {
+  return (item.detectedAt ?? item.createdAt)!.getTime();
+}
+
+/** Severity descending, then most-recent first, then `id` as a deterministic final tie-breaker. */
+function compareNeedsAttentionItems(a: NeedsAttentionItem, b: NeedsAttentionItem): number {
+  const severityDiff = SEVERITY_RANK[b.severity] - SEVERITY_RANK[a.severity];
+  if (severityDiff !== 0) return severityDiff;
+  const timeDiff = needsAttentionTimestamp(b) - needsAttentionTimestamp(a);
+  if (timeDiff !== 0) return timeDiff;
+  return a.id.localeCompare(b.id);
+}
 
 /** Mirrors InvoiceController's own INVOICE_VIEW_ROLES exactly (Phase 6) — search must never surface an invoice to a role that couldn't view it directly. */
 const INVOICE_VIEW_ROLES: MembershipRoleName[] = [
@@ -523,42 +617,68 @@ export class ReportingService {
   }
 
   /**
-   * Dashboard "Needs Attention Today" — reads existing, already-computed
-   * `Notification` rows (CHECK_CALL_OVERDUE, LOAD_LATE,
-   * CHECK_CALL_DUE_SOON) rather than introducing any new "what needs
-   * attention" logic; each notification already carries a
-   * `relatedEntityId` pointing at the Load. Same role-gate and
-   * per-recipient scoping as the rest of the Dispatch dashboard block.
+   * Dashboard "Needs Attention Today" — B.5 combines two sources into one
+   * normalized, sorted, paginated list:
+   *  - legacy `Notification` rows (CHECK_CALL_OVERDUE, LOAD_LATE,
+   *    CHECK_CALL_DUE_SOON) — unchanged query/behavior from the original
+   *    (Phase 8) version, just normalized into the shared shape below;
+   *  - active `AttentionItem` rows (Needs Attention V2 — B.2/B.3/future
+   *    detectors all fit this same response shape automatically, since
+   *    nothing here is specific to any one `AttentionType`).
+   * Both sources are fetched (bounded by NEEDS_ATTENTION_SOURCE_FETCH_CAP
+   * each), normalized, combined, sorted by severity-then-recency, and
+   * *then* paginated — pagination must happen after combining, or page 2
+   * of a mixed list would be wrong. AttentionItem's own lifecycle stays
+   * entirely sweep-driven — this method only ever reads `status: 'ACTIVE'`
+   * rows, no acknowledge/resolve action exists or is added here.
    */
   async needsAttention(
     organizationId: string,
     actingUserId: string,
     actingRoles: MembershipRoleName[],
-  ) {
+    page: number,
+    pageSize: number,
+  ): Promise<NeedsAttentionResult> {
     const isFullVisibility = actingRoles.some((r) => r === 'ADMIN' || r === 'OPERATIONS_MANAGER');
-    if (!isFullVisibility && !actingRoles.includes('DISPATCHER')) {
-      return { items: [] };
+    const isDispatcher = actingRoles.includes('DISPATCHER');
+    if (!isFullVisibility && !isDispatcher) {
+      return { items: [], total: 0, page, pageSize };
     }
 
     return this.prisma.withTenantTransaction(organizationId, async (tx) => {
       const notifications = await tx.notification.findMany({
         where: {
           organizationId,
-          type: { in: ['CHECK_CALL_OVERDUE', 'LOAD_LATE', 'CHECK_CALL_DUE_SOON'] },
+          type: { in: [...NEEDS_ATTENTION_NOTIFICATION_TYPES] },
           read: false,
+          // Legacy Notifications keep their existing per-recipient scoping
+          // for a Dispatcher — this is a different mechanism from the
+          // AttentionItem scoping below (Load.assignedDispatcherId), not
+          // a shared filter.
           ...(isFullVisibility ? {} : { recipientUserId: actingUserId }),
         },
         orderBy: { createdAt: 'desc' },
-        take: 25,
+        take: NEEDS_ATTENTION_SOURCE_FETCH_CAP,
       });
 
+      const attentionItems = await tx.attentionItem.findMany({
+        where: {
+          organizationId,
+          status: 'ACTIVE',
+          ...(isFullVisibility ? {} : { load: { assignedDispatcherId: actingUserId } }),
+        },
+        orderBy: { detectedAt: 'desc' },
+        take: NEEDS_ATTENTION_SOURCE_FETCH_CAP,
+      });
+
+      // Single batched Load lookup across BOTH sources — no per-item query.
       const loadIds = [
-        ...new Set(
-          notifications
-            .filter((n) => n.relatedEntityType === 'Load')
-            .map((n) => n.relatedEntityId)
-            .filter((id): id is string => id !== null),
-        ),
+        ...new Set([
+          ...notifications
+            .filter((n) => n.relatedEntityType === 'Load' && n.relatedEntityId !== null)
+            .map((n) => n.relatedEntityId as string),
+          ...attentionItems.map((a) => a.loadId),
+        ]),
       ];
       const loads = loadIds.length
         ? await tx.load.findMany({
@@ -568,7 +688,7 @@ export class ReportingService {
         : [];
       const loadNumberById = new Map(loads.map((l) => [l.id, l.loadNumber]));
 
-      const items = notifications
+      const fromNotifications: NeedsAttentionItem[] = notifications
         .filter(
           (n) =>
             n.relatedEntityType === 'Load' &&
@@ -577,14 +697,55 @@ export class ReportingService {
         )
         .map((n) => ({
           id: n.id,
+          source: 'NOTIFICATION',
           type: n.type,
+          severity: NOTIFICATION_SEVERITY[n.type as NeedsAttentionNotificationType],
+          status: null,
+          title: null,
           message: n.message,
+          reason: null,
+          impact: null,
+          suggestedActions: null,
+          metadata: null,
           loadId: n.relatedEntityId as string,
           loadNumber: loadNumberById.get(n.relatedEntityId as string) as string,
           createdAt: n.createdAt,
+          detectedAt: null,
+          updatedAt: null,
+          resolvedAt: null,
         }));
 
-      return { items };
+      const fromAttentionItems: NeedsAttentionItem[] = attentionItems
+        .filter((a) => loadNumberById.has(a.loadId))
+        .map((a) => ({
+          id: a.id,
+          source: 'ATTENTION_ITEM',
+          type: a.type,
+          severity: a.severity,
+          status: a.status,
+          title: a.title,
+          message: null,
+          reason: a.reason,
+          impact: a.impact,
+          suggestedActions: a.suggestedActions,
+          metadata: a.metadata,
+          loadId: a.loadId,
+          loadNumber: loadNumberById.get(a.loadId) as string,
+          createdAt: null,
+          detectedAt: a.detectedAt,
+          updatedAt: a.updatedAt,
+          resolvedAt: a.resolvedAt,
+        }));
+
+      const combined = [...fromNotifications, ...fromAttentionItems].sort(
+        compareNeedsAttentionItems,
+      );
+
+      const total = combined.length;
+      const start = (page - 1) * pageSize;
+      const items = combined.slice(start, start + pageSize);
+
+      return { items, total, page, pageSize };
     });
   }
 }

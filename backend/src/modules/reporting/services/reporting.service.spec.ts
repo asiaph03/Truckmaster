@@ -31,6 +31,7 @@ function buildService(
     trucks?: Record<string, unknown>[];
     notifications?: Record<string, unknown>[];
     loadsForNeedsAttention?: Record<string, unknown>[];
+    attentionItems?: Record<string, unknown>[];
   } = {},
 ) {
   const tx = {
@@ -73,6 +74,9 @@ function buildService(
     notification: {
       count: jest.fn().mockResolvedValue(opts.notificationCount ?? 0),
       findMany: jest.fn().mockResolvedValue(opts.notifications ?? []),
+    },
+    attentionItem: {
+      findMany: jest.fn().mockResolvedValue(opts.attentionItems ?? []),
     },
     carrierPayment: {
       count: jest.fn().mockResolvedValue(opts.carrierPaymentCount ?? 0),
@@ -521,7 +525,7 @@ describe('ReportingService.fleetMap — Dashboard Map Phase', () => {
   });
 });
 
-describe('ReportingService.needsAttention — Dashboard "Needs Attention Today"', () => {
+describe('ReportingService.needsAttention — B.5 combined Notification + AttentionItem source', () => {
   const NOTIFICATION = {
     id: 'notif-1',
     type: 'CHECK_CALL_OVERDUE',
@@ -531,39 +535,271 @@ describe('ReportingService.needsAttention — Dashboard "Needs Attention Today"'
     createdAt: new Date('2026-09-26T10:00:00Z'),
   };
 
-  it('returns real Load-linked items for existing unread notifications, org-wide for full visibility', async () => {
+  function attentionItem(overrides: Record<string, unknown> = {}) {
+    return {
+      id: 'attn-1',
+      loadId: 'load-2',
+      type: 'STALE_LOCATION',
+      severity: 'HIGH',
+      status: 'ACTIVE',
+      title: 'Stale Location',
+      reason: 'Location has not been updated in approximately 3h 5m.',
+      impact: null,
+      suggestedActions: [{ type: 'VIEW_LOAD' }],
+      metadata: { ageMinutes: 185 },
+      detectedAt: new Date('2026-09-27T08:00:00Z'),
+      updatedAt: new Date('2026-09-27T08:00:00Z'),
+      resolvedAt: null,
+      ...overrides,
+    };
+  }
+
+  const LOAD_1 = { id: 'load-1', loadNumber: 'LOAD-000001' };
+  const LOAD_2 = { id: 'load-2', loadNumber: 'LOAD-000002' };
+
+  it('1. gives ADMIN organization-wide visibility across both sources', async () => {
     const { service, tx } = buildService({
       notifications: [NOTIFICATION],
-      loadsForNeedsAttention: [{ id: 'load-1', loadNumber: 'LOAD-000001' }],
+      attentionItems: [attentionItem()],
+      loadsForNeedsAttention: [LOAD_1, LOAD_2],
     });
 
-    const result = await service.needsAttention(ORG_ID, USER_ID, ['ADMIN']);
+    const result = await service.needsAttention(ORG_ID, USER_ID, ['ADMIN'], 1, 25);
 
-    expect(result.items).toEqual([
-      expect.objectContaining({
-        id: 'notif-1',
-        type: 'CHECK_CALL_OVERDUE',
-        loadId: 'load-1',
-        loadNumber: 'LOAD-000001',
-      }),
-    ]);
+    expect(result.items).toHaveLength(2);
     expect(tx.notification.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.not.objectContaining({ recipientUserId: USER_ID }),
-      }),
+      expect.objectContaining({ where: expect.not.objectContaining({ recipientUserId: USER_ID }) }),
+    );
+    expect(tx.attentionItem.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.not.objectContaining({ load: expect.anything() }) }),
     );
   });
 
-  it('scopes to the caller’s own notifications for a Dispatcher', async () => {
-    const { service, tx } = buildService({ notifications: [], loadsForNeedsAttention: [] });
+  it('2. gives OPERATIONS_MANAGER the same organization-wide visibility as ADMIN', async () => {
+    const { service, tx } = buildService({
+      notifications: [NOTIFICATION],
+      attentionItems: [attentionItem()],
+      loadsForNeedsAttention: [LOAD_1, LOAD_2],
+    });
 
-    await service.needsAttention(ORG_ID, USER_ID, ['DISPATCHER']);
+    const result = await service.needsAttention(ORG_ID, USER_ID, ['OPERATIONS_MANAGER'], 1, 25);
 
+    expect(result.items).toHaveLength(2);
     expect(tx.notification.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.not.objectContaining({ recipientUserId: USER_ID }) }),
+    );
+    expect(tx.attentionItem.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.not.objectContaining({ load: expect.anything() }) }),
+    );
+  });
+
+  it('3. scopes a DISPATCHER to AttentionItems whose Load is assigned to them — a different mechanism from Notification.recipientUserId', async () => {
+    const { service, tx } = buildService({
+      notifications: [],
+      attentionItems: [attentionItem()],
+      loadsForNeedsAttention: [LOAD_2],
+    });
+
+    await service.needsAttention(ORG_ID, USER_ID, ['DISPATCHER'], 1, 25);
+
+    expect(tx.attentionItem.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: expect.objectContaining({ recipientUserId: USER_ID }),
+        where: expect.objectContaining({ load: { assignedDispatcherId: USER_ID } }),
       }),
     );
+    // Legacy Notification scoping is retained unchanged, not reused for AttentionItem.
+    expect(tx.notification.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ recipientUserId: USER_ID }) }),
+    );
+  });
+
+  it('4. returns no items for unsupported roles', async () => {
+    for (const role of ['SALES_BOOKING', 'ACCOUNTING', 'COMPLIANCE_REVIEWER'] as const) {
+      const { service, prisma } = buildService({});
+      const result = await service.needsAttention(ORG_ID, USER_ID, [role], 1, 25);
+      expect(result).toEqual({ items: [], total: 0, page: 1, pageSize: 25 });
+      expect(prisma.withTenantTransaction).not.toHaveBeenCalled();
+    }
+  });
+
+  it('5. scopes every query through withTenantTransaction for the caller’s own organization', async () => {
+    const { service, prisma } = buildService({
+      attentionItems: [attentionItem()],
+      loadsForNeedsAttention: [LOAD_2],
+    });
+
+    await service.needsAttention(ORG_ID, USER_ID, ['ADMIN'], 1, 25);
+
+    expect(prisma.withTenantTransaction).toHaveBeenCalledWith(ORG_ID, expect.any(Function));
+  });
+
+  it('6. includes ACTIVE AttentionItems in the default view', async () => {
+    const { service } = buildService({
+      attentionItems: [attentionItem({ status: 'ACTIVE' })],
+      loadsForNeedsAttention: [LOAD_2],
+    });
+
+    const result = await service.needsAttention(ORG_ID, USER_ID, ['ADMIN'], 1, 25);
+
+    expect(result.items).toEqual([
+      expect.objectContaining({ source: 'ATTENTION_ITEM', status: 'ACTIVE' }),
+    ]);
+  });
+
+  it('7. excludes RESOLVED AttentionItems by construction — the query itself only ever requests status: ACTIVE', async () => {
+    const { service, tx } = buildService({});
+
+    await service.needsAttention(ORG_ID, USER_ID, ['ADMIN'], 1, 25);
+
+    expect(tx.attentionItem.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ status: 'ACTIVE' }) }),
+    );
+  });
+
+  it('8. still surfaces all three legacy Notification signals, each mapped to its documented severity', async () => {
+    const overdue = { ...NOTIFICATION, id: 'n-overdue', type: 'CHECK_CALL_OVERDUE' };
+    const late = { ...NOTIFICATION, id: 'n-late', type: 'LOAD_LATE' };
+    const dueSoon = { ...NOTIFICATION, id: 'n-due-soon', type: 'CHECK_CALL_DUE_SOON' };
+    const { service } = buildService({
+      notifications: [overdue, late, dueSoon],
+      loadsForNeedsAttention: [LOAD_1],
+    });
+
+    const result = await service.needsAttention(ORG_ID, USER_ID, ['ADMIN'], 1, 25);
+
+    expect(result.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: 'n-overdue', severity: 'HIGH' }),
+        expect.objectContaining({ id: 'n-late', severity: 'HIGH' }),
+        expect.objectContaining({ id: 'n-due-soon', severity: 'MEDIUM' }),
+      ]),
+    );
+  });
+
+  it('9. Notification and AttentionItem items coexist in one combined list', async () => {
+    const { service } = buildService({
+      notifications: [NOTIFICATION],
+      attentionItems: [attentionItem()],
+      loadsForNeedsAttention: [LOAD_1, LOAD_2],
+    });
+
+    const result = await service.needsAttention(ORG_ID, USER_ID, ['ADMIN'], 1, 25);
+
+    expect(result.items.map((i) => i.source).sort()).toEqual(['ATTENTION_ITEM', 'NOTIFICATION']);
+  });
+
+  it('10. sorts by severity descending: CRITICAL > HIGH > MEDIUM > INFO', async () => {
+    const sameTime = new Date('2026-09-27T08:00:00Z');
+    const { service } = buildService({
+      attentionItems: [
+        attentionItem({
+          id: 'a-medium',
+          loadId: 'load-2',
+          severity: 'MEDIUM',
+          detectedAt: sameTime,
+        }),
+        attentionItem({
+          id: 'a-critical',
+          loadId: 'load-2',
+          severity: 'CRITICAL',
+          detectedAt: sameTime,
+        }),
+        attentionItem({ id: 'a-info', loadId: 'load-2', severity: 'INFO', detectedAt: sameTime }),
+        attentionItem({ id: 'a-high', loadId: 'load-2', severity: 'HIGH', detectedAt: sameTime }),
+      ],
+      loadsForNeedsAttention: [LOAD_2],
+    });
+
+    const result = await service.needsAttention(ORG_ID, USER_ID, ['ADMIN'], 1, 25);
+
+    expect(result.items.map((i) => i.id)).toEqual(['a-critical', 'a-high', 'a-medium', 'a-info']);
+  });
+
+  it('11. within the same severity, sorts most-recent first', async () => {
+    const { service } = buildService({
+      attentionItems: [
+        attentionItem({
+          id: 'a-older',
+          loadId: 'load-2',
+          severity: 'HIGH',
+          detectedAt: new Date('2026-09-27T06:00:00Z'),
+        }),
+        attentionItem({
+          id: 'a-newer',
+          loadId: 'load-2',
+          severity: 'HIGH',
+          detectedAt: new Date('2026-09-27T08:00:00Z'),
+        }),
+      ],
+      loadsForNeedsAttention: [LOAD_2],
+    });
+
+    const result = await service.needsAttention(ORG_ID, USER_ID, ['ADMIN'], 1, 25);
+
+    expect(result.items.map((i) => i.id)).toEqual(['a-newer', 'a-older']);
+  });
+
+  it('12. paginates the combined, sorted list', async () => {
+    const sameTime = new Date('2026-09-27T08:00:00Z');
+    const items = ['a', 'b', 'c', 'd', 'e'].map((letter, index) =>
+      attentionItem({
+        id: `a-${letter}`,
+        loadId: 'load-2',
+        severity: 'HIGH',
+        detectedAt: new Date(sameTime.getTime() - index * 60000),
+      }),
+    );
+    const { service } = buildService({ attentionItems: items, loadsForNeedsAttention: [LOAD_2] });
+
+    const page2 = await service.needsAttention(ORG_ID, USER_ID, ['ADMIN'], 2, 2);
+
+    expect(page2.items.map((i) => i.id)).toEqual(['a-c', 'a-d']);
+    expect(page2.page).toBe(2);
+    expect(page2.pageSize).toBe(2);
+  });
+
+  it('13. reports the full combined total, not the page size', async () => {
+    const sameTime = new Date('2026-09-27T08:00:00Z');
+    const items = ['a', 'b', 'c', 'd', 'e'].map((letter, index) =>
+      attentionItem({
+        id: `a-${letter}`,
+        loadId: 'load-2',
+        severity: 'HIGH',
+        detectedAt: new Date(sameTime.getTime() - index * 60000),
+      }),
+    );
+    const { service } = buildService({ attentionItems: items, loadsForNeedsAttention: [LOAD_2] });
+
+    const result = await service.needsAttention(ORG_ID, USER_ID, ['ADMIN'], 1, 2);
+
+    expect(result.total).toBe(5);
+    expect(result.items).toHaveLength(2);
+  });
+
+  it('14. performs exactly one batched Load lookup across both sources, never one query per item', async () => {
+    const { service, tx } = buildService({
+      notifications: [NOTIFICATION, { ...NOTIFICATION, id: 'notif-2', relatedEntityId: 'load-2' }],
+      attentionItems: [attentionItem({ id: 'attn-2', loadId: 'load-1' })],
+      loadsForNeedsAttention: [LOAD_1, LOAD_2],
+    });
+
+    await service.needsAttention(ORG_ID, USER_ID, ['ADMIN'], 1, 25);
+
+    const loadLookupCalls = tx.load.findMany.mock.calls.filter(([args]: [{ where: object }]) =>
+      Object.prototype.hasOwnProperty.call(args.where, 'id'),
+    );
+    expect(loadLookupCalls).toHaveLength(1);
+    expect(loadLookupCalls[0][0].where.id).toEqual({
+      in: expect.arrayContaining(['load-1', 'load-2']),
+    });
+  });
+
+  it('15. returns an empty, well-shaped result when neither source has anything', async () => {
+    const { service } = buildService({});
+
+    const result = await service.needsAttention(ORG_ID, USER_ID, ['ADMIN'], 1, 25);
+
+    expect(result).toEqual({ items: [], total: 0, page: 1, pageSize: 25 });
   });
 
   it('drops a notification whose related Load no longer resolves, rather than showing a broken link', async () => {
@@ -572,7 +808,7 @@ describe('ReportingService.needsAttention — Dashboard "Needs Attention Today"'
       loadsForNeedsAttention: [],
     });
 
-    const result = await service.needsAttention(ORG_ID, USER_ID, ['ADMIN']);
+    const result = await service.needsAttention(ORG_ID, USER_ID, ['ADMIN'], 1, 25);
 
     expect(result.items).toEqual([]);
   });
@@ -580,8 +816,8 @@ describe('ReportingService.needsAttention — Dashboard "Needs Attention Today"'
   it('gives an empty result to a role with no approved visibility', async () => {
     const { service } = buildService({ notifications: [NOTIFICATION] });
 
-    const result = await service.needsAttention(ORG_ID, USER_ID, ['COMPLIANCE_REVIEWER']);
+    const result = await service.needsAttention(ORG_ID, USER_ID, ['COMPLIANCE_REVIEWER'], 1, 25);
 
-    expect(result).toEqual({ items: [] });
+    expect(result).toEqual({ items: [], total: 0, page: 1, pageSize: 25 });
   });
 });

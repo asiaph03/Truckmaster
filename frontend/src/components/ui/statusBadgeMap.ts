@@ -98,6 +98,20 @@ export const STATUS_BADGE_MAP: Record<string, BadgeColor> = {
   'Organization.subscriptionStatus:ACTIVE': 'success',
   'Organization.subscriptionStatus:EXPIRED': 'danger',
   'Organization.subscriptionStatus:CANCELLED': 'neutral',
+
+  // AttentionItem.severity (B.5 — Needs Attention V2). Reuses the
+  // existing 6-color vocabulary rather than inventing new tokens, by
+  // analogy to Load.riskStatus's own AT_RISK(warning)/DELAYED(danger)
+  // two-tier split: CRITICAL takes the same "blocking red" weight as
+  // DELAYED/BLOCKED, HIGH takes the same "urgent but not blocking"
+  // weight as AT_RISK. MEDIUM/INFO have no existing severity precedent,
+  // so they take the next two colors down in attention-grabbing order.
+  // Applies identically to legacy-Notification-sourced items normalized
+  // onto this same severity scale (see ReportingService.needsAttention).
+  'AttentionItem.severity:CRITICAL': 'danger',
+  'AttentionItem.severity:HIGH': 'warning',
+  'AttentionItem.severity:MEDIUM': 'info',
+  'AttentionItem.severity:INFO': 'neutral',
 };
 
 export function getStatusBadgeColor(entityField: string, value: string): BadgeColor | undefined {

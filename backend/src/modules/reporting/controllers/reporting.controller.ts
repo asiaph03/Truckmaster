@@ -8,6 +8,24 @@ import { FINANCIAL_VIEW_ROLES } from '../../../common/authorization/financial-vi
 
 /** Decision 4 — AR/AP Aging and the Dashboard's financial aggregate are Admin/Accounting/Ops Manager only. */
 
+/** B.5 — mirrors LoadController's own page/pageSize parsing exactly, except the default pageSize (25) matches this endpoint's pre-existing implicit limit rather than LoadSearch's own default (50). */
+const NEEDS_ATTENTION_DEFAULT_PAGE_SIZE = 25;
+
+function parseNeedsAttentionPagination(
+  pageParam?: string,
+  pageSizeParam?: string,
+): { page: number; pageSize: number } {
+  const page = Number(pageParam);
+  const pageSize = Number(pageSizeParam);
+  return {
+    page: Number.isFinite(page) && page > 0 ? Math.floor(page) : 1,
+    pageSize:
+      Number.isFinite(pageSize) && pageSize > 0
+        ? Math.floor(pageSize)
+        : NEEDS_ATTENTION_DEFAULT_PAGE_SIZE,
+  };
+}
+
 /**
  * Phase 8 (Reporting Foundation) — TECHNICAL_ARCHITECTURE.md §5.1 Reporting
  * resource row. `search`/`dashboard` are open to any authenticated session
@@ -80,10 +98,17 @@ export class ReportingController {
   }
 
   @Get('dashboard/needs-attention')
-  needsAttention() {
+  needsAttention(@Query('page') page?: string, @Query('pageSize') pageSize?: string) {
     const organizationId = RequestContextStore.requireOrganizationId();
     const actingUserId = RequestContextStore.requireUserId();
     const actingRoles = (RequestContextStore.current().roles ?? []) as MembershipRoleName[];
-    return this.reportingService.needsAttention(organizationId, actingUserId, actingRoles);
+    const pagination = parseNeedsAttentionPagination(page, pageSize);
+    return this.reportingService.needsAttention(
+      organizationId,
+      actingUserId,
+      actingRoles,
+      pagination.page,
+      pagination.pageSize,
+    );
   }
 }
