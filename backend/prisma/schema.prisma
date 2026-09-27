@@ -1301,6 +1301,9 @@ model Load {
   dispatchRecord   DispatchRecord?
   checkCalls       CheckCall[]
 
+  // Needs Attention V2 (Phase B.1 — schema only)
+  attentionItems AttentionItem[]
+
   // Phase 6 reverse relations
   chargeLineItems         ChargeLineItem[]
   invoiceLoads            InvoiceLoad[]
@@ -1576,6 +1579,105 @@ model GeocodeCache {
   resolvedAt DateTime @default(now()) @map("resolved_at")
 
   @@map("geocode_cache")
+}
+
+/// Needs Attention V2 (Phase B.1 schema only — no detectors/sweeps exist
+/// yet). One value per operational condition a future sweep can detect;
+/// see docs/design discussion for the full Phase A capability matrix.
+/// Deliberately a flat enum, not a separate lookup table — the existing
+/// NotificationType enum is the precedent for this choice in this schema.
+enum AttentionType {
+  PICKUP_MISSED
+  DELIVERY_MISSED
+  ETA_AFTER_APPOINTMENT
+  APPOINTMENT_IMMINENT_NO_CHECK_CALL
+  STALE_LOCATION
+  UNASSIGNED_DISPATCHER
+  STUCK_CARRIER_SOURCING
+  CHECK_CALL_OVERDUE
+  STUCK_LOAD_STATUS
+  MISSING_POD
+  UNRESOLVED_LOCATION
+  MISSING_REQUIRED_DOCUMENT
+  CHECK_CALL_DUE_SOON
+  APPOINTMENT_CHANGED
+  MANUAL_RISK_FLAG
+}
+
+/// Needs Attention V2 — threshold-computed by a future sweep, never
+/// hardcoded purely by AttentionType (see Phase A design's severity
+/// strategy). Ordered CRITICAL..INFO to match dispatcher urgency, mirroring
+/// RiskStatus's own ordering convention (NORMAL/AT_RISK/DELAYED) elsewhere
+/// in this schema.
+enum AttentionSeverity {
+  CRITICAL
+  HIGH
+  MEDIUM
+  INFO
+}
+
+/// Needs Attention V2 — deliberately two values only. AttentionItem tracks
+/// current-state operational conditions, not a historical event log (that
+/// role already belongs to AuditLog) — no DETECTED stage (severity
+/// escalation covers "early warning → urgent" instead) and no
+/// ACKNOWLEDGED/DISMISSED (an item must auto-resolve when its underlying
+/// condition clears, never be hidden while the condition is still real).
+enum AttentionStatus {
+  ACTIVE
+  RESOLVED
+}
+
+/// Needs Attention V2 (Phase B.1 — schema only; no sweep/detector writes to
+/// this table yet). A child/detail table of Load, following the exact same
+/// convention as CheckCall/Stop (see the note above the Customer model):
+/// plain `organizationId` column, no direct `Organization` relation, not
+/// added to Organization's own reverse-relation list.
+///
+/// One row per (organizationId, loadId, type) for the lifetime of that
+/// condition — a sweep upserts this row every pass rather than appending a
+/// new row each time (see Phase A design's deduplication/lifecycle
+/// sections). This is current-state, not an append-only history; AuditLog
+/// remains the system of record for historical events.
+///
+/// Completely independent of Notification — no shared rows, no shared
+/// dedup logic, no behavior change to any of Notification's existing 11
+/// types.
+model AttentionItem {
+  id String @id @default(uuid()) @db.Uuid
+
+  organizationId String @map("organization_id") @db.Uuid
+
+  loadId String @map("load_id") @db.Uuid
+  load   Load   @relation(fields: [loadId], references: [id])
+
+  type     AttentionType
+  severity AttentionSeverity
+  status   AttentionStatus   @default(ACTIVE)
+
+  title  String
+  reason String
+  impact String?
+
+  /// Fixed array of suggested-action descriptors (e.g. `[{"type":
+  /// "VIEW_LOAD"}, {"type": "CONTACT_DRIVER", "phone": "..."}]") — see
+  /// Phase A design's action model. Not a relational table: actions are
+  /// cheap, derived, never independently queried.
+  suggestedActions Json @map("suggested_actions")
+
+  /// The raw measurement that drove `severity` (e.g. `{"minutesLate": 78}`)
+  /// — kept so a later severity-threshold change can be understood against
+  /// historical data, and so the API/frontend never has to recompute
+  /// wall-clock math from `detectedAt`. Optional: some AttentionTypes are
+  /// binary (see Phase A design §5B) and have no magnitude to record.
+  metadata Json?
+
+  detectedAt DateTime  @default(now()) @map("detected_at")
+  updatedAt  DateTime  @updatedAt @map("updated_at")
+  resolvedAt DateTime? @map("resolved_at")
+
+  @@unique([organizationId, loadId, type])
+  @@index([organizationId, status, severity])
+  @@map("attention_item")
 }
 
 /// Frontend Phase 7 (UI_UX_DESIGN.md §5.4.4, Decision LD-6) — one logged
