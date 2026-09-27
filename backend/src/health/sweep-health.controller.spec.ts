@@ -1,8 +1,15 @@
 import { IS_PUBLIC_KEY } from '../common/decorators/public.decorator';
-import { SweepHealthService, SweepHealthSnapshot } from '../common/sweep-health/sweep-health.service';
+import {
+  SweepHealthService,
+  SweepHealthSnapshot,
+} from '../common/sweep-health/sweep-health.service';
 import { SweepHealthController } from './sweep-health.controller';
 
-function unknownSnapshot(sweepName: string, schedule: string, timezone: string | null): SweepHealthSnapshot {
+function unknownSnapshot(
+  sweepName: string,
+  schedule: string,
+  timezone: string | null,
+): SweepHealthSnapshot {
   return {
     sweepName,
     schedule,
@@ -20,24 +27,32 @@ describe('SweepHealthController — Monitoring Phase 4A-23D', () => {
     expect(isPublic).toBe(true);
   });
 
-  it('returns all 6 sweeps', async () => {
+  it('returns all 7 sweeps', async () => {
     const sweepHealth = {
-      getSnapshot: jest.fn().mockImplementation((definition) =>
-        Promise.resolve(unknownSnapshot(definition.name, definition.schedule, definition.timezone)),
-      ),
+      getSnapshot: jest
+        .fn()
+        .mockImplementation((definition) =>
+          Promise.resolve(
+            unknownSnapshot(definition.name, definition.schedule, definition.timezone),
+          ),
+        ),
     } as unknown as SweepHealthService;
     const controller = new SweepHealthController(sweepHealth);
 
     const body = await controller.list();
 
-    expect(body.sweeps).toHaveLength(6);
+    expect(body.sweeps).toHaveLength(7);
   });
 
-  it('includes the 4 daily sweeps pinned to America/New_York and the 2 operational sweeps with no timezone', async () => {
+  it('includes the 4 daily sweeps pinned to America/New_York and the 3 operational sweeps with no timezone', async () => {
     const sweepHealth = {
-      getSnapshot: jest.fn().mockImplementation((definition) =>
-        Promise.resolve(unknownSnapshot(definition.name, definition.schedule, definition.timezone)),
-      ),
+      getSnapshot: jest
+        .fn()
+        .mockImplementation((definition) =>
+          Promise.resolve(
+            unknownSnapshot(definition.name, definition.schedule, definition.timezone),
+          ),
+        ),
     } as unknown as SweepHealthService;
     const controller = new SweepHealthController(sweepHealth);
 
@@ -49,7 +64,7 @@ describe('SweepHealthController — Monitoring Phase 4A-23D', () => {
       'carrier-compliance-expiration-sweep',
       'compliance-expiration-notifications',
     ];
-    const operationalNames = ['check-call-reminder-sweep', 'load-lateness-sweep'];
+    const operationalNames = ['check-call-reminder-sweep', 'load-lateness-sweep', 'eta-risk-sweep'];
 
     for (const name of dailyNames) {
       const sweep = body.sweeps.find((s) => s.sweepName === name)!;
@@ -83,9 +98,13 @@ describe('SweepHealthController — Monitoring Phase 4A-23D', () => {
 
   it('security/PII — each sweep entry contains only the 7 documented fields, never organizationId or job payload', async () => {
     const sweepHealth = {
-      getSnapshot: jest.fn().mockImplementation((definition) =>
-        Promise.resolve(unknownSnapshot(definition.name, definition.schedule, definition.timezone)),
-      ),
+      getSnapshot: jest
+        .fn()
+        .mockImplementation((definition) =>
+          Promise.resolve(
+            unknownSnapshot(definition.name, definition.schedule, definition.timezone),
+          ),
+        ),
     } as unknown as SweepHealthService;
     const controller = new SweepHealthController(sweepHealth);
 
@@ -93,16 +112,28 @@ describe('SweepHealthController — Monitoring Phase 4A-23D', () => {
 
     for (const sweep of body.sweeps) {
       expect(Object.keys(sweep).sort()).toEqual(
-        ['lastAttemptAt', 'lastAttemptSucceeded', 'lastSuccessAt', 'overdue', 'schedule', 'sweepName', 'timezone'].sort(),
+        [
+          'lastAttemptAt',
+          'lastAttemptSucceeded',
+          'lastSuccessAt',
+          'overdue',
+          'schedule',
+          'sweepName',
+          'timezone',
+        ].sort(),
       );
     }
   });
 
-  it('the response never contains a top-level status/database/redis field — cannot be confused with /health\'s own response shape', async () => {
+  it("the response never contains a top-level status/database/redis field — cannot be confused with /health's own response shape", async () => {
     const sweepHealth = {
-      getSnapshot: jest.fn().mockImplementation((definition) =>
-        Promise.resolve(unknownSnapshot(definition.name, definition.schedule, definition.timezone)),
-      ),
+      getSnapshot: jest
+        .fn()
+        .mockImplementation((definition) =>
+          Promise.resolve(
+            unknownSnapshot(definition.name, definition.schedule, definition.timezone),
+          ),
+        ),
     } as unknown as SweepHealthService;
     const controller = new SweepHealthController(sweepHealth);
 

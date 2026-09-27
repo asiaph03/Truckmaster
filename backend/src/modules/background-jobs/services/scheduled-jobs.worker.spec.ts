@@ -50,6 +50,7 @@ describe('ScheduledJobsWorker — Monitoring Phase 4A-3 (worker heartbeat wiring
       sweep() as never,
       sweep() as never,
       sweep() as never,
+      sweep() as never,
       heartbeat as never,
       sweepHealth as never,
     );
@@ -81,7 +82,11 @@ describe('ScheduledJobsWorker — Monitoring Phase 4A-3 (worker heartbeat wiring
     const completedHandler = capturedOn!.mock.calls.find((c) => c[0] === 'completed')?.[1];
     expect(completedHandler).toBeDefined();
 
-    completedHandler({ name: 'invitation-expiration-sweep', id: 'job-1', processedOn: Date.now() - 50 });
+    completedHandler({
+      name: 'invitation-expiration-sweep',
+      id: 'job-1',
+      processedOn: Date.now() - 50,
+    });
 
     expect(heartbeat.recordActivity).toHaveBeenCalledWith('scheduled-jobs-worker', 'completed');
   });
@@ -144,6 +149,7 @@ describe('ScheduledJobsWorker — Monitoring Phase 4A-4 (job duration logging)',
       sweep() as never,
       sweep() as never,
       sweep() as never,
+      sweep() as never,
       heartbeat as never,
       sweepHealth as never,
     );
@@ -155,11 +161,17 @@ describe('ScheduledJobsWorker — Monitoring Phase 4A-4 (job duration logging)',
     await worker.onModuleInit();
     const completedHandler = capturedOn!.mock.calls.find((c) => c[0] === 'completed')?.[1];
 
-    completedHandler({ name: 'invitation-expiration-sweep', id: 'job-1', processedOn: Date.now() - 250 });
+    completedHandler({
+      name: 'invitation-expiration-sweep',
+      id: 'job-1',
+      processedOn: Date.now() - 250,
+    });
 
     const call = logSpy.mock.calls.find((c) => String(c[0]).startsWith('Scheduled job'));
     expect(call).toBeDefined();
-    expect(call![0]).toMatch(/^Scheduled job invitation-expiration-sweep \(job-1\) completed in \d+ms\.$/);
+    expect(call![0]).toMatch(
+      /^Scheduled job invitation-expiration-sweep \(job-1\) completed in \d+ms\.$/,
+    );
     expect(call![0]).not.toContain('org=');
     logSpy.mockRestore();
   });
@@ -171,7 +183,11 @@ describe('ScheduledJobsWorker — Monitoring Phase 4A-4 (job duration logging)',
     const completedHandler = capturedOn!.mock.calls.find((c) => c[0] === 'completed')?.[1];
 
     expect(() =>
-      completedHandler({ name: 'invitation-expiration-sweep', id: 'job-1', processedOn: undefined }),
+      completedHandler({
+        name: 'invitation-expiration-sweep',
+        id: 'job-1',
+        processedOn: undefined,
+      }),
     ).not.toThrow();
 
     const call = logSpy.mock.calls.find((c) => String(c[0]).startsWith('Scheduled job'));
@@ -246,6 +262,7 @@ describe('ScheduledJobsWorker — Monitoring Phase 4A-5 (stalled-event observabi
       sweep() as never,
       sweep() as never,
       sweep() as never,
+      sweep() as never,
       heartbeat as never,
       sweepHealth as never,
     );
@@ -282,6 +299,7 @@ describe('ScheduledJobsWorker — Monitoring Phase 4A-5 (stalled-event observabi
     const worker = new ScheduledJobsWorker(
       redis as never,
       queue as never,
+      sweep() as never,
       sweep() as never,
       sweep() as never,
       sweep() as never,
@@ -338,6 +356,7 @@ describe('ScheduledJobsWorker — Monitoring Phase 4A-15 (generic BullMQ failure
     return new ScheduledJobsWorker(
       redis as never,
       queue as never,
+      sweep() as never,
       sweep() as never,
       sweep() as never,
       sweep() as never,
@@ -461,6 +480,7 @@ describe('ScheduledJobsWorker — Monitoring Phase 4A-23B (daily sweep timezone 
       sweep() as never,
       sweep() as never,
       sweep() as never,
+      sweep() as never,
       heartbeat as never,
       sweepHealth as never,
     );
@@ -519,7 +539,9 @@ describe('ScheduledJobsWorker — Monitoring Phase 4A-23B (daily sweep timezone 
 });
 
 describe('ScheduledJobsWorker — Monitoring Phase 4A-23D (sweep health write-through)', () => {
-  function buildWorker(sweepHealthOverrides: Partial<Record<'recordSuccess' | 'recordFailure', jest.Mock>> = {}) {
+  function buildWorker(
+    sweepHealthOverrides: Partial<Record<'recordSuccess' | 'recordFailure', jest.Mock>> = {},
+  ) {
     capturedProcessor = undefined;
     const redis = { duplicate: jest.fn().mockReturnValue({ on: jest.fn(), quit: jest.fn() }) };
     const queue = { add: jest.fn().mockResolvedValue({}) };
@@ -539,6 +561,7 @@ describe('ScheduledJobsWorker — Monitoring Phase 4A-23D (sweep health write-th
     const worker = new ScheduledJobsWorker(
       redis as never,
       queue as never,
+      sweep() as never,
       sweep() as never,
       sweep() as never,
       sweep() as never,
@@ -581,7 +604,13 @@ describe('ScheduledJobsWorker — Monitoring Phase 4A-23D (sweep health write-th
     const failedHandler = capturedOn!.mock.calls.find((c) => c[0] === 'failed')?.[1];
 
     failedHandler(
-      { name: 'quote-expiration-sweep', id: 'job-2', processedOn: 54_321, attemptsMade: 1, opts: { attempts: 1 } },
+      {
+        name: 'quote-expiration-sweep',
+        id: 'job-2',
+        processedOn: 54_321,
+        attemptsMade: 1,
+        opts: { attempts: 1 },
+      },
       new Error('boom'),
     );
 
@@ -629,7 +658,12 @@ describe('ScheduledJobsWorker — Monitoring Phase 4A-23D (sweep health write-th
     await worker.onModuleInit();
     const completedHandler = capturedOn!.mock.calls.find((c) => c[0] === 'completed')?.[1];
 
-    completedHandler({ name: 'invitation-expiration-sweep', id: 'job-1', processedOn: 1, data: { secret: 'x' } });
+    completedHandler({
+      name: 'invitation-expiration-sweep',
+      id: 'job-1',
+      processedOn: 1,
+      data: { secret: 'x' },
+    });
 
     const [sweepNameArg, timestampArg] = sweepHealth.recordSuccess.mock.calls[0];
     expect(typeof sweepNameArg).toBe('string');

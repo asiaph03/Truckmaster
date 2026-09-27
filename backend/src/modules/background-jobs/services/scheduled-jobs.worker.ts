@@ -9,6 +9,7 @@ import { CarrierComplianceExpirationSweepService } from './carrier-compliance-ex
 import { ComplianceExpirationNotificationService } from './compliance-expiration-notification.service';
 import { CheckCallReminderSweepService } from './check-call-reminder-sweep.service';
 import { LoadLatenessSweepService } from './load-lateness-sweep.service';
+import { EtaRiskSweepService } from './eta-risk-sweep.service';
 import { BUSINESS_TIMEZONE } from '../../../common/timezone/business-timezone';
 import { SweepHealthService } from '../../../common/sweep-health/sweep-health.service';
 import {
@@ -38,7 +39,7 @@ export const SCHEDULED_JOBS_RETENTION: Pick<JobsOptions, 'removeOnComplete' | 'r
  * error.message/.stack. Safe by construction: a JS/TS class name is
  * developer-defined source text, never runtime/user-controlled content.
  * This worker's generic 'failed' handler is the sole failure signal for
- * all 6 sweep services it dispatches to (no per-processor try/catch).
+ * all 7 sweep services it dispatches to (no per-processor try/catch).
  */
 function errorTypeOf(error: unknown): string {
   return error instanceof Error ? error.constructor.name : typeof error;
@@ -71,6 +72,7 @@ export class ScheduledJobsWorker implements OnModuleInit, OnModuleDestroy {
     private readonly complianceExpirationNotification: ComplianceExpirationNotificationService,
     private readonly checkCallReminderSweep: CheckCallReminderSweepService,
     private readonly loadLatenessSweep: LoadLatenessSweepService,
+    private readonly etaRiskSweep: EtaRiskSweepService,
     private readonly heartbeat: WorkerHeartbeatService,
     private readonly sweepHealth: SweepHealthService,
   ) {}
@@ -115,10 +117,14 @@ export class ScheduledJobsWorker implements OnModuleInit, OnModuleDestroy {
       // process — confirmed by this phase's own test suite). lastSuccessAt
       // is intentionally left untouched on failure.
       if (job?.name) {
-        this.sweepHealth.recordFailure(job.name, job.processedOn ?? Date.now()).catch(() => undefined);
+        this.sweepHealth
+          .recordFailure(job.name, job.processedOn ?? Date.now())
+          .catch(() => undefined);
       }
     });
-    this.worker.on('active', () => this.heartbeat.recordActivity('scheduled-jobs-worker', 'active'));
+    this.worker.on('active', () =>
+      this.heartbeat.recordActivity('scheduled-jobs-worker', 'active'),
+    );
     this.worker.on('completed', (job) => {
       // No organizationId here by design — this queue's job payload is
       // always {} (a sweep spans every organization), matching every
@@ -130,7 +136,9 @@ export class ScheduledJobsWorker implements OnModuleInit, OnModuleDestroy {
       this.heartbeat.recordActivity('scheduled-jobs-worker', 'completed');
       // Monitoring Phase 4A-23D — best-effort, not awaited; see the
       // 'failed' handler's own comment above for why the .catch() exists.
-      this.sweepHealth.recordSuccess(job.name, job.processedOn ?? Date.now()).catch(() => undefined);
+      this.sweepHealth
+        .recordSuccess(job.name, job.processedOn ?? Date.now())
+        .catch(() => undefined);
     });
     this.worker.on('error', (error) => {
       // Monitoring Phase 4A-15 — SECURITY: connection-level handler, no
@@ -209,6 +217,15 @@ export class ScheduledJobsWorker implements OnModuleInit, OnModuleDestroy {
         ...SCHEDULED_JOBS_RETENTION,
       },
     );
+    await this.queue.add(
+      JOB_NAMES.ETA_RISK_SWEEP,
+      {},
+      {
+        repeat: { every: OPERATIONAL_SWEEP_INTERVAL_MS },
+        jobId: JOB_NAMES.ETA_RISK_SWEEP,
+        ...SCHEDULED_JOBS_RETENTION,
+      },
+    );
   }
 
   private async processJob(jobName: string): Promise<void> {
@@ -225,6 +242,8 @@ export class ScheduledJobsWorker implements OnModuleInit, OnModuleDestroy {
         return this.checkCallReminderSweep.run();
       case JOB_NAMES.LOAD_LATENESS_SWEEP:
         return this.loadLatenessSweep.run();
+      case JOB_NAMES.ETA_RISK_SWEEP:
+        return this.etaRiskSweep.run();
       default:
         this.logger.warn(`Unknown scheduled job name: ${jobName}`);
     }

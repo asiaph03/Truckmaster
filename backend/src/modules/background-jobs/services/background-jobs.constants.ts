@@ -17,6 +17,8 @@ export const JOB_NAMES = {
   COMPLIANCE_EXPIRATION_NOTIFICATIONS: 'compliance-expiration-notifications',
   CHECK_CALL_REMINDER_SWEEP: 'check-call-reminder-sweep',
   LOAD_LATENESS_SWEEP: 'load-lateness-sweep',
+  /** Needs Attention V2 (B.2) — the first AttentionItem detector. */
+  ETA_RISK_SWEEP: 'eta-risk-sweep',
 } as const;
 
 /**

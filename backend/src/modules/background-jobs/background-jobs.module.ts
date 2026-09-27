@@ -11,6 +11,7 @@ import { CarrierComplianceExpirationSweepService } from './services/carrier-comp
 import { ComplianceExpirationNotificationService } from './services/compliance-expiration-notification.service';
 import { CheckCallReminderSweepService } from './services/check-call-reminder-sweep.service';
 import { LoadLatenessSweepService } from './services/load-lateness-sweep.service';
+import { EtaRiskSweepService } from './services/eta-risk-sweep.service';
 import { ScheduledJobsWorker } from './services/scheduled-jobs.worker';
 import {
   SCHEDULED_JOBS_QUEUE,
@@ -34,6 +35,7 @@ const SCHEDULED_JOBS_QUEUE_CONNECTION = 'SCHEDULED_JOBS_QUEUE_CONNECTION';
     ComplianceExpirationNotificationService,
     CheckCallReminderSweepService,
     LoadLatenessSweepService,
+    EtaRiskSweepService,
     ScheduledJobsWorker,
     {
       provide: SCHEDULED_JOBS_QUEUE_CONNECTION,
