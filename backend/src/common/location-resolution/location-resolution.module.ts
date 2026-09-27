@@ -5,6 +5,7 @@ import { REDIS_CLIENT, duplicateRedisWithErrorHandler } from '../redis/redis.mod
 import { QueueRegistryService } from '../queue-health/queue-registry.service';
 import { LocationResolutionService } from './services/location-resolution.service';
 import { LocationResolutionWorker } from './services/location-resolution.worker';
+import { LocationResolutionBackfillService } from './services/location-resolution-backfill.service';
 import {
   LOCATION_RESOLUTION_QUEUE,
   LOCATION_RESOLUTION_QUEUE_NAME,
@@ -24,6 +25,7 @@ const LOCATION_RESOLUTION_QUEUE_CONNECTION = 'LOCATION_RESOLUTION_QUEUE_CONNECTI
   providers: [
     LocationResolutionService,
     LocationResolutionWorker,
+    LocationResolutionBackfillService,
     {
       provide: LOCATION_RESOLUTION_QUEUE_CONNECTION,
       useFactory: (redis: Redis) => duplicateRedisWithErrorHandler(redis, 'resolve-location-queue'),
@@ -39,7 +41,11 @@ const LOCATION_RESOLUTION_QUEUE_CONNECTION = 'LOCATION_RESOLUTION_QUEUE_CONNECTI
       inject: [LOCATION_RESOLUTION_QUEUE_CONNECTION, QueueRegistryService],
     },
   ],
-  exports: [LOCATION_RESOLUTION_QUEUE, LocationResolutionService],
+  exports: [
+    LOCATION_RESOLUTION_QUEUE,
+    LocationResolutionService,
+    LocationResolutionBackfillService,
+  ],
 })
 export class LocationResolutionModule implements OnModuleDestroy {
   constructor(
