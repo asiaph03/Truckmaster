@@ -47,6 +47,16 @@ export interface Stop {
   contactName?: string;
   contactPhone?: string;
   notes?: string;
+  /**
+   * Dashboard Map Phase 2 — server-resolved coordinates (Census
+   * Gazetteer via GeocodeCache), written asynchronously by the
+   * resolve-location worker. Absent/null until that job has run for
+   * this stop — LoadRouteMap falls back to its own client-side
+   * geocodeCityState() lookup in that case, exactly as before this
+   * phase.
+   */
+  resolvedLat?: number | null;
+  resolvedLng?: number | null;
   /** Only present on GET /loads/:id, not the list endpoint. */
   hasPod?: boolean;
 }

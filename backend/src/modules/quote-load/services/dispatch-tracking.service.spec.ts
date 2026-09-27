@@ -124,15 +124,17 @@ function buildService(opts: {
     recalculate: jest.fn().mockResolvedValue(opts.eligibility ?? { eligible: true, reasons: [] }),
   };
   const statusDerivation = new LoadStatusDerivationService();
+  const locationResolutionQueue = { add: jest.fn().mockResolvedValue(undefined) };
 
   const service = new DispatchTrackingService(
     prisma as never,
     audit as never,
     carrierEligibility as never,
     statusDerivation,
+    locationResolutionQueue as never,
   );
 
-  return { service, tx, audit, carrierEligibility };
+  return { service, tx, audit, carrierEligibility, locationResolutionQueue };
 }
 
 const DISPATCH_DTO = {
@@ -1164,6 +1166,55 @@ describe('DispatchTrackingService.updateStops — Load Detail Edit Stops action'
     );
   });
 
+  // Deliberately NOT reusing EXISTING_STOP_1/UPDATED_STOP_1_ITEM here —
+  // the mock's tx.stop.update does Object.assign(existing, data), which
+  // mutates that shared fixture in place across tests in this file.
+  // Fresh, self-contained fixtures keep these two tests independent of
+  // suite run order.
+  it("enqueues a location-resolution job when a stop's city/state actually changes", async () => {
+    const stop = { id: 'stop-loc-1', sequence: 1, city: 'Dallas', state: 'TX' };
+    const { service, locationResolutionQueue } = buildService({
+      load: { id: LOAD_ID, status: 'BOOKED' },
+      stops: [stop],
+    });
+
+    await service.updateStops(
+      ORG_ID,
+      LOAD_ID,
+      { stops: [{ ...UPDATED_STOP_1_ITEM, sequence: 1, city: 'Philadelphia', state: 'PA' }] },
+      USER_ID,
+    );
+
+    expect(locationResolutionQueue.add).toHaveBeenCalledWith(
+      'resolve',
+      expect.objectContaining({
+        entityType: 'STOP',
+        entityId: 'stop-loc-1',
+        organizationId: ORG_ID,
+        city: 'Philadelphia',
+        state: 'PA',
+      }),
+      expect.objectContaining({ jobId: 'STOP-stop-loc-1' }),
+    );
+  });
+
+  it('does NOT enqueue a location-resolution job when only an unrelated field changes (city/state untouched)', async () => {
+    const stop = { id: 'stop-loc-2', sequence: 1, city: 'Dallas', state: 'TX' };
+    const { service, locationResolutionQueue } = buildService({
+      load: { id: LOAD_ID, status: 'BOOKED' },
+      stops: [stop],
+    });
+
+    await service.updateStops(
+      ORG_ID,
+      LOAD_ID,
+      { stops: [{ ...UPDATED_STOP_1_ITEM, sequence: 1, city: 'Dallas', state: 'TX' }] },
+      USER_ID,
+    );
+
+    expect(locationResolutionQueue.add).not.toHaveBeenCalled();
+  });
+
   it("Edit Stops: interprets a naive datetime-local appointment (e.g. '2:30 PM' typed by a dispatcher) as America/New_York, not server-local time — the bug under investigation", async () => {
     const { service, tx } = buildService({
       load: { id: LOAD_ID, status: 'BOOKED' },
@@ -1390,6 +1441,7 @@ describe('DispatchTrackingService.updateStops — Load Detail Edit Stops action'
       audit as never,
       {} as never,
       new LoadStatusDerivationService(),
+      { add: jest.fn().mockResolvedValue(undefined) } as never,
     );
 
     const result = await service.updateStops(
@@ -1438,6 +1490,47 @@ describe('DispatchTrackingService.logCheckCall — Workflow 6 §6.7', () => {
       expect.anything(),
       expect.objectContaining({ action: 'Check Call Logged' }),
     );
+  });
+
+  it('enqueues a location-resolution job for this Check Call once the transaction commits', async () => {
+    const { service, locationResolutionQueue } = buildService({
+      load: { id: LOAD_ID, status: 'IN_TRANSIT' },
+    });
+
+    const { checkCall, load } = await service.logCheckCall(
+      ORG_ID,
+      LOAD_ID,
+      CHECK_CALL_DTO,
+      USER_ID,
+    );
+
+    expect(locationResolutionQueue.add).toHaveBeenCalledWith(
+      'resolve',
+      expect.objectContaining({
+        entityType: 'CHECK_CALL',
+        entityId: checkCall.id,
+        organizationId: ORG_ID,
+        city: 'Tulsa',
+        state: 'OK',
+        asOfLoadUpdatedAt: (load.currentLocationUpdatedAt as Date).toISOString(),
+      }),
+      expect.objectContaining({ jobId: `CHECK_CALL-${checkCall.id}` }),
+    );
+  });
+
+  it('does NOT enqueue a location-resolution job when this Check Call has no location (dedup fields would clash with a future real one)', async () => {
+    const { service, locationResolutionQueue } = buildService({
+      load: { id: LOAD_ID, status: 'IN_TRANSIT' },
+    });
+
+    await service.logCheckCall(
+      ORG_ID,
+      LOAD_ID,
+      { ...CHECK_CALL_DTO, locationCity: undefined, locationState: undefined },
+      USER_ID,
+    );
+
+    expect(locationResolutionQueue.add).not.toHaveBeenCalled();
   });
 
   it('blocks a Check Call before the Load has been Dispatched', async () => {

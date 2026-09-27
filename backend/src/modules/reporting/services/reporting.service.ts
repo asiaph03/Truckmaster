@@ -435,6 +435,8 @@ export class ReportingService {
               currentLocationState: true,
               currentLocationDescription: true,
               currentLocationUpdatedAt: true,
+              currentLocationLat: true,
+              currentLocationLng: true,
               currentEta: true,
               stops: {
                 select: {
@@ -466,6 +468,14 @@ export class ReportingService {
                 state: d.load.currentLocationState,
                 description: d.load.currentLocationDescription,
                 updatedAt: d.load.currentLocationUpdatedAt,
+                // Dashboard Map Phase 2 — server-resolved coordinates,
+                // when the resolve-location worker has already handled
+                // this Load's latest Check Call. Null until then — the
+                // frontend falls back to its own client-side dataset
+                // lookup, exactly as before this phase (see
+                // fleetMapData.ts's own doc comment on this).
+                lat: d.load.currentLocationLat !== null ? Number(d.load.currentLocationLat) : null,
+                lng: d.load.currentLocationLng !== null ? Number(d.load.currentLocationLng) : null,
               }
             : null,
         currentEta: d.load.currentEta,

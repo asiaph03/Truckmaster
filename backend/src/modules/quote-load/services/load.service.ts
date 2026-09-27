@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import {
   BookingSource,
   Customer,
@@ -7,10 +7,16 @@ import {
   MembershipRoleName,
   Prisma,
   RateSource,
+  Stop,
   StopType,
 } from '@prisma/client';
+import { Queue } from 'bullmq';
 import { PrismaService } from '../../../common/prisma/prisma.service';
 import { AuditService } from '../../../common/audit/audit.service';
+import {
+  LOCATION_RESOLUTION_QUEUE,
+  LOCATION_RESOLUTION_JOB_OPTIONS,
+} from '../../../common/location-resolution/location-resolution.constants';
 import { NotificationService } from '../../notification/services/notification.service';
 import { parseBusinessDateTime } from '../../../common/timezone/business-timezone';
 import { OrganizationSequenceService } from '../../identity/services/organization-sequence.service';
@@ -110,7 +116,36 @@ export class LoadService {
     private readonly rateAgreementMatching: RateAgreementMatchingService,
     private readonly notifications: NotificationService,
     private readonly entitlement: EntitlementService,
+    @Inject(LOCATION_RESOLUTION_QUEUE) private readonly locationResolutionQueue: Queue,
   ) {}
+
+  /**
+   * Dashboard Map Phase 2 — called by whichever caller owns the outer
+   * transaction (createDirect() below, and QuoteService.convert()) once
+   * that transaction has committed — never from inside createFromBooking
+   * itself, which doesn't own a transaction boundary (it receives `tx`
+   * as a parameter from its caller). Same after-commit pattern already
+   * proven by invoice.service.ts's emailQueue.add call.
+   */
+  async enqueueStopLocationResolution(organizationId: string, stops: Stop[]): Promise<void> {
+    await Promise.all(
+      stops.map((stop) =>
+        this.locationResolutionQueue.add(
+          'resolve',
+          {
+            entityType: 'STOP' as const,
+            entityId: stop.id,
+            organizationId,
+            city: stop.city,
+            state: stop.state,
+          },
+          // BullMQ rejects a colon in a custom Job ID — see the matching
+          // comment in dispatch-tracking.service.ts's enqueueLocationResolution.
+          { ...LOCATION_RESOLUTION_JOB_OPTIONS, jobId: `STOP-${stop.id}` },
+        ),
+      ),
+    );
+  }
 
   async findById(
     organizationId: string,
@@ -326,7 +361,7 @@ export class LoadService {
     tx: Prisma.TransactionClient,
     organizationId: string,
     params: CreateFromBookingParams,
-  ): Promise<Load> {
+  ): Promise<Load & { stops: Stop[] }> {
     // Phase 3 — the single enforcement point for both booking paths (§4.7
     // Quote conversion, §4.8 Direct-to-Booked), per this method's own
     // "shared Load-row creation for both booking paths" role above. Neither
@@ -415,48 +450,53 @@ export class LoadService {
       throw new BusinessRuleError('At least one pickup stop and one delivery stop are required.');
     }
 
-    return this.prisma.withTenantTransaction(organizationId, async (tx) => {
-      const customer = await tx.customer.findFirst({
-        where: { id: dto.customerId, organizationId },
-      });
-      if (!customer) throw new NotFoundError('Customer not found.');
-      await this.assertCustomerAllowsBooking(
-        tx,
-        organizationId,
-        customer,
-        dto.confirmInactiveCustomerOverride,
-        actingUserId,
-      );
+    return this.prisma
+      .withTenantTransaction(organizationId, async (tx) => {
+        const customer = await tx.customer.findFirst({
+          where: { id: dto.customerId, organizationId },
+        });
+        if (!customer) throw new NotFoundError('Customer not found.');
+        await this.assertCustomerAllowsBooking(
+          tx,
+          organizationId,
+          customer,
+          dto.confirmInactiveCustomerOverride,
+          actingUserId,
+        );
 
-      const { rateAgreementId, rateSource } = await this.rateAgreementMatching.resolveRate(
-        tx,
-        organizationId,
-        dto.customerId,
-        firstPickup.city,
-        firstPickup.state,
-        lastDelivery.city,
-        lastDelivery.state,
-        dto.equipmentType,
-        dto.customerRate,
-      );
+        const { rateAgreementId, rateSource } = await this.rateAgreementMatching.resolveRate(
+          tx,
+          organizationId,
+          dto.customerId,
+          firstPickup.city,
+          firstPickup.state,
+          lastDelivery.city,
+          lastDelivery.state,
+          dto.equipmentType,
+          dto.customerRate,
+        );
 
-      return this.createFromBooking(tx, organizationId, {
-        customerId: dto.customerId,
-        bookingSource: 'DIRECT',
-        quoteId: null,
-        equipmentType: dto.equipmentType,
-        customerRate: dto.customerRate,
-        rateSource,
-        rateAgreementId,
-        stops: dto.stops,
-        customerPoNumber: dto.customerPoNumber,
-        bolNumber: dto.bolNumber,
-        pickupNumber: dto.pickupNumber,
-        customerReferenceNumber: dto.customerReferenceNumber,
-        actingUserId,
-        auditAction: 'Load Booked Directly (No Quote)',
+        return this.createFromBooking(tx, organizationId, {
+          customerId: dto.customerId,
+          bookingSource: 'DIRECT',
+          quoteId: null,
+          equipmentType: dto.equipmentType,
+          customerRate: dto.customerRate,
+          rateSource,
+          rateAgreementId,
+          stops: dto.stops,
+          customerPoNumber: dto.customerPoNumber,
+          bolNumber: dto.bolNumber,
+          pickupNumber: dto.pickupNumber,
+          customerReferenceNumber: dto.customerReferenceNumber,
+          actingUserId,
+          auditAction: 'Load Booked Directly (No Quote)',
+        });
+      })
+      .then(async (load) => {
+        await this.enqueueStopLocationResolution(organizationId, load.stops);
+        return load;
       });
-    });
   }
 
   /** Workflow 4 §4.10 — addable/updatable at any time, never required to reach BOOKED. */

@@ -20,6 +20,8 @@ const TRUCK_WITH_LOCATION: FleetMapActiveTruck = {
     state: 'MO',
     description: null,
     updatedAt: '2026-09-26T10:00:00Z',
+    lat: null,
+    lng: null,
   },
   currentEta: '2026-09-27T18:00:00Z',
   stops: [
@@ -38,6 +40,31 @@ describe('buildFleetMapData — Dashboard Map Phase (pure logic)', () => {
     );
     expect(lines).toHaveLength(1);
     expect(unresolvedTrucks).toEqual([]);
+  });
+
+  it('prefers server-resolved lat/lng over the client-side dataset when both are present', () => {
+    const truck = {
+      ...TRUCK_WITH_LOCATION,
+      lastKnownLocation: {
+        ...TRUCK_WITH_LOCATION.lastKnownLocation!,
+        lat: 1.111111,
+        lng: -2.222222,
+      },
+    };
+
+    const { markers } = buildFleetMapData([truck]);
+
+    expect(markers).toHaveLength(1);
+    expect(markers[0]).toEqual(expect.objectContaining({ lat: 1.111111, lng: -2.222222 }));
+  });
+
+  it('falls back to the client-side dataset when server lat/lng are null (not yet resolved)', () => {
+    // TRUCK_WITH_LOCATION's lastKnownLocation.lat/lng are null — this is
+    // the exact pre-Phase-2 fallback path, must still work unchanged.
+    const { markers } = buildFleetMapData([TRUCK_WITH_LOCATION]);
+
+    expect(markers).toHaveLength(1);
+    expect(markers[0]).toEqual(expect.objectContaining({ lat: 38.627, lng: -90.1994 }));
   });
 
   it('never invents a marker for a truck with no lastKnownLocation — goes to the unresolved list instead', () => {

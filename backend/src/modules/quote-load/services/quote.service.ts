@@ -211,79 +211,86 @@ export class QuoteService {
     dto: ConvertQuoteDto,
     actingUserId: string,
   ): Promise<Load> {
-    return this.prisma.withTenantTransaction(organizationId, async (tx) => {
-      const quote = await tx.quote.findFirst({
-        where: { id, organizationId },
-        include: { stops: true },
-      });
-      if (!quote) throw new NotFoundError('Quote not found.');
-      if (quote.status !== 'OPEN') {
-        throw new InvalidTransitionError(
-          'Only an OPEN Quote can be converted to a Booked Load — an already Won or Lost Quote cannot be reopened or reconverted.',
+    return this.prisma
+      .withTenantTransaction(organizationId, async (tx) => {
+        const quote = await tx.quote.findFirst({
+          where: { id, organizationId },
+          include: { stops: true },
+        });
+        if (!quote) throw new NotFoundError('Quote not found.');
+        if (quote.status !== 'OPEN') {
+          throw new InvalidTransitionError(
+            'Only an OPEN Quote can be converted to a Booked Load — an already Won or Lost Quote cannot be reopened or reconverted.',
+          );
+        }
+
+        const customer = await tx.customer.findFirst({
+          where: { id: quote.customerId, organizationId },
+        });
+        if (!customer) throw new NotFoundError('Customer not found.');
+        await this.loadService.assertCustomerAllowsBooking(
+          tx,
+          organizationId,
+          customer,
+          dto.confirmInactiveCustomerOverride,
+          actingUserId,
         );
-      }
 
-      const customer = await tx.customer.findFirst({
-        where: { id: quote.customerId, organizationId },
-      });
-      if (!customer) throw new NotFoundError('Customer not found.');
-      await this.loadService.assertCustomerAllowsBooking(
-        tx,
-        organizationId,
-        customer,
-        dto.confirmInactiveCustomerOverride,
-        actingUserId,
-      );
+        const load = await this.loadService.createFromBooking(tx, organizationId, {
+          customerId: quote.customerId,
+          bookingSource: 'QUOTE',
+          quoteId: quote.id,
+          equipmentType: quote.equipmentType,
+          customerRate: dto.confirmedCustomerRate,
+          rateSource: quote.rateSource,
+          rateAgreementId: quote.rateAgreementId,
+          stops: quote.stops.map((stop) => ({
+            sequence: stop.sequence,
+            stopType: stop.stopType,
+            city: stop.addressCity,
+            state: stop.addressState,
+            zip: stop.addressZip,
+            notes: stop.appointmentNotes ?? undefined,
+          })),
+          actingUserId,
+          auditAction: 'Load Booked From Quote',
+        });
 
-      const load = await this.loadService.createFromBooking(tx, organizationId, {
-        customerId: quote.customerId,
-        bookingSource: 'QUOTE',
-        quoteId: quote.id,
-        equipmentType: quote.equipmentType,
-        customerRate: dto.confirmedCustomerRate,
-        rateSource: quote.rateSource,
-        rateAgreementId: quote.rateAgreementId,
-        stops: quote.stops.map((stop) => ({
-          sequence: stop.sequence,
-          stopType: stop.stopType,
-          city: stop.addressCity,
-          state: stop.addressState,
-          zip: stop.addressZip,
-          notes: stop.appointmentNotes ?? undefined,
-        })),
-        actingUserId,
-        auditAction: 'Load Booked From Quote',
-      });
+        await tx.quote.update({
+          where: { id },
+          data: { status: 'WON', resultingLoadId: load.id },
+        });
 
-      await tx.quote.update({
-        where: { id },
-        data: { status: 'WON', resultingLoadId: load.id },
-      });
-
-      await this.audit.record(tx, {
-        organizationId,
-        action: 'Quote Won — Converted to Load',
-        entityType: 'Quote',
-        entityId: id,
-        previousValue: { status: 'OPEN' },
-        newValue: { status: 'WON', resultingLoadId: load.id },
-        actorType: 'SYSTEM',
-      });
-
-      const rateChanged = !quote.customerRate.equals(new Prisma.Decimal(dto.confirmedCustomerRate));
-      if (rateChanged) {
         await this.audit.record(tx, {
           organizationId,
-          action: 'Rate Changed During Conversion',
+          action: 'Quote Won — Converted to Load',
           entityType: 'Quote',
           entityId: id,
-          previousValue: { customerRate: quote.customerRate.toString() },
-          newValue: { customerRate: dto.confirmedCustomerRate },
-          actorUserId: actingUserId,
+          previousValue: { status: 'OPEN' },
+          newValue: { status: 'WON', resultingLoadId: load.id },
+          actorType: 'SYSTEM',
         });
-      }
 
-      return load;
-    });
+        const rateChanged = !quote.customerRate.equals(
+          new Prisma.Decimal(dto.confirmedCustomerRate),
+        );
+        if (rateChanged) {
+          await this.audit.record(tx, {
+            organizationId,
+            action: 'Rate Changed During Conversion',
+            entityType: 'Quote',
+            entityId: id,
+            previousValue: { customerRate: quote.customerRate.toString() },
+            newValue: { customerRate: dto.confirmedCustomerRate },
+            actorUserId: actingUserId,
+          });
+        }
+
+        return load;
+      })
+      .then(async (load) => {
+        await this.loadService.enqueueStopLocationResolution(organizationId, load.stops);
+        return load;
+      });
   }
 }

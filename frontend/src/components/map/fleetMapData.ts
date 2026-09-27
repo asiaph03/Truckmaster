@@ -58,7 +58,16 @@ export function buildFleetMapData(activeTrucks: FleetMapActiveTruck[]): {
       continue;
     }
 
-    const point = geocodeCityState(truck.lastKnownLocation.city, truck.lastKnownLocation.state);
+    // Dashboard Map Phase 2 — prefer the server-resolved coordinates
+    // (Census Gazetteer, ~47k US places) over the old client-side
+    // ~250-city dataset; fall back to it only when the backend hasn't
+    // resolved this location yet (not deployed everywhere, or the
+    // resolve-location job hasn't run for this Check Call yet). Neither
+    // path ever guesses — a miss on both stays unresolved.
+    const point =
+      truck.lastKnownLocation.lat != null && truck.lastKnownLocation.lng != null
+        ? { lat: truck.lastKnownLocation.lat, lng: truck.lastKnownLocation.lng }
+        : geocodeCityState(truck.lastKnownLocation.city, truck.lastKnownLocation.state);
     if (!point) {
       unresolvedTrucks.push({
         loadId: truck.loadId,

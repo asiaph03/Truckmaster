@@ -25,7 +25,8 @@
     "prisma:apply-rls": "ts-node -T scripts/apply-rls.ts",
     "prisma:seed": "ts-node -T prisma/seed.ts",
     "prisma:studio": "prisma studio",
-    "s3:local": "ts-node -T scripts/start-local-s3.ts"
+    "s3:local": "ts-node -T scripts/start-local-s3.ts",
+    "seed:geocode-cache": "ts-node -T scripts/seed-geocode-cache.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.123.0",

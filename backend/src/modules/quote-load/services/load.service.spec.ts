@@ -96,6 +96,7 @@ function buildService(opts: {
 
   const notifications = { createForUserAndRoles: jest.fn().mockResolvedValue(undefined) };
   const entitlement = { assertCanCreateOperationalRecord: jest.fn().mockResolvedValue(undefined) };
+  const locationResolutionQueue = { add: jest.fn().mockResolvedValue(undefined) };
 
   const service = new LoadService(
     prisma as never,
@@ -104,9 +105,19 @@ function buildService(opts: {
     rateAgreementMatching as never,
     notifications as never,
     entitlement as never,
+    locationResolutionQueue as never,
   );
 
-  return { service, tx, audit, sequences, rateAgreementMatching, notifications, entitlement };
+  return {
+    service,
+    tx,
+    audit,
+    sequences,
+    rateAgreementMatching,
+    notifications,
+    entitlement,
+    locationResolutionQueue,
+  };
 }
 
 describe('LoadService.list — Frontend Phase 3 gap-fix (Dispatch Board Table View)', () => {
@@ -328,6 +339,35 @@ describe('LoadService.createDirect — Workflow 4 §4.8', () => {
     ]);
   });
 
+  it('enqueues a location-resolution job for every stop once the booking transaction commits', async () => {
+    const { service, locationResolutionQueue } = buildService({});
+
+    await service.createDirect(
+      ORG_ID,
+      {
+        customerId: CUSTOMER_ID,
+        stops: BASE_STOPS as never,
+        equipmentType: 'DRY_VAN',
+        customerRate: '1800.00',
+      },
+      USER_ID,
+    );
+
+    expect(locationResolutionQueue.add).toHaveBeenCalledTimes(BASE_STOPS.length);
+    for (const stop of BASE_STOPS) {
+      expect(locationResolutionQueue.add).toHaveBeenCalledWith(
+        'resolve',
+        expect.objectContaining({
+          entityType: 'STOP',
+          organizationId: ORG_ID,
+          city: stop.city,
+          state: stop.state,
+        }),
+        expect.objectContaining({ jobId: expect.stringMatching(/^STOP-/) }),
+      );
+    }
+  });
+
   it('Timezone fix: interprets a naive stop appointmentDatetime (New Load form datetime-local) as America/New_York, not server-local time', async () => {
     const { service, tx } = buildService({});
 
@@ -508,7 +548,12 @@ describe('LoadService.createDirect / createFromBooking — Phase 3 expired-trial
 
     await service.createDirect(
       ORG_ID,
-      { customerId: CUSTOMER_ID, stops: BASE_STOPS as never, equipmentType: 'DRY_VAN', customerRate: '1800.00' },
+      {
+        customerId: CUSTOMER_ID,
+        stops: BASE_STOPS as never,
+        equipmentType: 'DRY_VAN',
+        customerRate: '1800.00',
+      },
       USER_ID,
     );
 
@@ -518,13 +563,20 @@ describe('LoadService.createDirect / createFromBooking — Phase 3 expired-trial
   it('propagates a BusinessRuleError from the entitlement check and never creates the Load (direct booking)', async () => {
     const { service, tx, entitlement } = buildService({});
     entitlement.assertCanCreateOperationalRecord.mockRejectedValue(
-      new BusinessRuleError('Your trial has expired. Convert to a paid subscription to create new operational records.'),
+      new BusinessRuleError(
+        'Your trial has expired. Convert to a paid subscription to create new operational records.',
+      ),
     );
 
     await expect(
       service.createDirect(
         ORG_ID,
-        { customerId: CUSTOMER_ID, stops: BASE_STOPS as never, equipmentType: 'DRY_VAN', customerRate: '1800.00' },
+        {
+          customerId: CUSTOMER_ID,
+          stops: BASE_STOPS as never,
+          equipmentType: 'DRY_VAN',
+          customerRate: '1800.00',
+        },
         USER_ID,
       ),
     ).rejects.toThrow(BusinessRuleError);
@@ -534,7 +586,9 @@ describe('LoadService.createDirect / createFromBooking — Phase 3 expired-trial
   it('propagates a BusinessRuleError from the entitlement check when called via the shared createFromBooking path directly (proves Quote → Load conversion is protected too, since QuoteService.convert() calls this exact method)', async () => {
     const { service, tx, entitlement } = buildService({});
     entitlement.assertCanCreateOperationalRecord.mockRejectedValue(
-      new BusinessRuleError('Your trial has expired. Convert to a paid subscription to create new operational records.'),
+      new BusinessRuleError(
+        'Your trial has expired. Convert to a paid subscription to create new operational records.',
+      ),
     );
 
     await expect(
@@ -559,7 +613,12 @@ describe('LoadService.createDirect / createFromBooking — Phase 3 expired-trial
 
     const load = await service.createDirect(
       ORG_ID,
-      { customerId: CUSTOMER_ID, stops: BASE_STOPS as never, equipmentType: 'DRY_VAN', customerRate: '1800.00' },
+      {
+        customerId: CUSTOMER_ID,
+        stops: BASE_STOPS as never,
+        equipmentType: 'DRY_VAN',
+        customerRate: '1800.00',
+      },
       USER_ID,
     );
 

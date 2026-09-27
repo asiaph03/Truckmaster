@@ -4,6 +4,7 @@ import Redis from 'ioredis';
 import { REDIS_CLIENT, duplicateRedisWithErrorHandler } from '../../common/redis/redis.module';
 import { QueueRegistryService } from '../../common/queue-health/queue-registry.service';
 import { EmailModule } from '../../common/email/email.module';
+import { LocationResolutionModule } from '../../common/location-resolution/location-resolution.module';
 import { PDF_GENERATOR } from '../../common/pdf/pdf-generator.interface';
 import { PdfkitPdfGenerator } from '../../common/pdf/pdfkit-pdf-generator';
 import { IdentityModule } from '../identity/identity.module';
@@ -52,7 +53,14 @@ import {
 const RATE_CONFIRMATION_QUEUE_CONNECTION = 'RATE_CONFIRMATION_QUEUE_CONNECTION';
 
 @Module({
-  imports: [IdentityModule, CarrierModule, EmailModule, NotificationModule, EntitlementModule],
+  imports: [
+    IdentityModule,
+    CarrierModule,
+    EmailModule,
+    NotificationModule,
+    EntitlementModule,
+    LocationResolutionModule,
+  ],
   controllers: [QuoteController, LoadController],
   providers: [
     QuoteService,
@@ -68,7 +76,8 @@ const RATE_CONFIRMATION_QUEUE_CONNECTION = 'RATE_CONFIRMATION_QUEUE_CONNECTION';
     { provide: PDF_GENERATOR, useClass: PdfkitPdfGenerator },
     {
       provide: RATE_CONFIRMATION_QUEUE_CONNECTION,
-      useFactory: (redis: Redis) => duplicateRedisWithErrorHandler(redis, 'rate-confirmation-pdf-queue'),
+      useFactory: (redis: Redis) =>
+        duplicateRedisWithErrorHandler(redis, 'rate-confirmation-pdf-queue'),
       inject: [REDIS_CLIENT],
     },
     {

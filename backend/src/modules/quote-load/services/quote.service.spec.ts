@@ -75,7 +75,12 @@ function buildService(opts: {
       bookingSource: params.bookingSource,
       quoteId: params.quoteId,
       customerRate: new Prisma.Decimal(params.customerRate),
+      stops: params.stops.map((s: Record<string, unknown>, i: number) => ({
+        id: `stop-${i + 1}`,
+        ...s,
+      })),
     })),
+    enqueueStopLocationResolution: jest.fn().mockResolvedValue(undefined),
   };
   const entitlement = { assertCanCreateOperationalRecord: jest.fn().mockResolvedValue(undefined) };
 
@@ -355,6 +360,21 @@ describe('QuoteService.convert — Workflow 4 §4.7', () => {
     expect(audit.record).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ action: 'Quote Won — Converted to Load' }),
+    );
+  });
+
+  it('enqueues a location-resolution job for every converted stop once the transaction commits', async () => {
+    const { service, tx, loadService } = buildService({});
+    tx.quote.findFirst.mockResolvedValue(OPEN_QUOTE);
+
+    await service.convert(ORG_ID, 'quote-1', { confirmedCustomerRate: '2450.00' }, USER_ID);
+
+    expect(loadService.enqueueStopLocationResolution).toHaveBeenCalledWith(
+      ORG_ID,
+      expect.arrayContaining([
+        expect.objectContaining({ id: 'stop-1', city: 'Dallas', state: 'TX' }),
+        expect.objectContaining({ id: 'stop-2', city: 'Chicago', state: 'IL' }),
+      ]),
     );
   });
 

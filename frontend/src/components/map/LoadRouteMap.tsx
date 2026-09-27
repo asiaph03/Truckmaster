@@ -50,7 +50,14 @@ export function LoadRouteMap({
     const unresolved: Stop[] = [];
 
     for (const stop of sorted) {
-      const point = geocodeCityState(stop.city, stop.state);
+      // Dashboard Map Phase 2 — prefer the server-resolved coordinates
+      // over the old client-side ~250-city dataset; fall back to it
+      // only when the backend hasn't resolved this stop yet. Neither
+      // path ever guesses — a miss on both stays unresolved.
+      const point =
+        stop.resolvedLat != null && stop.resolvedLng != null
+          ? { lat: stop.resolvedLat, lng: stop.resolvedLng }
+          : geocodeCityState(stop.city, stop.state);
       if (point) resolved.push({ stop, ...point });
       else unresolved.push(stop);
     }

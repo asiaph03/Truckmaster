@@ -104,6 +104,14 @@ export interface FleetMapLastKnownLocation {
   state: string;
   description: string | null;
   updatedAt: string;
+  /**
+   * Dashboard Map Phase 2 — server-resolved coordinates, null until the
+   * resolve-location worker has processed this Load's latest Check
+   * Call. FleetMap falls back to its own client-side geocodeCityState()
+   * lookup when either is null.
+   */
+  lat: number | null;
+  lng: number | null;
 }
 
 export interface FleetMapActiveTruck {

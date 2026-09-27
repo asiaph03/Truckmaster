@@ -1,7 +1,13 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import { Load, Prisma, Stop } from '@prisma/client';
+import { Queue } from 'bullmq';
 import { PrismaService } from '../../../common/prisma/prisma.service';
 import { AuditService } from '../../../common/audit/audit.service';
+import {
+  LOCATION_RESOLUTION_QUEUE,
+  LOCATION_RESOLUTION_JOB_OPTIONS,
+  LocationResolutionJobData,
+} from '../../../common/location-resolution/location-resolution.constants';
 import { parseBusinessDateTime } from '../../../common/timezone/business-timezone';
 import { CarrierEligibilityService } from '../../carrier/services/carrier-eligibility.service';
 import { LoadStatusDerivationService } from './load-status-derivation.service';
@@ -36,7 +42,27 @@ export class DispatchTrackingService {
     private readonly audit: AuditService,
     private readonly carrierEligibility: CarrierEligibilityService,
     private readonly statusDerivation: LoadStatusDerivationService,
+    @Inject(LOCATION_RESOLUTION_QUEUE) private readonly locationResolutionQueue: Queue,
   ) {}
+
+  /**
+   * Dashboard Map Phase 2 — enqueued strictly after the caller's own
+   * transaction has committed (same pattern already proven by
+   * invoice.service.ts's emailQueue.add call), never from inside a
+   * withTenantTransaction callback. `jobId` gives BullMQ's own dedup —
+   * a second enqueue for the same entity while one is still
+   * queued/active is a no-op.
+   */
+  private enqueueLocationResolution(data: LocationResolutionJobData): Promise<unknown> {
+    return this.locationResolutionQueue.add('resolve', data, {
+      ...LOCATION_RESOLUTION_JOB_OPTIONS,
+      // BullMQ rejects a colon in a custom Job ID ("Custom Id cannot
+      // contain :" — confirmed directly against the installed bullmq
+      // version), hence a hyphen separator here, not the `TYPE:id`
+      // shape used in log lines elsewhere in this codebase.
+      jobId: `${data.entityType}-${data.entityId}`,
+    });
+  }
 
   /**
    * Workflow 6 §6.1 — the full Dispatch gate, re-validated here (not
@@ -477,68 +503,91 @@ export class DispatchTrackingService {
     dto: UpdateStopsDto,
     actingUserId: string,
   ): Promise<{ stops: Stop[]; load: Load }> {
-    return this.prisma.withTenantTransaction(organizationId, async (tx) => {
-      const load = await tx.load.findFirst({ where: { id: loadId, organizationId } });
-      if (!load) throw new NotFoundError('Load not found.');
+    return this.prisma
+      .withTenantTransaction(organizationId, async (tx) => {
+        const load = await tx.load.findFirst({ where: { id: loadId, organizationId } });
+        if (!load) throw new NotFoundError('Load not found.');
 
-      const updatedStops: Stop[] = [];
+        const updatedStops: Stop[] = [];
+        const stopsNeedingResolution: { id: string; city: string; state: string }[] = [];
 
-      for (const item of dto.stops) {
-        const stop = await tx.stop.findFirst({
-          where: { loadId, organizationId, sequence: item.sequence },
-        });
-        if (!stop) throw new NotFoundError(`Stop ${item.sequence} not found.`);
+        for (const item of dto.stops) {
+          const stop = await tx.stop.findFirst({
+            where: { loadId, organizationId, sequence: item.sequence },
+          });
+          if (!stop) throw new NotFoundError(`Stop ${item.sequence} not found.`);
 
-        const nextValues = {
-          stopType: item.stopType,
-          companyName: item.companyName,
-          addressLine1: item.addressLine1,
-          city: item.city,
-          state: item.state,
-          zip: item.zip,
-          appointmentDatetime: item.appointmentDatetime
-            ? parseBusinessDateTime(item.appointmentDatetime)
-            : null,
-          contactName: item.contactName ?? null,
-          contactPhone: item.contactPhone ?? null,
-          notes: item.notes ?? null,
-        };
+          const nextValues = {
+            stopType: item.stopType,
+            companyName: item.companyName,
+            addressLine1: item.addressLine1,
+            city: item.city,
+            state: item.state,
+            zip: item.zip,
+            appointmentDatetime: item.appointmentDatetime
+              ? parseBusinessDateTime(item.appointmentDatetime)
+              : null,
+            contactName: item.contactName ?? null,
+            contactPhone: item.contactPhone ?? null,
+            notes: item.notes ?? null,
+          };
 
-        const fieldChanges: { field: string; previous: unknown; new: unknown }[] = [];
-        for (const [field, newValue] of Object.entries(nextValues)) {
-          const previousValue = (stop as unknown as Record<string, unknown>)[field];
-          const changed =
-            newValue instanceof Date
-              ? previousValue === null ||
-                previousValue === undefined ||
-                new Date(previousValue as string).getTime() !== newValue.getTime()
-              : previousValue !== newValue;
-          if (changed) {
-            fieldChanges.push({ field, previous: previousValue, new: newValue });
+          const fieldChanges: { field: string; previous: unknown; new: unknown }[] = [];
+          for (const [field, newValue] of Object.entries(nextValues)) {
+            const previousValue = (stop as unknown as Record<string, unknown>)[field];
+            const changed =
+              newValue instanceof Date
+                ? previousValue === null ||
+                  previousValue === undefined ||
+                  new Date(previousValue as string).getTime() !== newValue.getTime()
+                : previousValue !== newValue;
+            if (changed) {
+              fieldChanges.push({ field, previous: previousValue, new: newValue });
+            }
+          }
+
+          const updatedStop = await tx.stop.update({
+            where: { id: stop.id },
+            data: nextValues,
+          });
+          updatedStops.push(updatedStop);
+
+          // Dashboard Map Phase 2 — only re-resolve when city/state itself
+          // changed, not on every field edit (e.g. a contact-name-only
+          // edit shouldn't re-enqueue a job for an unchanged location).
+          if (fieldChanges.some((c) => c.field === 'city' || c.field === 'state')) {
+            stopsNeedingResolution.push({ id: stop.id, city: item.city, state: item.state });
+          }
+
+          if (fieldChanges.length > 0) {
+            await this.audit.record(tx, {
+              organizationId,
+              action: 'Stop Details Updated',
+              entityType: 'Stop',
+              entityId: stop.id,
+              previousValue: { sequence: stop.sequence, field_changes: fieldChanges },
+              actorUserId: actingUserId,
+            });
           }
         }
 
-        const updatedStop = await tx.stop.update({
-          where: { id: stop.id },
-          data: nextValues,
-        });
-        updatedStops.push(updatedStop);
-
-        if (fieldChanges.length > 0) {
-          await this.audit.record(tx, {
-            organizationId,
-            action: 'Stop Details Updated',
-            entityType: 'Stop',
-            entityId: stop.id,
-            previousValue: { sequence: stop.sequence, field_changes: fieldChanges },
-            actorUserId: actingUserId,
-          });
-        }
-      }
-
-      const updatedLoad = await this.reEvaluateLoadStatus(tx, organizationId, load);
-      return { stops: updatedStops, load: updatedLoad };
-    });
+        const updatedLoad = await this.reEvaluateLoadStatus(tx, organizationId, load);
+        return { stops: updatedStops, load: updatedLoad, stopsNeedingResolution };
+      })
+      .then(async ({ stopsNeedingResolution, ...result }) => {
+        await Promise.all(
+          stopsNeedingResolution.map((s) =>
+            this.enqueueLocationResolution({
+              entityType: 'STOP',
+              entityId: s.id,
+              organizationId,
+              city: s.city,
+              state: s.state,
+            }),
+          ),
+        );
+        return result;
+      });
   }
 
   /**
@@ -644,52 +693,72 @@ export class DispatchTrackingService {
     dto: LogCheckCallDto,
     actingUserId: string,
   ) {
-    return this.prisma.withTenantTransaction(organizationId, async (tx) => {
-      const load = await tx.load.findFirst({ where: { id: loadId, organizationId } });
-      if (!load) throw new NotFoundError('Load not found.');
-      if (!POST_DISPATCH_STATUSES.includes(load.status)) {
-        throw new BusinessRuleError('A Check Call cannot be logged before the Load is Dispatched.');
-      }
+    return this.prisma
+      .withTenantTransaction(organizationId, async (tx) => {
+        const load = await tx.load.findFirst({ where: { id: loadId, organizationId } });
+        if (!load) throw new NotFoundError('Load not found.');
+        if (!POST_DISPATCH_STATUSES.includes(load.status)) {
+          throw new BusinessRuleError(
+            'A Check Call cannot be logged before the Load is Dispatched.',
+          );
+        }
 
-      const checkCall = await tx.checkCall.create({
-        data: {
+        const checkCall = await tx.checkCall.create({
+          data: {
+            organizationId,
+            loadId,
+            loggedByUserId: actingUserId,
+            occurredAt: dto.occurredAt ? parseBusinessDateTime(dto.occurredAt) : new Date(),
+            contactMethod: dto.contactMethod,
+            personContacted: dto.personContacted,
+            locationCity: dto.locationCity,
+            locationState: dto.locationState,
+            locationZip: dto.locationZip,
+            eta: dto.eta ? parseBusinessDateTime(dto.eta) : undefined,
+            onTimeStatus: dto.onTimeStatus,
+            notes: dto.notes,
+          },
+        });
+
+        const updatedLoad = await tx.load.update({
+          where: { id: loadId },
+          data: {
+            currentLocationCity: dto.locationCity ?? load.currentLocationCity,
+            currentLocationState: dto.locationState ?? load.currentLocationState,
+            currentLocationZip: dto.locationZip ?? load.currentLocationZip,
+            currentLocationUpdatedAt: new Date(),
+            currentEta: dto.eta ? parseBusinessDateTime(dto.eta) : load.currentEta,
+          },
+        });
+
+        await this.audit.record(tx, {
           organizationId,
-          loadId,
-          loggedByUserId: actingUserId,
-          occurredAt: dto.occurredAt ? parseBusinessDateTime(dto.occurredAt) : new Date(),
-          contactMethod: dto.contactMethod,
-          personContacted: dto.personContacted,
-          locationCity: dto.locationCity,
-          locationState: dto.locationState,
-          locationZip: dto.locationZip,
-          eta: dto.eta ? parseBusinessDateTime(dto.eta) : undefined,
-          onTimeStatus: dto.onTimeStatus,
-          notes: dto.notes,
-        },
-      });
+          action: 'Check Call Logged',
+          entityType: 'Load',
+          entityId: loadId,
+          newValue: { checkCallId: checkCall.id, onTimeStatus: dto.onTimeStatus },
+          actorUserId: actingUserId,
+        });
 
-      const updatedLoad = await tx.load.update({
-        where: { id: loadId },
-        data: {
-          currentLocationCity: dto.locationCity ?? load.currentLocationCity,
-          currentLocationState: dto.locationState ?? load.currentLocationState,
-          currentLocationZip: dto.locationZip ?? load.currentLocationZip,
-          currentLocationUpdatedAt: new Date(),
-          currentEta: dto.eta ? parseBusinessDateTime(dto.eta) : load.currentEta,
-        },
+        return { checkCall, load: updatedLoad };
+      })
+      .then(async (result) => {
+        // Only this specific Check Call's own location (not one inherited
+        // from a prior Check Call) is worth resolving — see
+        // LocationResolutionJobData.asOfLoadUpdatedAt's doc comment for
+        // why updatedLoad.currentLocationUpdatedAt is the race-guard value.
+        if (result.checkCall.locationCity && result.checkCall.locationState) {
+          await this.enqueueLocationResolution({
+            entityType: 'CHECK_CALL',
+            entityId: result.checkCall.id,
+            organizationId,
+            city: result.checkCall.locationCity,
+            state: result.checkCall.locationState,
+            asOfLoadUpdatedAt: result.load.currentLocationUpdatedAt?.toISOString(),
+          });
+        }
+        return result;
       });
-
-      await this.audit.record(tx, {
-        organizationId,
-        action: 'Check Call Logged',
-        entityType: 'Load',
-        entityId: loadId,
-        newValue: { checkCallId: checkCall.id, onTimeStatus: dto.onTimeStatus },
-        actorUserId: actingUserId,
-      });
-
-      return { checkCall, load: updatedLoad };
-    });
   }
 
   /** Workflow 6 §6.8 — independent of Load.status, gated to DISPATCHED or later. */

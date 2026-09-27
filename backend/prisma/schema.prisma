@@ -211,9 +211,9 @@ model Organization {
   subscriptionConvertedAt       DateTime?          @map("subscription_converted_at")
   subscriptionConvertedByUserId String?            @map("subscription_converted_by_user_id") @db.Uuid
 
-  createdByUserId     String             @map("created_by_user_id") @db.Uuid
-  createdBy           User               @relation("OrganizationCreatedBy", fields: [createdByUserId], references: [id])
-  createdAt           DateTime           @default(now()) @map("created_at")
+  createdByUserId String   @map("created_by_user_id") @db.Uuid
+  createdBy       User     @relation("OrganizationCreatedBy", fields: [createdByUserId], references: [id])
+  createdAt       DateTime @default(now()) @map("created_at")
 
   memberships OrganizationMembership[]
   sequences   OrganizationSequence[]
@@ -1243,6 +1243,15 @@ model Load {
   currentLocationUpdatedAt   DateTime? @map("current_location_updated_at")
   currentEta                 DateTime? @map("current_eta")
 
+  /// Dashboard Map Phase 2 — denormalized from whichever CheckCall is
+  /// currently the load's latest (mirrors currentLocationCity/State's own
+  /// denormalization pattern above). Written only by the
+  /// resolve-location worker, guarded so an in-flight resolution for an
+  /// older CheckCall can never overwrite a newer one's coordinates — see
+  /// LocationResolutionWorker.
+  currentLocationLat Decimal? @map("current_location_lat") @db.Decimal(9, 6)
+  currentLocationLng Decimal? @map("current_location_lng") @db.Decimal(9, 6)
+
   /// Phase 6 (Financials) — prevents double-billing (Workflow 8 §8.1).
   invoiced Boolean @default(false)
 
@@ -1373,6 +1382,17 @@ model Stop {
   contactName  String? @map("contact_name")
   contactPhone String? @map("contact_phone")
   notes        String?
+
+  /// Dashboard Map Phase 2 — same server-side resolution as CheckCall
+  /// (see that model's own doc comment), covering pickup/intermediate/
+  /// delivery stops so Load Overview's Route Map can migrate off its
+  /// client-side static lookup too. No Load-level "latest wins" guard
+  /// needed here — each Stop is addressed by its own id.
+  resolvedLat      Decimal?         @map("resolved_lat") @db.Decimal(9, 6)
+  resolvedLng      Decimal?         @map("resolved_lng") @db.Decimal(9, 6)
+  resolutionStatus ResolutionStatus @default(UNRESOLVED) @map("resolution_status")
+  resolutionSource String?          @map("resolution_source")
+  resolvedAt       DateTime?        @map("resolved_at")
 
   @@index([loadId, sequence])
   @@index([organizationId, loadId])
@@ -1508,8 +1528,54 @@ model CheckCall {
 
   notes String?
 
+  /// Dashboard Map Phase 2 — server-side location resolution (replaces
+  /// the frontend's ~250-city static lookup). Written asynchronously by
+  /// the `resolve-location` worker, never inline in logCheckCall() —
+  /// this row's own city/state never changes once resolved (or found
+  /// unresolvable), so there is no race condition for CheckCall itself;
+  /// the only race that matters is guarding Load.currentLocationLat/Lng
+  /// (see LocationResolutionWorker's own doc comment).
+  resolvedLat      Decimal?         @map("resolved_lat") @db.Decimal(9, 6)
+  resolvedLng      Decimal?         @map("resolved_lng") @db.Decimal(9, 6)
+  resolutionStatus ResolutionStatus @default(UNRESOLVED) @map("resolution_status")
+  resolutionSource String?          @map("resolution_source")
+  resolvedAt       DateTime?        @map("resolved_at")
+
   @@index([organizationId, loadId])
   @@map("check_call")
+}
+
+/// Dashboard Map Phase 2 — shared by CheckCall and Stop; UNRESOLVED is the
+/// default and the only "acceptable failure" state (never a guessed
+/// coordinate). RESOLVED_DATASET means the Census Gazetteer / GeocodeCache
+/// resolved it — this phase never calls a paid external geocoder, so
+/// there is deliberately no RESOLVED_GEOCODER value yet.
+enum ResolutionStatus {
+  UNRESOLVED
+  RESOLVED_DATASET
+}
+
+/// Dashboard Map Phase 2 — a shared, cross-tenant lookup: a city/state
+/// pair resolves to the same coordinates regardless of which
+/// organization's CheckCall/Stop referenced it, so this table is
+/// intentionally NOT included in prisma/rls/ (see that directory's own
+/// files — there is no rls SQL statement for geocode_cache, on purpose).
+/// It holds no customer/load/driver data, only a public geographic fact.
+model GeocodeCache {
+  id String @id @default(uuid()) @db.Uuid
+
+  /// Normalized `CITY|STATE` (trim + uppercase), matching
+  /// frontend/src/lib/geocoding.ts's own key format exactly, so a future
+  /// migration away from the frontend dataset is a drop-in.
+  lookupKey String @unique @map("lookup_key")
+
+  lat    Decimal @db.Decimal(9, 6)
+  lng    Decimal @db.Decimal(9, 6)
+  source String // e.g. "census-gazetteer"
+
+  resolvedAt DateTime @default(now()) @map("resolved_at")
+
+  @@map("geocode_cache")
 }
 
 /// Frontend Phase 7 (UI_UX_DESIGN.md §5.4.4, Decision LD-6) — one logged
