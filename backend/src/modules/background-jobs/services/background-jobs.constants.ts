@@ -19,6 +19,8 @@ export const JOB_NAMES = {
   LOAD_LATENESS_SWEEP: 'load-lateness-sweep',
   /** Needs Attention V2 (B.2) — the first AttentionItem detector. */
   ETA_RISK_SWEEP: 'eta-risk-sweep',
+  /** Needs Attention V2 (B.3) — the second AttentionItem detector. */
+  STALE_LOCATION_SWEEP: 'stale-location-sweep',
 } as const;
 
 /**

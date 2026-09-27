@@ -51,7 +51,7 @@ export class QuoteExpirationSweepService {
 
     // Monitoring Phase 4A-10 — local to this run() invocation only, see
     // InvitationExpirationSweepService.run() for the full concurrency
-    // reasoning (all 7 sweeps share one worker at concurrency 1).
+    // reasoning (all 8 sweeps share one worker at concurrency 1).
     let orgsScanned = 0;
     let recordsMatched = 0;
     let recordsSucceeded = 0;

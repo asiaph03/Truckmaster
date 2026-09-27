@@ -10,6 +10,7 @@ import { ComplianceExpirationNotificationService } from './compliance-expiration
 import { CheckCallReminderSweepService } from './check-call-reminder-sweep.service';
 import { LoadLatenessSweepService } from './load-lateness-sweep.service';
 import { EtaRiskSweepService } from './eta-risk-sweep.service';
+import { StaleLocationSweepService } from './stale-location-sweep.service';
 import { BUSINESS_TIMEZONE } from '../../../common/timezone/business-timezone';
 import { SweepHealthService } from '../../../common/sweep-health/sweep-health.service';
 import {
@@ -39,7 +40,7 @@ export const SCHEDULED_JOBS_RETENTION: Pick<JobsOptions, 'removeOnComplete' | 'r
  * error.message/.stack. Safe by construction: a JS/TS class name is
  * developer-defined source text, never runtime/user-controlled content.
  * This worker's generic 'failed' handler is the sole failure signal for
- * all 7 sweep services it dispatches to (no per-processor try/catch).
+ * all 8 sweep services it dispatches to (no per-processor try/catch).
  */
 function errorTypeOf(error: unknown): string {
   return error instanceof Error ? error.constructor.name : typeof error;
@@ -73,6 +74,7 @@ export class ScheduledJobsWorker implements OnModuleInit, OnModuleDestroy {
     private readonly checkCallReminderSweep: CheckCallReminderSweepService,
     private readonly loadLatenessSweep: LoadLatenessSweepService,
     private readonly etaRiskSweep: EtaRiskSweepService,
+    private readonly staleLocationSweep: StaleLocationSweepService,
     private readonly heartbeat: WorkerHeartbeatService,
     private readonly sweepHealth: SweepHealthService,
   ) {}
@@ -226,6 +228,15 @@ export class ScheduledJobsWorker implements OnModuleInit, OnModuleDestroy {
         ...SCHEDULED_JOBS_RETENTION,
       },
     );
+    await this.queue.add(
+      JOB_NAMES.STALE_LOCATION_SWEEP,
+      {},
+      {
+        repeat: { every: OPERATIONAL_SWEEP_INTERVAL_MS },
+        jobId: JOB_NAMES.STALE_LOCATION_SWEEP,
+        ...SCHEDULED_JOBS_RETENTION,
+      },
+    );
   }
 
   private async processJob(jobName: string): Promise<void> {
@@ -244,6 +255,8 @@ export class ScheduledJobsWorker implements OnModuleInit, OnModuleDestroy {
         return this.loadLatenessSweep.run();
       case JOB_NAMES.ETA_RISK_SWEEP:
         return this.etaRiskSweep.run();
+      case JOB_NAMES.STALE_LOCATION_SWEEP:
+        return this.staleLocationSweep.run();
       default:
         this.logger.warn(`Unknown scheduled job name: ${jobName}`);
     }

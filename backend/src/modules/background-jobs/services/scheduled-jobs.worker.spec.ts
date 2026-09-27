@@ -51,6 +51,7 @@ describe('ScheduledJobsWorker — Monitoring Phase 4A-3 (worker heartbeat wiring
       sweep() as never,
       sweep() as never,
       sweep() as never,
+      sweep() as never,
       heartbeat as never,
       sweepHealth as never,
     );
@@ -143,6 +144,7 @@ describe('ScheduledJobsWorker — Monitoring Phase 4A-4 (job duration logging)',
     return new ScheduledJobsWorker(
       redis as never,
       queue as never,
+      sweep() as never,
       sweep() as never,
       sweep() as never,
       sweep() as never,
@@ -263,6 +265,7 @@ describe('ScheduledJobsWorker — Monitoring Phase 4A-5 (stalled-event observabi
       sweep() as never,
       sweep() as never,
       sweep() as never,
+      sweep() as never,
       heartbeat as never,
       sweepHealth as never,
     );
@@ -299,6 +302,7 @@ describe('ScheduledJobsWorker — Monitoring Phase 4A-5 (stalled-event observabi
     const worker = new ScheduledJobsWorker(
       redis as never,
       queue as never,
+      sweep() as never,
       sweep() as never,
       sweep() as never,
       sweep() as never,
@@ -356,6 +360,7 @@ describe('ScheduledJobsWorker — Monitoring Phase 4A-15 (generic BullMQ failure
     return new ScheduledJobsWorker(
       redis as never,
       queue as never,
+      sweep() as never,
       sweep() as never,
       sweep() as never,
       sweep() as never,
@@ -481,6 +486,7 @@ describe('ScheduledJobsWorker — Monitoring Phase 4A-23B (daily sweep timezone 
       sweep() as never,
       sweep() as never,
       sweep() as never,
+      sweep() as never,
       heartbeat as never,
       sweepHealth as never,
     );
@@ -561,6 +567,7 @@ describe('ScheduledJobsWorker — Monitoring Phase 4A-23D (sweep health write-th
     const worker = new ScheduledJobsWorker(
       redis as never,
       queue as never,
+      sweep() as never,
       sweep() as never,
       sweep() as never,
       sweep() as never,

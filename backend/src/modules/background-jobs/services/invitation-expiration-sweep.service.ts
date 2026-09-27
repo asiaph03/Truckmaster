@@ -66,7 +66,7 @@ export class InvitationExpirationSweepService {
 
     // Monitoring Phase 4A-10 — local to this run() invocation only (never
     // an instance field), so each execution has its own isolated counters.
-    // Safe by construction: all 7 sweeps share one BullMQ worker at
+    // Safe by construction: all 8 sweeps share one BullMQ worker at
     // concurrency 1, so no two run() calls (this sweep or any other) ever
     // execute concurrently.
     let orgsScanned = 0;
