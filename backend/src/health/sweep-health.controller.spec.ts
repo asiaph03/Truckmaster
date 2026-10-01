@@ -27,7 +27,7 @@ describe('SweepHealthController — Monitoring Phase 4A-23D', () => {
     expect(isPublic).toBe(true);
   });
 
-  it('returns all 8 sweeps', async () => {
+  it('returns all 9 sweeps', async () => {
     const sweepHealth = {
       getSnapshot: jest
         .fn()
@@ -41,10 +41,10 @@ describe('SweepHealthController — Monitoring Phase 4A-23D', () => {
 
     const body = await controller.list();
 
-    expect(body.sweeps).toHaveLength(8);
+    expect(body.sweeps).toHaveLength(9);
   });
 
-  it('includes the 4 daily sweeps pinned to America/New_York and the 4 operational sweeps with no timezone', async () => {
+  it('includes the 4 daily sweeps pinned to America/New_York and the 5 operational sweeps with no timezone', async () => {
     const sweepHealth = {
       getSnapshot: jest
         .fn()
@@ -69,6 +69,7 @@ describe('SweepHealthController — Monitoring Phase 4A-23D', () => {
       'load-lateness-sweep',
       'eta-risk-sweep',
       'stale-location-sweep',
+      'appointment-imminent-sweep',
     ];
 
     for (const name of dailyNames) {

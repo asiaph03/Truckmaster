@@ -13,7 +13,7 @@ import {
 } from '../modules/background-jobs/services/background-jobs.constants';
 import { BUSINESS_TIMEZONE } from '../common/timezone/business-timezone';
 
-/** Fixed, developer-defined schedule metadata for all 8 sweeps — reuses the existing constants rather than duplicating literals. Order matches JOB_NAMES declaration order. */
+/** Fixed, developer-defined schedule metadata for all 9 sweeps — reuses the existing constants rather than duplicating literals. Order matches JOB_NAMES declaration order. */
 const SWEEP_DEFINITIONS: SweepScheduleDefinition[] = [
   {
     name: JOB_NAMES.INVITATION_EXPIRATION_SWEEP,
@@ -63,6 +63,12 @@ const SWEEP_DEFINITIONS: SweepScheduleDefinition[] = [
     schedule: `every ${OPERATIONAL_SWEEP_INTERVAL_MS / 60_000} minutes`,
     timezone: null,
   },
+  {
+    name: JOB_NAMES.APPOINTMENT_IMMINENT_SWEEP,
+    cadence: 'OPERATIONAL',
+    schedule: `every ${OPERATIONAL_SWEEP_INTERVAL_MS / 60_000} minutes`,
+    timezone: null,
+  },
 ];
 
 interface SweepHealthResponse {
@@ -73,7 +79,7 @@ interface SweepHealthResponse {
  * Monitoring Phase 4A-23D — read-only scheduled-sweep observability
  * diagnostic, separate from /health/workers by design (mirrors
  * QueueHealthController/WorkerHealthController, Phases 4A-3/4A-6):
- * `scheduled-jobs-worker` is one worker that owns eight distinct business
+ * `scheduled-jobs-worker` is one worker that owns nine distinct business
  * sweeps, a different concept from worker process liveness, so this gets
  * its own endpoint rather than being nested awkwardly into the existing
  * flat worker-snapshot array.

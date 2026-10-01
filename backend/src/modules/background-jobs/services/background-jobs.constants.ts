@@ -21,6 +21,8 @@ export const JOB_NAMES = {
   ETA_RISK_SWEEP: 'eta-risk-sweep',
   /** Needs Attention V2 (B.3) — the second AttentionItem detector. */
   STALE_LOCATION_SWEEP: 'stale-location-sweep',
+  /** Needs Attention V2 (B.6) — the third AttentionItem detector. */
+  APPOINTMENT_IMMINENT_SWEEP: 'appointment-imminent-sweep',
 } as const;
 
 /**
