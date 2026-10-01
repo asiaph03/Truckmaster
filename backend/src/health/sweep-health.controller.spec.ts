@@ -27,7 +27,7 @@ describe('SweepHealthController — Monitoring Phase 4A-23D', () => {
     expect(isPublic).toBe(true);
   });
 
-  it('returns all 9 sweeps', async () => {
+  it('returns all 10 sweeps', async () => {
     const sweepHealth = {
       getSnapshot: jest
         .fn()
@@ -41,10 +41,10 @@ describe('SweepHealthController — Monitoring Phase 4A-23D', () => {
 
     const body = await controller.list();
 
-    expect(body.sweeps).toHaveLength(9);
+    expect(body.sweeps).toHaveLength(10);
   });
 
-  it('includes the 4 daily sweeps pinned to America/New_York and the 5 operational sweeps with no timezone', async () => {
+  it('includes the 5 daily sweeps pinned to America/New_York and the 5 operational sweeps with no timezone', async () => {
     const sweepHealth = {
       getSnapshot: jest
         .fn()
@@ -63,6 +63,7 @@ describe('SweepHealthController — Monitoring Phase 4A-23D', () => {
       'quote-expiration-sweep',
       'carrier-compliance-expiration-sweep',
       'compliance-expiration-notifications',
+      'missing-pod-sweep',
     ];
     const operationalNames = [
       'check-call-reminder-sweep',

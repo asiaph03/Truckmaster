@@ -23,6 +23,8 @@ export const JOB_NAMES = {
   STALE_LOCATION_SWEEP: 'stale-location-sweep',
   /** Needs Attention V2 (B.6) — the third AttentionItem detector. */
   APPOINTMENT_IMMINENT_SWEEP: 'appointment-imminent-sweep',
+  /** Needs Attention V2 (B.8) — the fourth AttentionItem detector. Days-scale signal — runs on the DAILY cadence below, not OPERATIONAL_SWEEP_INTERVAL_MS. */
+  MISSING_POD_SWEEP: 'missing-pod-sweep',
 } as const;
 
 /**

@@ -14,6 +14,7 @@ import { LoadLatenessSweepService } from './services/load-lateness-sweep.service
 import { EtaRiskSweepService } from './services/eta-risk-sweep.service';
 import { StaleLocationSweepService } from './services/stale-location-sweep.service';
 import { AppointmentImminentSweepService } from './services/appointment-imminent-sweep.service';
+import { MissingPodSweepService } from './services/missing-pod-sweep.service';
 import { ScheduledJobsWorker } from './services/scheduled-jobs.worker';
 import {
   SCHEDULED_JOBS_QUEUE,
@@ -40,6 +41,7 @@ const SCHEDULED_JOBS_QUEUE_CONNECTION = 'SCHEDULED_JOBS_QUEUE_CONNECTION';
     EtaRiskSweepService,
     StaleLocationSweepService,
     AppointmentImminentSweepService,
+    MissingPodSweepService,
     ScheduledJobsWorker,
     {
       provide: SCHEDULED_JOBS_QUEUE_CONNECTION,
