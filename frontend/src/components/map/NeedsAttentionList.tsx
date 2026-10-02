@@ -8,6 +8,78 @@ import './NeedsAttentionList.css';
 const PAGE_SIZE = 25;
 
 /**
+ * Attention System Quality Review (post-B.8 audit) — the raw `type` enum
+ * (e.g. `APPOINTMENT_IMMINENT_NO_CHECK_CALL`) was never shown to the user;
+ * this is the only place that translates it to a human label. An unknown/
+ * future type (a detector added after this map was written) falls back to
+ * the raw string rather than crashing or hiding the item.
+ */
+const ATTENTION_TYPE_LABELS: Record<string, string> = {
+  ETA_AFTER_APPOINTMENT: 'ETA After Appointment',
+  STALE_LOCATION: 'Stale Location',
+  APPOINTMENT_IMMINENT_NO_CHECK_CALL: 'Appointment Imminent — No Check Call',
+  MISSING_POD: 'Missing POD',
+  CHECK_CALL_OVERDUE: 'Check Call Overdue',
+  LOAD_LATE: 'Load Late',
+  CHECK_CALL_DUE_SOON: 'Check Call Due Soon',
+};
+
+function typeLabel(type: string): string {
+  return ATTENTION_TYPE_LABELS[type] ?? type;
+}
+
+/** Distinguishes a sweep-driven AttentionItem from a legacy read/unread Notification — same `source` field the API already returns (B.5). */
+function sourceLabel(source: NeedsAttentionItem['source']): string {
+  return source === 'ATTENTION_ITEM' ? 'Attention' : 'Notification';
+}
+
+function sourceBadgeColor(source: NeedsAttentionItem['source']): 'brand' | 'neutral' {
+  return source === 'ATTENTION_ITEM' ? 'brand' : 'neutral';
+}
+
+interface SuggestedAction {
+  type: string;
+  [key: string]: unknown;
+}
+
+/**
+ * `suggestedActions` is `unknown` on the wire (Prisma `Json`) — this is the
+ * one place that parses it. Anything that isn't a well-formed array of
+ * `{ type: string, ... }` objects (including `null`, which every
+ * Notification-sourced item has) becomes an empty list rather than
+ * throwing. An action `type` this UI doesn't recognize (a future backend
+ * addition) is silently skipped in the renderer below, never dumped as
+ * raw JSON and never invented a label for.
+ */
+function parseSuggestedActions(value: unknown): SuggestedAction[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter(
+    (action): action is SuggestedAction =>
+      typeof action === 'object' &&
+      action !== null &&
+      typeof (action as { type?: unknown }).type === 'string',
+  );
+}
+
+/**
+ * B.8 audit follow-up — MISSING_POD's `severity` is HIGH for every item
+ * from 48 hours to 29+ days overdue (by contract — see missing-pod-risk.ts),
+ * so the badge alone can't distinguish a 2-day item from a month-old one.
+ * This reads the sweep's own `metadata.ageHours` (already on the wire) to
+ * render a secondary, non-severity magnitude cue. Severity itself is
+ * never touched. Returns `null` whenever `ageHours` isn't a number (any
+ * other type, or a MISSING_POD row that predates this metadata field).
+ */
+function missingPodAgeLabel(item: NeedsAttentionItem): string | null {
+  if (item.type !== 'MISSING_POD') return null;
+  if (!item.metadata || typeof item.metadata !== 'object') return null;
+  const ageHours = (item.metadata as Record<string, unknown>).ageHours;
+  if (typeof ageHours !== 'number') return null;
+  const days = (ageHours / 24).toFixed(1);
+  return `${days} days overdue`;
+}
+
+/**
  * B.5 — Dashboard "Needs Attention Today". Combines two sources the
  * backend already normalized into one shape (`ReportingService.needsAttention`):
  * legacy Notification signals (Check Call overdue/due-soon, Load late)
@@ -88,6 +160,8 @@ export function NeedsAttentionList() {
 function NeedsAttentionRow({ item }: { item: NeedsAttentionItem }) {
   const headline = item.title ?? item.message ?? '';
   const timestamp = item.detectedAt ?? item.createdAt;
+  const ageLabel = missingPodAgeLabel(item);
+  const actions = parseSuggestedActions(item.suggestedActions);
 
   return (
     <li className="needs-attention-item">
@@ -96,13 +170,32 @@ function NeedsAttentionRow({ item }: { item: NeedsAttentionItem }) {
           label={item.severity}
           color={getStatusBadgeColor('AttentionItem.severity', item.severity) ?? 'neutral'}
         />
+        <Badge label={sourceLabel(item.source)} color={sourceBadgeColor(item.source)} />
         <a className="needs-attention-item-load" href={`/loads/${item.loadId}`}>
           {item.loadNumber}
         </a>
       </div>
+      <span className="needs-attention-item-type">{typeLabel(item.type)}</span>
       <span className="needs-attention-headline">{headline}</span>
       {item.reason ? <span className="needs-attention-reason">{item.reason}</span> : null}
       {item.impact ? <span className="needs-attention-impact">{item.impact}</span> : null}
+      {ageLabel ? <span className="needs-attention-age">{ageLabel}</span> : null}
+      {actions.length > 0 ? (
+        <div className="needs-attention-item-actions">
+          {actions.map((action, index) =>
+            action.type === 'VIEW_LOAD' ? (
+              <a
+                key={index}
+                className="needs-attention-item-action"
+                href={`/loads/${item.loadId}`}
+                aria-label={`View Load ${item.loadNumber}`}
+              >
+                View Load
+              </a>
+            ) : null,
+          )}
+        </div>
+      ) : null}
       {timestamp ? (
         <span className="needs-attention-time">{formatRelativeTime(timestamp)}</span>
       ) : null}
