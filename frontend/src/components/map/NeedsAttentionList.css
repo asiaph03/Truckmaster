@@ -25,6 +25,16 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
+  /* Keeps the "Needs Attention Today" header (and, below the list, the
+     pagination controls — both are siblings of this element, never
+     inside it) always visible regardless of item count: only the list
+     itself scrolls, it never grows the panel/page without bound. */
+  max-height: 420px;
+  overflow-y: auto;
+  /* Reserves the scrollbar's own width so content doesn't reflow/shift
+     horizontally the moment the list becomes tall enough to scroll —
+     falls back silently to no-op on browsers that don't support it. */
+  scrollbar-gutter: stable;
 }
 
 .needs-attention-item {
