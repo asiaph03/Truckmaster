@@ -28,7 +28,17 @@
   /* Keeps the "Needs Attention Today" header (and, below the list, the
      pagination controls — both are siblings of this element, never
      inside it) always visible regardless of item count: only the list
-     itself scrolls, it never grows the panel/page without bound. */
+     itself scrolls, it never grows the panel/page without bound. 420px
+     is a fallback for the instant before the ResizeObserver below (see
+     NeedsAttentionList.tsx) measures the actual card height and overrides
+     this via inline style — the card matches the Fleet Map's height next
+     to it (height: 100%, in dashboard-map-row), which varies with that
+     map's own data, so a single static number here would only ever be
+     correct by coincidence. Deliberately NOT `flex: 1` on this list: that
+     would make the list's full unclamped content height feed back into
+     sizing this card's own CSS Grid row (no explicit max-height left to
+     cap it), inflating the row to fit every item instead of matching the
+     map — verified directly, not a hypothetical. */
   max-height: 420px;
   overflow-y: auto;
   /* Reserves the scrollbar's own width so content doesn't reflow/shift
