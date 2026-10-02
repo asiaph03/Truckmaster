@@ -23,6 +23,7 @@ const ATTENTION_TYPE_LABELS: Record<string, string> = {
   STALE_LOCATION: 'Stale Location',
   APPOINTMENT_IMMINENT_NO_CHECK_CALL: 'Appointment Imminent — No Check Call',
   MISSING_POD: 'Missing POD',
+  MANUAL_RISK_FLAG: 'Dispatcher-Flagged Risk',
   CHECK_CALL_OVERDUE: 'Check Call Overdue',
   LOAD_LATE: 'Load Late',
   CHECK_CALL_DUE_SOON: 'Check Call Due Soon',

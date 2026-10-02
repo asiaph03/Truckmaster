@@ -241,6 +241,43 @@ describe('NeedsAttentionList — B.5 combined Notification + AttentionItem panel
     expect(screen.queryByText('STALE_LOCATION')).not.toBeInTheDocument();
   });
 
+  it('shows a human-friendly label for MANUAL_RISK_FLAG and renders the dispatcher reason verbatim as plain text', async () => {
+    const reason = '<b>Driver</b> says "reefer" is not starting & 4h away';
+    server.use(
+      http.get('/api/v1/dashboard/needs-attention', () =>
+        HttpResponse.json({
+          items: [
+            {
+              ...ATTENTION_ITEM,
+              id: 'risk-1',
+              type: 'MANUAL_RISK_FLAG',
+              severity: 'MEDIUM',
+              title: 'Dispatcher Flagged: At Risk',
+              reason,
+              metadata: { riskStatus: 'AT_RISK' },
+            },
+          ],
+          total: 1,
+          page: 1,
+          pageSize: 25,
+        }),
+      ),
+    );
+
+    renderList();
+
+    expect(
+      await screen.findByText('Dispatcher-Flagged Risk', {
+        selector: 'span.needs-attention-item-type',
+      }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('MANUAL_RISK_FLAG')).not.toBeInTheDocument();
+    // React escapes the dispatcher's free text — shown literally, never parsed as markup
+    expect(screen.getByText(reason)).toBeInTheDocument();
+    expect(document.querySelector('.needs-attention-reason b')).toBeNull();
+    expect(screen.getByText('MEDIUM')).toBeInTheDocument();
+  });
+
   it('renders a raw future/unknown AttentionType as its own label rather than crashing', async () => {
     server.use(
       http.get('/api/v1/dashboard/needs-attention', () =>

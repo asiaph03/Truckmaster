@@ -13,6 +13,7 @@ import { EtaRiskSweepService } from './eta-risk-sweep.service';
 import { StaleLocationSweepService } from './stale-location-sweep.service';
 import { AppointmentImminentSweepService } from './appointment-imminent-sweep.service';
 import { MissingPodSweepService } from './missing-pod-sweep.service';
+import { ManualRiskFlagSweepService } from './manual-risk-flag-sweep.service';
 import { BUSINESS_TIMEZONE } from '../../../common/timezone/business-timezone';
 import { SweepHealthService } from '../../../common/sweep-health/sweep-health.service';
 import {
@@ -79,6 +80,7 @@ export class ScheduledJobsWorker implements OnModuleInit, OnModuleDestroy {
     private readonly staleLocationSweep: StaleLocationSweepService,
     private readonly appointmentImminentSweep: AppointmentImminentSweepService,
     private readonly missingPodSweep: MissingPodSweepService,
+    private readonly manualRiskFlagSweep: ManualRiskFlagSweepService,
     private readonly heartbeat: WorkerHeartbeatService,
     private readonly sweepHealth: SweepHealthService,
   ) {}
@@ -260,6 +262,16 @@ export class ScheduledJobsWorker implements OnModuleInit, OnModuleDestroy {
         ...SCHEDULED_JOBS_RETENTION,
       },
     );
+    // B.9 — a dispatcher-facing operational signal, same 15-minute cadence as B.2/B.3/B.6.
+    await this.queue.add(
+      JOB_NAMES.MANUAL_RISK_FLAG_SWEEP,
+      {},
+      {
+        repeat: { every: OPERATIONAL_SWEEP_INTERVAL_MS },
+        jobId: JOB_NAMES.MANUAL_RISK_FLAG_SWEEP,
+        ...SCHEDULED_JOBS_RETENTION,
+      },
+    );
   }
 
   private async processJob(jobName: string): Promise<void> {
@@ -284,6 +296,8 @@ export class ScheduledJobsWorker implements OnModuleInit, OnModuleDestroy {
         return this.appointmentImminentSweep.run();
       case JOB_NAMES.MISSING_POD_SWEEP:
         return this.missingPodSweep.run();
+      case JOB_NAMES.MANUAL_RISK_FLAG_SWEEP:
+        return this.manualRiskFlagSweep.run();
       default:
         this.logger.warn(`Unknown scheduled job name: ${jobName}`);
     }

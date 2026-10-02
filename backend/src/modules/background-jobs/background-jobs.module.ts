@@ -15,6 +15,7 @@ import { EtaRiskSweepService } from './services/eta-risk-sweep.service';
 import { StaleLocationSweepService } from './services/stale-location-sweep.service';
 import { AppointmentImminentSweepService } from './services/appointment-imminent-sweep.service';
 import { MissingPodSweepService } from './services/missing-pod-sweep.service';
+import { ManualRiskFlagSweepService } from './services/manual-risk-flag-sweep.service';
 import { ScheduledJobsWorker } from './services/scheduled-jobs.worker';
 import {
   SCHEDULED_JOBS_QUEUE,
@@ -42,6 +43,7 @@ const SCHEDULED_JOBS_QUEUE_CONNECTION = 'SCHEDULED_JOBS_QUEUE_CONNECTION';
     StaleLocationSweepService,
     AppointmentImminentSweepService,
     MissingPodSweepService,
+    ManualRiskFlagSweepService,
     ScheduledJobsWorker,
     {
       provide: SCHEDULED_JOBS_QUEUE_CONNECTION,

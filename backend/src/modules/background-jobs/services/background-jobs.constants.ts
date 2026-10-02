@@ -25,6 +25,8 @@ export const JOB_NAMES = {
   APPOINTMENT_IMMINENT_SWEEP: 'appointment-imminent-sweep',
   /** Needs Attention V2 (B.8) — the fourth AttentionItem detector. Days-scale signal — runs on the DAILY cadence below, not OPERATIONAL_SWEEP_INTERVAL_MS. */
   MISSING_POD_SWEEP: 'missing-pod-sweep',
+  /** Needs Attention V2 (B.9) — the fifth AttentionItem detector. Mirrors a dispatcher's manual Load.riskStatus; runs on OPERATIONAL_SWEEP_INTERVAL_MS. */
+  MANUAL_RISK_FLAG_SWEEP: 'manual-risk-flag-sweep',
 } as const;
 
 /**

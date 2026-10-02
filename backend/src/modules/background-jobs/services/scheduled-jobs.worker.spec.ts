@@ -54,6 +54,7 @@ describe('ScheduledJobsWorker — Monitoring Phase 4A-3 (worker heartbeat wiring
       sweep() as never,
       sweep() as never,
       sweep() as never,
+      sweep() as never,
       heartbeat as never,
       sweepHealth as never,
     );
@@ -146,6 +147,7 @@ describe('ScheduledJobsWorker — Monitoring Phase 4A-4 (job duration logging)',
     return new ScheduledJobsWorker(
       redis as never,
       queue as never,
+      sweep() as never,
       sweep() as never,
       sweep() as never,
       sweep() as never,
@@ -272,6 +274,7 @@ describe('ScheduledJobsWorker — Monitoring Phase 4A-5 (stalled-event observabi
       sweep() as never,
       sweep() as never,
       sweep() as never,
+      sweep() as never,
       heartbeat as never,
       sweepHealth as never,
     );
@@ -308,6 +311,7 @@ describe('ScheduledJobsWorker — Monitoring Phase 4A-5 (stalled-event observabi
     const worker = new ScheduledJobsWorker(
       redis as never,
       queue as never,
+      sweep() as never,
       sweep() as never,
       sweep() as never,
       sweep() as never,
@@ -368,6 +372,7 @@ describe('ScheduledJobsWorker — Monitoring Phase 4A-15 (generic BullMQ failure
     return new ScheduledJobsWorker(
       redis as never,
       queue as never,
+      sweep() as never,
       sweep() as never,
       sweep() as never,
       sweep() as never,
@@ -499,6 +504,7 @@ describe('ScheduledJobsWorker — Monitoring Phase 4A-23B (daily sweep timezone 
       sweep() as never,
       sweep() as never,
       sweep() as never,
+      sweep() as never,
       heartbeat as never,
       sweepHealth as never,
     );
@@ -512,7 +518,11 @@ describe('ScheduledJobsWorker — Monitoring Phase 4A-23B (daily sweep timezone 
     'compliance-expiration-notifications',
     'missing-pod-sweep',
   ];
-  const OPERATIONAL_JOB_NAMES = ['check-call-reminder-sweep', 'load-lateness-sweep'];
+  const OPERATIONAL_JOB_NAMES = [
+    'check-call-reminder-sweep',
+    'load-lateness-sweep',
+    'manual-risk-flag-sweep',
+  ];
 
   it.each(DAILY_JOB_NAMES)(
     'pins the daily sweep "%s" to pattern=DAILY_SWEEP_CRON with an explicit tz=BUSINESS_TIMEZONE',
@@ -580,6 +590,7 @@ describe('ScheduledJobsWorker — Monitoring Phase 4A-23D (sweep health write-th
     const worker = new ScheduledJobsWorker(
       redis as never,
       queue as never,
+      sweep() as never,
       sweep() as never,
       sweep() as never,
       sweep() as never,
@@ -691,5 +702,46 @@ describe('ScheduledJobsWorker — Monitoring Phase 4A-23D (sweep health write-th
     expect(typeof sweepNameArg).toBe('string');
     expect(typeof timestampArg).toBe('number');
     expect(sweepHealth.recordSuccess.mock.calls[0]).toHaveLength(2);
+  });
+});
+
+describe('ScheduledJobsWorker — B.9 manual-risk-flag-sweep dispatch', () => {
+  it('routes the manual-risk-flag-sweep job to ManualRiskFlagSweepService.run() and to no other sweep', async () => {
+    capturedProcessor = undefined;
+    const redis = { duplicate: jest.fn().mockReturnValue({ on: jest.fn(), quit: jest.fn() }) };
+    const queue = { add: jest.fn().mockResolvedValue({}) };
+    const sweeps = Array.from({ length: 11 }, () => ({
+      run: jest.fn().mockResolvedValue(undefined),
+    }));
+    const heartbeat = {
+      register: jest.fn(),
+      unregister: jest.fn(),
+      recordActivity: jest.fn(),
+      recordError: jest.fn(),
+    };
+    const sweepHealth = {
+      recordSuccess: jest.fn().mockResolvedValue(undefined),
+      recordFailure: jest.fn().mockResolvedValue(undefined),
+    };
+    const worker = new ScheduledJobsWorker(
+      redis as never,
+      queue as never,
+      ...(sweeps as [never, never, never, never, never, never, never, never, never, never, never]),
+      heartbeat as never,
+      sweepHealth as never,
+    );
+    await worker.onModuleInit();
+
+    // The shared Worker mock above re-wraps the processor (passing job.name
+    // as the "job"), so take the real processor BullMQ was constructed with.
+    const { Worker } = jest.requireMock('bullmq') as { Worker: jest.Mock };
+    const processor = Worker.mock.calls[Worker.mock.calls.length - 1][1] as (job: {
+      name: string;
+    }) => Promise<void>;
+    await processor({ name: 'manual-risk-flag-sweep' });
+
+    const manualRiskFlagSweep = sweeps[10];
+    expect(manualRiskFlagSweep.run).toHaveBeenCalledTimes(1);
+    for (const other of sweeps.slice(0, 10)) expect(other.run).not.toHaveBeenCalled();
   });
 });
