@@ -25,8 +25,14 @@ npm-debug.log*
 .vscode/
 .idea/
 
-# Local Claude Code harness settings (not part of the application)
-.claude/
+# Local Claude Code harness settings (not part of the application).
+# The shared agent team, project skills and shared settings ARE versioned;
+# everything else under .claude/ (settings.local.json, worktrees/,
+# launch.json, lock files) stays local.
+.claude/*
+!.claude/agents/
+!.claude/skills/
+!.claude/settings.json
 
 # Docker volumes are named volumes (not bind mounts), nothing local to ignore
 
