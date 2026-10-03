@@ -1,5 +1,11 @@
 import { Injectable } from '@nestjs/common';
-import { AttentionSeverity, AttentionStatus, MembershipRoleName, Prisma } from '@prisma/client';
+import {
+  AttentionSeverity,
+  AttentionStatus,
+  MembershipRoleName,
+  Notification,
+  Prisma,
+} from '@prisma/client';
 import { PrismaService } from '../../../common/prisma/prisma.service';
 import { shapeFinancialFieldsList } from '../../quote-load/services/financial-field-shaping';
 import { FINANCIAL_VIEW_ROLES } from '../../../common/authorization/financial-view-roles';
@@ -99,6 +105,76 @@ function compareNeedsAttentionItems(a: NeedsAttentionItem, b: NeedsAttentionItem
   const timeDiff = needsAttentionTimestamp(b) - needsAttentionTimestamp(a);
   if (timeDiff !== 0) return timeDiff;
   return a.id.localeCompare(b.id);
+}
+
+/**
+ * One Needs Attention notification *event* is stored as one Notification
+ * row per recipient (NotificationService.createForUserAndRoles: the
+ * assigned dispatcher plus every ACTIVE ADMIN) so each user keeps their
+ * own read state in the bell. An org-wide read therefore returns each
+ * event once per recipient. Rows sharing (type, related entity) are copies
+ * of a single event: the only producers (check-call reminder and load
+ * lateness sweeps) never create a new event while any copy is still
+ * unread.
+ *
+ * Copies of one event are written in one transaction, milliseconds apart.
+ * A later event for the same (type, entity) can only come from a later
+ * 15-minute sweep, after every earlier copy was read. So a viewer's READ
+ * row within this window of the current unread copies is their copy of
+ * this same event, and a READ row far outside it belongs to an older one.
+ */
+const SAME_NOTIFICATION_EVENT_WINDOW_MS = 60_000;
+
+function notificationEventKey(
+  n: Pick<Notification, 'type' | 'relatedEntityType' | 'relatedEntityId'>,
+): string {
+  return `${n.type}|${n.relatedEntityType ?? ''}|${n.relatedEntityId ?? ''}`;
+}
+
+function newestNotificationFirst(a: Notification, b: Notification): number {
+  return b.createdAt.getTime() - a.createdAt.getTime() || a.id.localeCompare(b.id);
+}
+
+/**
+ * Collapses unread recipient copies to at most one row per logical event,
+ * per viewer: the viewer's own unread copy; nothing if the viewer already
+ * read their own copy of this event (another recipient's unread copy never
+ * resurfaces it); otherwise — the viewer was not a recipient of this
+ * event — the most recent unread copy. A viewer holding no copies at all
+ * (the usual OPERATIONS_MANAGER case) therefore gets the plain org-wide
+ * view, collapsed.
+ */
+function collapseNotificationCopies(
+  unread: Notification[],
+  viewerUserId: string,
+  viewerReadCopies: Notification[],
+): Notification[] {
+  const copiesByEvent = new Map<string, Notification[]>();
+  for (const n of unread) {
+    const key = notificationEventKey(n);
+    const copies = copiesByEvent.get(key);
+    if (copies) copies.push(n);
+    else copiesByEvent.set(key, [n]);
+  }
+
+  const result: Notification[] = [];
+  for (const [key, copies] of copiesByEvent) {
+    const newest = [...copies].sort(newestNotificationFirst)[0];
+    const ownUnread = copies.find((n) => n.recipientUserId === viewerUserId);
+    if (ownUnread) {
+      result.push(ownUnread);
+      continue;
+    }
+
+    const eventStart = Math.min(...copies.map((n) => n.createdAt.getTime()));
+    const viewerReadThisEvent = viewerReadCopies.some(
+      (n) =>
+        notificationEventKey(n) === key &&
+        n.createdAt.getTime() >= eventStart - SAME_NOTIFICATION_EVENT_WINDOW_MS,
+    );
+    if (!viewerReadThisEvent) result.push(newest);
+  }
+  return result;
 }
 
 /** Mirrors InvoiceController's own INVOICE_VIEW_ROLES exactly (Phase 6) — search must never surface an invoice to a role that couldn't view it directly. */
@@ -646,7 +722,7 @@ export class ReportingService {
     }
 
     return this.prisma.withTenantTransaction(organizationId, async (tx) => {
-      const notifications = await tx.notification.findMany({
+      const unreadNotifications = await tx.notification.findMany({
         where: {
           organizationId,
           type: { in: [...NEEDS_ATTENTION_NOTIFICATION_TYPES] },
@@ -660,6 +736,22 @@ export class ReportingService {
         orderBy: { createdAt: 'desc' },
         take: NEEDS_ATTENTION_SOURCE_FETCH_CAP,
       });
+
+      // A Dispatcher's rows are already their own copies (one per event);
+      // only the org-wide read needs recipient copies collapsed — and that
+      // must happen before total/pagination below.
+      const notifications = isFullVisibility
+        ? collapseNotificationCopies(
+            unreadNotifications,
+            actingUserId,
+            await this.findViewerReadNotificationCopies(
+              tx,
+              organizationId,
+              actingUserId,
+              unreadNotifications,
+            ),
+          )
+        : unreadNotifications;
 
       const attentionItems = await tx.attentionItem.findMany({
         where: {
@@ -746,6 +838,39 @@ export class ReportingService {
       const items = combined.slice(start, start + pageSize);
 
       return { items, total, page, pageSize };
+    });
+  }
+
+  /**
+   * The viewer's own READ copies of the events in `unread` — only for
+   * events where they hold no unread copy, and only rows recent enough to
+   * belong to those events (see SAME_NOTIFICATION_EVENT_WINDOW_MS). Skips
+   * the query entirely when there is nothing to check.
+   */
+  private async findViewerReadNotificationCopies(
+    tx: Prisma.TransactionClient,
+    organizationId: string,
+    viewerUserId: string,
+    unread: Notification[],
+  ): Promise<Notification[]> {
+    const ownUnreadKeys = new Set(
+      unread.filter((n) => n.recipientUserId === viewerUserId).map(notificationEventKey),
+    );
+    const toCheck = unread.filter(
+      (n) => n.relatedEntityId !== null && !ownUnreadKeys.has(notificationEventKey(n)),
+    );
+    if (toCheck.length === 0) return [];
+
+    const oldest = Math.min(...toCheck.map((n) => n.createdAt.getTime()));
+    return tx.notification.findMany({
+      where: {
+        organizationId,
+        recipientUserId: viewerUserId,
+        read: true,
+        type: { in: [...new Set(toCheck.map((n) => n.type))] },
+        relatedEntityId: { in: [...new Set(toCheck.map((n) => n.relatedEntityId as string))] },
+        createdAt: { gte: new Date(oldest - SAME_NOTIFICATION_EVENT_WINDOW_MS) },
+      },
     });
   }
 }
